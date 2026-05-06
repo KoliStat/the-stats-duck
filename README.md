@@ -47,6 +47,8 @@ diagnostics, multiple-testing corrections, and more distribution families.
 | `mann_whitney_u(column1, column2, [alternative])`                    | Mann-Whitney U test (Wilcoxon rank-sum)  |
 | `wilcoxon_signed_rank(column1, column2, [alternative])`              | Wilcoxon signed-rank test                |
 | `pearson_test(x, y, [alpha], [alternative])`                         | Pearson correlation with significance    |
+| `spearman_test(x, y, [alpha], [alternative])`                        | Spearman rank correlation                |
+| `kendall_test(x, y, [alternative])`                                  | Kendall's tau-b rank correlation         |
 | `anova_oneway(value, group)`                                         | One-way ANOVA                            |
 | `chisq_independence(row, col)`                                       | Chi-square test of independence          |
 | `chisq_goodness_of_fit(category)`                                    | Chi-square goodness-of-fit (uniform)     |
@@ -73,6 +75,10 @@ p-value, and relevant effect sizes / confidence intervals.
 **Wilcoxon:** `test_type`, `w_statistic`, `z_statistic`, `p_value`, `alternative`, `effect_size_r`
 
 **Pearson:** `test_type`, `r`, `t_statistic`, `df`, `p_value`, `alternative`, `ci_lower`, `ci_upper`, `n`
+
+**Spearman:** `test_type`, `rho`, `t_statistic`, `df`, `p_value`, `alternative`, `ci_lower`, `ci_upper`, `n`
+
+**Kendall:** `test_type`, `tau`, `z_statistic`, `p_value`, `alternative`, `n`
 
 **ANOVA:** `test_type`, `f_statistic`, `df_between`, `df_within`, `p_value`, `ss_between`, `ss_within`, `eta_squared`, `n_groups`, `n`
 

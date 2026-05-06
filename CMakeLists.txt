@@ -69,6 +69,7 @@ set(EXTENSION_SOURCES
     src/distribution_functions.cpp
     src/summary_stats_function.cpp
     src/correlation_function.cpp
+    src/rank_correlation_function.cpp
     src/normality_function.cpp
     src/anova_function.cpp
     src/chisq_function.cpp

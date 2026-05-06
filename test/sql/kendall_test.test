@@ -1,0 +1,122 @@
+# name: test/sql/kendall_test.test
+# description: Kendall tau-b rank correlation
+# group: [stats_duck]
+
+require stats_duck
+
+# Perfect concordant: all C(5,2) = 10 pairs concordant → tau = 1
+statement ok
+CREATE TABLE concordant AS SELECT * FROM (VALUES
+    (1.0, 10.0), (2.0, 20.0), (3.0, 30.0), (4.0, 40.0), (5.0, 50.0)
+) AS t(x, y);
+
+query TTT
+SELECT (r).test_type,
+       ROUND((r).tau, 4),
+       (r).alternative
+FROM (SELECT kendall_test(x, y) AS r FROM concordant)
+----
+Kendall tau-b	1.0	two-sided
+
+# Perfect discordant: all pairs discordant → tau = -1
+statement ok
+CREATE TABLE discordant AS SELECT * FROM (VALUES
+    (1.0, 50.0), (2.0, 40.0), (3.0, 30.0), (4.0, 20.0), (5.0, 10.0)
+) AS t(x, y);
+
+query T
+SELECT ROUND((kendall_test(x, y)).tau, 4) FROM discordant
+----
+-1.0
+
+# Mixed case: x=[1,2,3,4,5], y=[2,1,4,3,5]
+# Pair (1,2) and (3,4) discordant; rest concordant → P=8, Q=2, tau = (8-2)/sqrt(10*10) = 0.6
+statement ok
+CREATE TABLE mixed AS SELECT * FROM (VALUES
+    (1.0, 2.0), (2.0, 1.0), (3.0, 4.0), (4.0, 3.0), (5.0, 5.0)
+) AS t(x, y);
+
+query TT
+SELECT ROUND((r).tau, 4),
+       (r).n
+FROM (SELECT kendall_test(x, y) AS r FROM mixed)
+----
+0.6	5
+
+# Tie on x:
+# x=[1,2,2,3,4], y=[1,2,3,4,5] → P=9, Q=0, T=1, U=0
+# tau = 9 / sqrt(10*9) = 9/sqrt(90) ≈ 0.9487
+statement ok
+CREATE TABLE tied_x AS SELECT * FROM (VALUES
+    (1.0, 1.0), (2.0, 2.0), (2.0, 3.0), (3.0, 4.0), (4.0, 5.0)
+) AS t(x, y);
+
+query T
+SELECT ROUND((kendall_test(x, y)).tau, 4) FROM tied_x
+----
+0.9487
+
+# Tie-corrected variance keeps z finite and non-zero with ties
+query T
+SELECT (r).z_statistic > 0 AND (r).p_value < 0.05
+FROM (SELECT kendall_test(x, y) AS r FROM tied_x)
+----
+true
+
+# NULLs are skipped pairwise
+statement ok
+CREATE TABLE with_nulls AS SELECT * FROM (VALUES
+    (1.0, 10.0), (2.0, NULL), (3.0, 30.0), (NULL, 40.0), (5.0, 50.0)
+) AS t(x, y);
+
+# Three valid pairs (1,10), (3,30), (5,50) — all concordant → tau = 1
+query T
+SELECT ROUND((kendall_test(x, y)).tau, 4) FROM with_nulls
+----
+1.0
+
+# n < 3 returns NULL
+query T
+SELECT kendall_test(x, y) FROM (VALUES (1.0, 2.0), (3.0, 4.0)) AS t(x, y)
+----
+NULL
+
+# All-equal x: every pair tied on x → (P+Q+U) = 0 → NULL
+query T
+SELECT kendall_test(x, y) FROM (VALUES (1.0, 1.0), (1.0, 2.0), (1.0, 3.0)) AS t(x, y)
+----
+NULL
+
+# One-sided 'less' on positive tau gives p > 0.5
+query T
+SELECT (kendall_test(x, y, 'less')).p_value > 0.5 FROM concordant
+----
+true
+
+# 'greater' is the complementary tail
+query T
+SELECT ROUND((kendall_test(x, y, 'less')).p_value
+             + (kendall_test(x, y, 'greater')).p_value, 4)
+FROM mixed
+----
+1.0
+
+# GROUP BY: each group counted independently
+statement ok
+CREATE TABLE grouped AS SELECT * FROM (VALUES
+    ('a', 1.0, 10.0), ('a', 2.0, 20.0), ('a', 3.0, 30.0),
+    ('b', 1.0, 30.0), ('b', 2.0, 20.0), ('b', 3.0, 10.0)
+) AS t(g, x, y);
+
+query TT
+SELECT g, ROUND((kendall_test(x, y)).tau, 4)
+FROM grouped GROUP BY g ORDER BY g
+----
+a	1.0
+b	-1.0
+
+# Bind error: invalid alternative
+statement error
+SELECT kendall_test(x, y, 'invalid') FROM concordant
+----
+alternative must be 'two-sided', 'less', or 'greater'

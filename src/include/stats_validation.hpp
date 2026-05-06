@@ -10,7 +10,7 @@ namespace duckdb {
 // Shared validation helpers used across stats_duck functions.
 //
 // Goals:
-//   - Consistent error messages (Brian's UI displays these directly to users)
+//   - Consistent error messages (Bedevere Wise's UI displays these directly to users)
 //   - A single place to improve the wording
 //   - Cheap inline checks that compile down to nothing when the input is valid
 //

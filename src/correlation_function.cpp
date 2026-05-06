@@ -256,12 +256,9 @@ static void PearsonFinalize(Vector &state_vector, AggregateInputData &aggr_input
 			t_stat = r * std::sqrt(df / denom);
 		}
 
-		double p_value;
-		if (std::isinf(t_stat)) {
-			p_value = 0.0;
-		} else {
-			p_value = ComputePValue(t_stat, df, alternative);
-		}
+		// StudentTCDF handles ±inf correctly, so no short-circuit on infinite t_stat:
+		// for r=+1 with alternative='less', p must be 1.0, not 0.0.
+		double p_value = ComputePValue(t_stat, df, alternative);
 
 		// Fisher-z confidence interval (two-sided regardless of `alternative`,
 		// matching R's cor.test behavior).

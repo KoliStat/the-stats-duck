@@ -1,0 +1,124 @@
+# name: test/sql/spearman_test.test
+# description: Spearman rank correlation
+# group: [stats_duck]
+
+require stats_duck
+
+# Perfect monotonic non-linear: rho = 1.0 (Spearman, unlike Pearson, captures this)
+# x = [1,2,3,4,5], y = x² → ranks of y match ranks of x → rho = 1
+statement ok
+CREATE TABLE monotonic AS SELECT * FROM (VALUES
+    (1.0, 1.0), (2.0, 4.0), (3.0, 9.0), (4.0, 16.0), (5.0, 25.0)
+) AS t(x, y);
+
+query TTT
+SELECT (r).test_type,
+       ROUND((r).rho, 4),
+       (r).alternative
+FROM (SELECT spearman_test(x, y) AS r FROM monotonic)
+----
+Spearman Correlation	1.0	two-sided
+
+# Perfect anti-monotonic: rho = -1
+statement ok
+CREATE TABLE decreasing AS SELECT * FROM (VALUES
+    (1.0, 25.0), (2.0, 16.0), (3.0, 9.0), (4.0, 4.0), (5.0, 1.0)
+) AS t(x, y);
+
+query T
+SELECT ROUND((spearman_test(x, y)).rho, 4) FROM decreasing
+----
+-1.0
+
+# Midrank tie correction:
+# x = [1,2,2,3,4] → ranks [1, 2.5, 2.5, 4, 5]
+# y = [1,2,3,4,5] → ranks [1, 2, 3, 4, 5]
+# Pearson on ranks: rho = 9.5 / sqrt(9.5 * 10) = 0.97435 ≈ 0.9744
+statement ok
+CREATE TABLE tied_x AS SELECT * FROM (VALUES
+    (1.0, 1.0), (2.0, 2.0), (2.0, 3.0), (3.0, 4.0), (4.0, 5.0)
+) AS t(x, y);
+
+query TT
+SELECT ROUND((r).rho, 4),
+       (r).n
+FROM (SELECT spearman_test(x, y) AS r FROM tied_x)
+----
+0.9744	5
+
+# Pearson would NOT see r=1 here (the y values aren't linear in x), but Spearman does
+query T
+SELECT ROUND((spearman_test(x, y)).rho, 4)
+       > ROUND((pearson_test(x, y)).r, 4)
+FROM monotonic
+----
+true
+
+# Significance test: t-statistic uses df = n-2; for rho > 0, t > 0
+query T
+SELECT (r).t_statistic > 0 AND (r).df = 3
+FROM (SELECT spearman_test(x, y) AS r FROM monotonic)
+----
+true
+
+# NULLs are skipped pairwise (3 valid pairs left, all monotonic increasing)
+statement ok
+CREATE TABLE with_nulls AS SELECT * FROM (VALUES
+    (1.0, 1.0), (2.0, NULL), (3.0, 9.0), (NULL, 16.0), (5.0, 25.0)
+) AS t(x, y);
+
+query T
+SELECT ROUND((spearman_test(x, y)).rho, 4) FROM with_nulls
+----
+1.0
+
+# n < 3 returns NULL
+query T
+SELECT spearman_test(x, y) FROM (VALUES (1.0, 2.0), (3.0, 4.0)) AS t(x, y)
+----
+NULL
+
+# All-equal x: rank variance is 0 → NULL
+query T
+SELECT spearman_test(x, y) FROM (VALUES (1.0, 1.0), (1.0, 2.0), (1.0, 3.0)) AS t(x, y)
+----
+NULL
+
+# One-sided 'less' on positive rho gives p > 0.5
+query T
+SELECT (spearman_test(x, y, 0.05, 'less')).p_value > 0.5 FROM monotonic
+----
+true
+
+# CI is two-sided regardless of `alternative`, and brackets rho when n ≥ 4 and |rho| < 1
+query T
+SELECT (r).ci_lower < (r).rho AND (r).rho < (r).ci_upper
+FROM (SELECT spearman_test(x, y) AS r FROM tied_x)
+----
+true
+
+# GROUP BY: each group ranked independently
+statement ok
+CREATE TABLE grouped AS SELECT * FROM (VALUES
+    ('a', 1.0, 1.0), ('a', 2.0, 4.0), ('a', 3.0, 9.0),
+    ('b', 1.0, 9.0), ('b', 2.0, 4.0), ('b', 3.0, 1.0)
+) AS t(g, x, y);
+
+query TT
+SELECT g, ROUND((spearman_test(x, y)).rho, 4)
+FROM grouped GROUP BY g ORDER BY g
+----
+a	1.0
+b	-1.0
+
+# Bind error: invalid alternative
+statement error
+SELECT spearman_test(x, y, 0.05, 'invalid') FROM monotonic
+----
+alternative must be 'two-sided', 'less', or 'greater'
+
+# Bind error: alpha out of range
+statement error
+SELECT spearman_test(x, y, 0.0) FROM monotonic
+----
+alpha must be in the open interval (0, 1)

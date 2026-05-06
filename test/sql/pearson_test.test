@@ -1,0 +1,126 @@
+# name: test/sql/pearson_test.test
+# description: Pearson correlation with significance test
+# group: [stats_duck]
+
+require stats_duck
+
+# Perfect positive linear: r = 1
+statement ok
+CREATE TABLE perfect_pos AS SELECT * FROM (VALUES
+    (1.0, 2.0), (2.0, 4.0), (3.0, 6.0), (4.0, 8.0), (5.0, 10.0)
+) AS t(x, y);
+
+query TTT
+SELECT (r).test_type,
+       ROUND((r).r, 4),
+       (r).alternative
+FROM (SELECT pearson_test(x, y) AS r FROM perfect_pos)
+----
+Pearson Correlation	1.0	two-sided
+
+# Perfect negative linear: r = -1
+statement ok
+CREATE TABLE perfect_neg AS SELECT * FROM (VALUES
+    (1.0, 5.0), (2.0, 4.0), (3.0, 3.0), (4.0, 2.0), (5.0, 1.0)
+) AS t(x, y);
+
+query T
+SELECT ROUND((pearson_test(x, y)).r, 4) FROM perfect_neg
+----
+-1.0
+
+# Known case from scipy: x=[1,2,3,4], y=[1,1,2,2] → r = 2/sqrt(5) ≈ 0.8944
+# t_stat = 2*sqrt(2) ≈ 2.8284, df = 2
+statement ok
+CREATE TABLE step AS SELECT * FROM (VALUES
+    (1.0, 1.0), (2.0, 1.0), (3.0, 2.0), (4.0, 2.0)
+) AS t(x, y);
+
+query TTT
+SELECT ROUND((r).r, 4),
+       ROUND((r).t_statistic, 4),
+       (r).df
+FROM (SELECT pearson_test(x, y) AS r FROM step)
+----
+0.8944	2.8284	2.0
+
+# CI bounds bracket the point estimate
+query T
+SELECT (r).ci_lower < (r).r AND (r).r < (r).ci_upper
+FROM (SELECT pearson_test(x, y) AS r FROM step)
+----
+true
+
+# n = 5 case for stable p-value rounding
+# x = [1,2,3,4,5], y = [2,4,5,4,6]
+# scipy.stats.pearsonr → r ≈ 0.8528, two-sided p ≈ 0.0664
+statement ok
+CREATE TABLE noisy AS SELECT * FROM (VALUES
+    (1.0, 2.0), (2.0, 4.0), (3.0, 5.0), (4.0, 4.0), (5.0, 6.0)
+) AS t(x, y);
+
+query TTT
+SELECT ROUND((r).r, 4),
+       (r).df,
+       (r).n
+FROM (SELECT pearson_test(x, y) AS r FROM noisy)
+----
+0.8528	3.0	5
+
+# One-sided 'greater' on positive correlation: p < two-sided p
+query T
+SELECT (pearson_test(x, y, 0.05, 'greater')).p_value
+       < (pearson_test(x, y)).p_value
+FROM noisy
+----
+true
+
+# NULLs are skipped pairwise
+statement ok
+CREATE TABLE with_nulls AS SELECT * FROM (VALUES
+    (1.0, 2.0), (2.0, NULL), (3.0, 6.0), (NULL, 8.0), (5.0, 10.0)
+) AS t(x, y);
+
+# Three valid pairs left: (1,2), (3,6), (5,10) — perfectly linear → r = 1
+query T
+SELECT ROUND((pearson_test(x, y)).r, 4) FROM with_nulls
+----
+1.0
+
+# n < 3 returns NULL
+query T
+SELECT pearson_test(x, y) FROM (VALUES (1.0, 2.0), (3.0, 4.0)) AS t(x, y)
+----
+NULL
+
+# All-equal x: cxx = 0 → NULL
+query T
+SELECT pearson_test(x, y) FROM (VALUES (1.0, 2.0), (1.0, 4.0), (1.0, 6.0)) AS t(x, y)
+----
+NULL
+
+# GROUP BY: each group computed independently
+statement ok
+CREATE TABLE grouped AS SELECT * FROM (VALUES
+    ('a', 1.0, 2.0), ('a', 2.0, 4.0), ('a', 3.0, 6.0),
+    ('b', 1.0, 6.0), ('b', 2.0, 4.0), ('b', 3.0, 2.0)
+) AS t(g, x, y);
+
+query TT
+SELECT g, ROUND((pearson_test(x, y)).r, 4)
+FROM grouped GROUP BY g ORDER BY g
+----
+a	1.0
+b	-1.0
+
+# Bind error: invalid alternative
+statement error
+SELECT pearson_test(x, y, 0.05, 'invalid') FROM noisy
+----
+alternative must be 'two-sided', 'less', or 'greater'
+
+# Bind error: alpha out of range
+statement error
+SELECT pearson_test(x, y, 1.5) FROM noisy
+----
+alpha must be in the open interval (0, 1)

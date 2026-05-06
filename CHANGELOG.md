@@ -12,6 +12,18 @@ that name is preserved across releases for backward compatibility.
 
 ### Added
 
+- `spearman_test(x, y, [alpha], [alternative])` — Spearman rank correlation
+  aggregate. Buffers paired rows (ranks need full data), midrank tie correction,
+  significance via Student's t with `df = n-2` (the Pearson-on-ranks asymptotic
+  that R's `cor.test` returns), Fisher-z confidence interval on rho. Returns
+  `STRUCT(test_type, rho, t_statistic, df, p_value, alternative, ci_lower, ci_upper, n)`.
+- `kendall_test(x, y, [alternative])` — Kendall's tau-b aggregate. Buffers paired
+  rows, O(n²) pair counting with Knight's tie-corrected variance, normal-
+  approximation z-statistic. No `alpha` argument (no widely-used closed-form CI
+  for tau). Always uses the normal approximation — R's `cor.test` switches to
+  an exact test for small-n tie-free input by default; we don't, so small-n
+  p-values may differ slightly. Returns
+  `STRUCT(test_type, tau, z_statistic, p_value, alternative, n)`.
 - `COPY tbl TO 'file.por'` — write SPSS Portable (POR) files via ReadStat. Same
   type and NULL semantics as the SAV writer, but with XPT-style strict
   column-name rules (≤ 8 chars uppercase, A-Z 0-9 _) and no compression

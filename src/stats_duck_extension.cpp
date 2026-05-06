@@ -7,6 +7,7 @@
 #include "distribution_functions.hpp"
 #include "summary_stats_function.hpp"
 #include "correlation_function.hpp"
+#include "rank_correlation_function.hpp"
 #include "normality_function.hpp"
 #include "anova_function.hpp"
 #include "chisq_function.hpp"
@@ -27,6 +28,8 @@ static void LoadInternal(ExtensionLoader &loader) {
 	RegisterMannWhitneyU(loader);
 	RegisterWilcoxonSignedRank(loader);
 	RegisterPearsonTest(loader);
+	RegisterSpearmanTest(loader);
+	RegisterKendallTest(loader);
 	RegisterJarqueBera(loader);
 	RegisterAnovaOneway(loader);
 	RegisterChiSquareTests(loader);
