@@ -1,0 +1,122 @@
+# name: test/sql/anova_oneway.test
+# description: One-way ANOVA
+# group: [stats_duck]
+
+require stats_duck
+
+# Three clearly-separated groups: means 4, 12, 22 (sd ≈ 1.58 each).
+# R: aov(v ~ factor(g)) → F=162.667, p≈8.7e-9, η²=0.964
+statement ok
+CREATE TABLE three_groups AS SELECT * FROM (VALUES
+    (2.0, '1'), (3.0, '1'), (4.0, '1'), (5.0, '1'), (6.0, '1'),
+    (10.0, '2'), (11.0, '2'), (12.0, '2'), (13.0, '2'), (14.0, '2'),
+    (20.0, '3'), (21.0, '3'), (22.0, '3'), (23.0, '3'), (24.0, '3')
+) AS t(v, g);
+
+query TT
+SELECT (r).test_type,
+       (r).n_groups
+FROM (SELECT anova_oneway(v, g) AS r FROM three_groups)
+----
+One-way ANOVA	3
+
+query TTTTT
+SELECT ROUND((r).f_statistic, 4),
+       (r).df_between,
+       (r).df_within,
+       ROUND((r).ss_between, 4),
+       ROUND((r).ss_within, 4)
+FROM (SELECT anova_oneway(v, g) AS r FROM three_groups)
+----
+162.6667	2.0	12.0	813.3333	30.0
+
+# η² = ss_between / (ss_between + ss_within) = 813.33 / 843.33 ≈ 0.9644
+query TT
+SELECT ROUND((r).eta_squared, 4),
+       (r).n
+FROM (SELECT anova_oneway(v, g) AS r FROM three_groups)
+----
+0.9644	15
+
+# p-value is effectively zero with such separation
+query T
+SELECT (r).p_value < 1e-7
+FROM (SELECT anova_oneway(v, g) AS r FROM three_groups)
+----
+true
+
+# Null case: three groups, overlapping. R: F=2.4, p≈0.146, η²≈0.348
+statement ok
+CREATE TABLE null_anova AS SELECT * FROM (VALUES
+    (1.0, '1'), (2.0, '1'), (3.0, '1'), (4.0, '1'),
+    (2.0, '2'), (3.0, '2'), (4.0, '2'), (5.0, '2'),
+    (3.0, '3'), (4.0, '3'), (5.0, '3'), (6.0, '3')
+) AS t(v, g);
+
+query TTTT
+SELECT ROUND((r).f_statistic, 4),
+       (r).df_between,
+       (r).df_within,
+       ROUND((r).p_value, 4)
+FROM (SELECT anova_oneway(v, g) AS r FROM null_anova)
+----
+2.4	2.0	9.0	0.1461
+
+query T
+SELECT ROUND((r).eta_squared, 4)
+FROM (SELECT anova_oneway(v, g) AS r FROM null_anova)
+----
+0.3478
+
+# NULLs are skipped pairwise
+statement ok
+INSERT INTO three_groups VALUES (NULL, '1'), (5.5, NULL);
+
+query T
+SELECT (r).n FROM (SELECT anova_oneway(v, g) AS r FROM three_groups)
+----
+15
+
+# Two groups: still works (ANOVA with k=2 is equivalent to a Student's t-test²).
+# Group 1 mean = 4, Group 2 mean = 12; grand mean = 8.
+# ss_between = 5*(4-8)² + 5*(12-8)² = 160; ss_within = 10 + 10 = 20.
+# F = (160/1) / (20/8) = 64.
+query TT
+SELECT (r).n_groups,
+       ROUND((r).f_statistic, 4)
+FROM (SELECT anova_oneway(v, g) AS r FROM three_groups WHERE g IN ('1','2'))
+----
+2	64.0
+
+# Single group returns NULL (need at least 2 groups)
+query T
+SELECT anova_oneway(v, g) FROM three_groups WHERE g = '1'
+----
+NULL
+
+# Zero within-group variance: ss_within = 0, F = inf (perfect separation)
+query TT
+SELECT (r).f_statistic = 'Infinity'::DOUBLE,
+       (r).ss_within
+FROM (SELECT anova_oneway(v, g) AS r
+      FROM (VALUES (1.0,'a'),(1.0,'a'),(2.0,'b'),(2.0,'b')) AS t(v, g))
+----
+true	0.0
+
+# GROUP BY: stratified ANOVA, one F per stratum
+statement ok
+CREATE TABLE stratified AS SELECT * FROM (VALUES
+    ('s1', 1.0,'a'),('s1', 2.0,'a'),('s1', 3.0,'a'),
+    ('s1', 10.0,'b'),('s1', 11.0,'b'),('s1', 12.0,'b'),
+    ('s2', 1.0,'a'),('s2', 2.0,'a'),('s2', 3.0,'a'),
+    ('s2', 1.5,'b'),('s2', 2.5,'b'),('s2', 3.5,'b')
+) AS t(stratum, v, g);
+
+# s1 has clearly separated group means (around 2 vs 11) → F > 1.
+# s2 has near-overlapping group means (2 vs 2.5) → F < 1.
+query TT
+SELECT stratum, (anova_oneway(v, g)).f_statistic > 1
+FROM stratified GROUP BY stratum ORDER BY stratum
+----
+s1	true
+s2	false

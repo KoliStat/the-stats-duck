@@ -1,0 +1,96 @@
+# name: test/sql/jarque_bera.test
+# description: Jarque-Bera normality test
+# group: [stats_duck]
+
+require stats_duck
+
+# Symmetric distribution (close to normal): JB ≈ 0.247, p ≈ 0.884
+# Skewness ≈ 0; kurtosis is platykurtic so excess_kurtosis < 0.
+# R reference: jb=0.24700, skewness=0, excess_kurtosis=-0.7029, p=0.8838
+statement ok
+CREATE TABLE near_normal AS SELECT * FROM (VALUES
+    (-1.5),(-1.0),(-0.5),(0.0),(0.0),(0.5),(1.0),(1.5),
+    (-0.3),(0.3),(-0.7),(0.7)
+) AS t(x);
+
+query TT
+SELECT (r).test_type,
+       (r).n
+FROM (SELECT jarque_bera(x) AS r FROM near_normal)
+----
+Jarque-Bera	12
+
+query TTTT
+SELECT ROUND((r).jb_statistic, 4),
+       ROUND((r).skewness, 4),
+       ROUND((r).excess_kurtosis, 4),
+       (r).df
+FROM (SELECT jarque_bera(x) AS r FROM near_normal)
+----
+0.247	0.0	-0.7029	2.0
+
+query T
+SELECT ROUND((r).p_value, 4) FROM (SELECT jarque_bera(x) AS r FROM near_normal)
+----
+0.8838
+
+# Right-skewed bimodal-ish: significant departure from normality not guaranteed
+# at this n, but JB and skewness are positive. R: jb=1.811, skew=0.409,
+# excess_kurt=-1.719, p=0.404
+statement ok
+CREATE TABLE skewed AS SELECT * FROM (VALUES
+    (0.1),(0.2),(0.3),(0.4),(0.5),(0.6),(0.7),
+    (5.0),(5.5),(6.0),(6.5),(7.0)
+) AS t(x);
+
+query TTT
+SELECT ROUND((r).jb_statistic, 4),
+       ROUND((r).skewness, 4),
+       ROUND((r).excess_kurtosis, 4)
+FROM (SELECT jarque_bera(x) AS r FROM skewed)
+----
+1.8113	0.4086	-1.719
+
+# JB statistic is non-negative; df is always 2
+query T
+SELECT (r).jb_statistic >= 0 AND (r).df = 2
+FROM (SELECT jarque_bera(x) AS r FROM skewed)
+----
+true
+
+# NULLs are skipped
+statement ok
+INSERT INTO near_normal VALUES (NULL), (NULL);
+
+query T
+SELECT (r).n FROM (SELECT jarque_bera(x) AS r FROM near_normal)
+----
+12
+
+# n < 4 returns NULL (need at least a few samples to estimate skew/kurt)
+query T
+SELECT jarque_bera(x) FROM (VALUES (1.0), (2.0), (3.0)) AS t(x)
+----
+NULL
+
+# All-equal values: variance = 0 → skewness/kurtosis undefined → NULL
+query T
+SELECT jarque_bera(x) FROM (VALUES (5.0),(5.0),(5.0),(5.0),(5.0)) AS t(x)
+----
+NULL
+
+# GROUP BY: per-group test
+statement ok
+CREATE TABLE grouped AS SELECT * FROM (VALUES
+    ('a',-1.5),('a',-1.0),('a',-0.5),('a',0.0),('a',0.0),('a',0.5),
+    ('a',1.0),('a',1.5),('a',-0.3),('a',0.3),('a',-0.7),('a',0.7),
+    ('b',0.1),('b',0.2),('b',0.3),('b',0.4),('b',0.5),('b',0.6),
+    ('b',0.7),('b',5.0),('b',5.5),('b',6.0),('b',6.5),('b',7.0)
+) AS t(g, x);
+
+query TT
+SELECT g, (jarque_bera(x)).skewness > 0
+FROM grouped GROUP BY g ORDER BY g
+----
+a	false
+b	true

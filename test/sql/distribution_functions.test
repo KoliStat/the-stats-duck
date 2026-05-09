@@ -1,0 +1,131 @@
+# name: test/sql/distribution_functions.test
+# description: Scalar distribution functions (PDF/CDF/quantile)
+# group: [stats_duck]
+
+require stats_duck
+
+# ─── Normal ─────────────────────────────────────────────────────────────────
+
+# dnorm at standard points (R reference)
+query TTT
+SELECT ROUND(dnorm(0.0), 8),
+       ROUND(dnorm(1.0), 8),
+       ROUND(dnorm(-1.96), 8)
+----
+0.39894228	0.24197072	0.05844094
+
+# pnorm at standard points
+query TTT
+SELECT ROUND(pnorm(0.0), 8),
+       ROUND(pnorm(1.96), 8),
+       ROUND(pnorm(-1.96), 8)
+----
+0.5	0.97500210	0.02499790
+
+# qnorm — symmetric around 0
+query TTT
+SELECT ROUND(qnorm(0.5), 8),
+       ROUND(qnorm(0.975), 8),
+       ROUND(qnorm(0.025), 8)
+----
+0.0	1.95996398	-1.95996398
+
+# CDF/quantile inverses round-trip
+query T
+SELECT ROUND(qnorm(pnorm(1.5)), 4) = 1.5
+       AND ROUND(pnorm(qnorm(0.7)), 4) = 0.7
+----
+true
+
+# Optional mean / sd parameters
+query TT
+SELECT ROUND(dnorm(2.0, 2.0, 1.0), 8),
+       ROUND(pnorm(10.0, 5.0, 2.5), 4)
+----
+0.39894228	0.9772
+
+# ─── Student's t ────────────────────────────────────────────────────────────
+
+# dt at 0 with df=5: peak of the t distribution
+query TT
+SELECT ROUND(dt(0.0, 5.0), 8),
+       ROUND(dt(2.0, 10.0), 8)
+----
+0.37960669	0.06114577
+
+# pt: t-distribution CDF
+query TTT
+SELECT ROUND(pt(0.0, 5.0), 4),
+       ROUND(pt(2.0, 10.0), 8),
+       ROUND(pt(-2.0, 10.0), 8)
+----
+0.5	0.96330598	0.03669402
+
+# qt — two-sided 0.05 critical values for df=5: ±2.5706 (R: 2.57058184)
+query TT
+SELECT ROUND(qt(0.975, 5.0), 4),
+       ROUND(qt(0.025, 5.0), 4)
+----
+2.5706	-2.5706
+
+# t with infinite df ≈ normal
+query T
+SELECT ROUND(qt(0.975, 10000.0), 2) = ROUND(qnorm(0.975), 2)
+----
+true
+
+# ─── Chi-square ─────────────────────────────────────────────────────────────
+
+query TT
+SELECT ROUND(dchisq(5.0, 3.0), 8),
+       ROUND(pchisq(5.0, 3.0), 8)
+----
+0.07322491	0.82820286
+
+query T
+SELECT ROUND(pchisq(10.0, 5.0), 8)
+----
+0.92476475
+
+# Standard 95% critical values
+query TT
+SELECT ROUND(qchisq(0.95, 3.0), 4),
+       ROUND(qchisq(0.95, 10.0), 4)
+----
+7.8147	18.307
+
+# ─── F distribution ─────────────────────────────────────────────────────────
+
+query TT
+SELECT ROUND(df(1.0, 2.0, 10.0), 8),
+       ROUND(pf(1.0, 2.0, 10.0), 8)
+----
+0.33489798	0.59812243
+
+query T
+SELECT ROUND(pf(4.0, 2.0, 10.0), 8)
+----
+0.94707785
+
+# Standard 95% F critical values
+query TT
+SELECT ROUND(qf(0.95, 2.0, 10.0), 4),
+       ROUND(qf(0.95, 5.0, 20.0), 4)
+----
+4.1028	2.7109
+
+# ─── Cross-distribution sanity ──────────────────────────────────────────────
+
+# F(df1=1, df2=v) is the square of t(df=v). Verify at the 95% critical value:
+# qf(0.95, 1, 10) should equal qt(0.975, 10)²
+query T
+SELECT ROUND(qf(0.95, 1.0, 10.0), 3) = ROUND(qt(0.975, 10.0) * qt(0.975, 10.0), 3)
+----
+true
+
+# Chi-square with df=1 has half its mass below the median of |Z|², and
+# pchisq(z², 1) = 2 * pnorm(|z|) - 1 for any z.
+query T
+SELECT ROUND(pchisq(1.96 * 1.96, 1.0), 4) = ROUND(2.0 * pnorm(1.96) - 1.0, 4)
+----
+true

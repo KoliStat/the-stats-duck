@@ -1,0 +1,96 @@
+# name: test/sql/chisq_goodness_of_fit.test
+# description: Chi-square goodness-of-fit (uniform expected)
+# group: [stats_duck]
+
+require stats_duck
+
+# Perfectly uniform: 25 of each of 4 categories → χ² = 0, p = 1
+statement ok
+CREATE TABLE uniform AS
+SELECT 'A' AS c FROM range(25) UNION ALL
+SELECT 'B'      FROM range(25) UNION ALL
+SELECT 'C'      FROM range(25) UNION ALL
+SELECT 'D'      FROM range(25);
+
+query TTT
+SELECT (s.r).test_type,
+       ROUND((s.r).chi_square, 4),
+       ROUND((s.r).p_value, 4)
+FROM (SELECT chisq_goodness_of_fit(c) AS r FROM uniform) AS s
+----
+Chi-square Goodness-of-Fit (uniform)	0.0	1.0
+
+# Skewed: 40, 30, 20, 10 across A, B, C, D. Expected = 25 each (n=100).
+# χ² = (40-25)²/25 + (30-25)²/25 + (20-25)²/25 + (10-25)²/25
+#    = 9 + 1 + 1 + 9 = 20; df = 3; R: p ≈ 0.0002
+statement ok
+CREATE TABLE skewed AS
+SELECT 'A' AS c FROM range(40) UNION ALL
+SELECT 'B'      FROM range(30) UNION ALL
+SELECT 'C'      FROM range(20) UNION ALL
+SELECT 'D'      FROM range(10);
+
+query TTT
+SELECT ROUND((s.r).chi_square, 4),
+       (s.r).df,
+       ROUND((s.r).p_value, 4)
+FROM (SELECT chisq_goodness_of_fit(c) AS r FROM skewed) AS s
+----
+20.0	3.0	0.0002
+
+# n = total observations
+query T
+SELECT (s.r).n FROM (SELECT chisq_goodness_of_fit(c) AS r FROM skewed) AS s
+----
+100
+
+# n_categories
+query T
+SELECT (s.r).n_categories FROM (SELECT chisq_goodness_of_fit(c) AS r FROM skewed) AS s
+----
+4
+
+# NULLs are skipped
+statement ok
+INSERT INTO skewed VALUES (NULL), (NULL);
+
+query T
+SELECT (s.r).n FROM (SELECT chisq_goodness_of_fit(c) AS r FROM skewed) AS s
+----
+100
+
+# Single category: df = 0 → NULL
+query T
+SELECT chisq_goodness_of_fit(c)
+FROM (VALUES ('A'),('A'),('A')) AS t(c)
+----
+NULL
+
+# Two categories with 50/50 split → χ² = 0
+statement ok
+CREATE TABLE two_cat AS
+SELECT 'A' AS c FROM range(10) UNION ALL
+SELECT 'B'      FROM range(10);
+
+query TTT
+SELECT ROUND((s.r).chi_square, 4),
+       (s.r).df,
+       ROUND((s.r).p_value, 4)
+FROM (SELECT chisq_goodness_of_fit(c) AS r FROM two_cat) AS s
+----
+0.0	1.0	1.0
+
+# GROUP BY: separate goodness-of-fit per group
+statement ok
+CREATE TABLE per_group AS
+SELECT 's1' AS g, 'A' AS c FROM range(10) UNION ALL
+SELECT 's1', 'B' FROM range(10) UNION ALL
+SELECT 's2', 'A' FROM range(15) UNION ALL
+SELECT 's2', 'B' FROM range(5);
+
+query TT
+SELECT g, (chisq_goodness_of_fit(c)).p_value < 0.05
+FROM per_group GROUP BY g ORDER BY g
+----
+s1	false
+s2	true

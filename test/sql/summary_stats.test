@@ -1,0 +1,118 @@
+# name: test/sql/summary_stats.test
+# description: Descriptive statistics aggregate
+# group: [stats_duck]
+
+require stats_duck
+
+# Simple symmetric dataset
+statement ok
+CREATE TABLE simple AS SELECT * FROM (VALUES (2.0),(4.0),(6.0),(8.0),(10.0)) AS t(x);
+
+query TTTTT
+SELECT (s).n, (s).n_missing, (s).mean, (s).variance, (s).iqr
+FROM (SELECT summary_stats(x) AS s FROM simple)
+----
+5	0	6.0	10.0	4.0
+
+# Sample SD (denominator n-1): sqrt(10) ≈ 3.1623
+query TTTTTT
+SELECT ROUND((s).sd, 4),
+       (s).min,
+       (s).q1,
+       (s).median,
+       (s).q3,
+       (s).max
+FROM (SELECT summary_stats(x) AS s FROM simple)
+----
+3.1623	2.0	4.0	6.0	8.0	10.0
+
+# Symmetric → skewness = 0
+query T
+SELECT ROUND((s).skewness, 4)
+FROM (SELECT summary_stats(x) AS s FROM simple)
+----
+0.0
+
+# Ten-value dataset for stable quantiles
+statement ok
+CREATE TABLE ten AS SELECT * FROM (VALUES
+    (3.0),(7.0),(1.0),(9.0),(5.0),(2.0),(8.0),(4.0),(10.0),(6.0)
+) AS t(x);
+
+query TTTTTT
+SELECT (s).n,
+       ROUND((s).mean, 4),
+       ROUND((s).sd, 4),
+       ROUND((s).variance, 4),
+       (s).min,
+       (s).max
+FROM (SELECT summary_stats(x) AS s FROM ten)
+----
+10	5.5	3.0277	9.1667	1.0	10.0
+
+query TTTT
+SELECT (s).q1, (s).median, (s).q3, (s).iqr
+FROM (SELECT summary_stats(x) AS s FROM ten)
+----
+3.25	5.5	7.75	4.5
+
+# Symmetric integers: skewness = 0
+query T
+SELECT ROUND((s).skewness, 4)
+FROM (SELECT summary_stats(x) AS s FROM ten)
+----
+0.0
+
+# NULLs counted in n_missing, dropped from stats
+statement ok
+INSERT INTO simple VALUES (NULL), (NULL);
+
+query TTT
+SELECT (s).n, (s).n_missing, (s).mean
+FROM (SELECT summary_stats(x) AS s FROM simple)
+----
+5	2	6.0
+
+# Single value: mean = the value, sd = 0 (or NULL — depends on convention)
+query TT
+SELECT (s).n, (s).mean
+FROM (SELECT summary_stats(x) AS s FROM (VALUES (42.0)) AS t(x))
+----
+1	42.0
+
+# All-NULL input: the aggregate returns NULL (no usable data)
+query T
+SELECT summary_stats(x)
+FROM (VALUES (NULL::DOUBLE), (NULL::DOUBLE)) AS t(x)
+----
+NULL
+
+# Right-skewed: skewness > 0
+query T
+SELECT (s).skewness > 0
+FROM (SELECT summary_stats(x) AS s
+      FROM (VALUES (1.0),(1.0),(1.0),(2.0),(2.0),(3.0),(10.0)) AS t(x))
+----
+true
+
+# Left-skewed: skewness < 0
+query T
+SELECT (s).skewness < 0
+FROM (SELECT summary_stats(x) AS s
+      FROM (VALUES (1.0),(8.0),(9.0),(9.0),(10.0),(10.0),(10.0)) AS t(x))
+----
+true
+
+# GROUP BY
+statement ok
+CREATE TABLE grouped AS SELECT * FROM (VALUES
+    ('a', 1.0),('a', 2.0),('a', 3.0),
+    ('b', 10.0),('b', 20.0),('b', 30.0)
+) AS t(g, x);
+
+query TTT
+SELECT g, (summary_stats(x)).mean, (summary_stats(x)).iqr
+FROM grouped GROUP BY g ORDER BY g
+----
+a	2.0	1.0
+b	20.0	10.0

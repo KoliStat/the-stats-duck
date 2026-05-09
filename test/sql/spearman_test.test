@@ -33,18 +33,21 @@ SELECT ROUND((spearman_test(x, y)).rho, 4) FROM decreasing
 # Midrank tie correction:
 # x = [1,2,2,3,4] → ranks [1, 2.5, 2.5, 4, 5]
 # y = [1,2,3,4,5] → ranks [1, 2, 3, 4, 5]
-# Pearson on ranks: rho = 9.5 / sqrt(9.5 * 10) = 0.97435 ≈ 0.9744
+# Pearson on ranks: rho = 9.5 / sqrt(9.5 * 10) = 0.974679...
+# t = rho * sqrt((n-2)/(1-rho²)) ≈ 7.5498; df = 3; R: p = 0.00482
 statement ok
 CREATE TABLE tied_x AS SELECT * FROM (VALUES
     (1.0, 1.0), (2.0, 2.0), (2.0, 3.0), (3.0, 4.0), (4.0, 5.0)
 ) AS t(x, y);
 
-query TT
+query TTTT
 SELECT ROUND((r).rho, 4),
+       ROUND((r).t_statistic, 4),
+       ROUND((r).p_value, 4),
        (r).n
 FROM (SELECT spearman_test(x, y) AS r FROM tied_x)
 ----
-0.9744	5
+0.9747	7.5498	0.0048	5
 
 # Pearson would NOT see r=1 here (the y values aren't linear in x), but Spearman does
 query T
