@@ -90,7 +90,13 @@ p-value, and relevant effect sizes / confidence intervals.
 
 | Function                | Description                                                            |
 | ----------------------- | ---------------------------------------------------------------------- |
-| `summary_stats(column)` | n, n_missing, mean, sd, variance, min, q1, median, q3, max, iqr, skewness, kurtosis |
+| `summary_stats(column, [bias_correction])` | n, n_missing, mean, sd, variance, min, q1, median, q3, max, iqr, skewness, kurtosis |
+
+`bias_correction` (BOOLEAN, default `true`) toggles the skewness/kurtosis
+formulas. With `true` the output matches SAS PROC MEANS, scipy with
+`bias=False`, and Excel SKEW/KURT. With `false` the population formulas
+`m3/m2^1.5` and `m4/m2² - 3` are used, matching R's default. Mean, SD,
+variance, quantiles, and IQR are unaffected.
 
 ### Distribution functions (scalar)
 

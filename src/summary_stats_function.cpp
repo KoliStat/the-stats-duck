@@ -3,7 +3,9 @@
 #include "duckdb/function/aggregate_function.hpp"
 #include "duckdb/function/function_set.hpp"
 #include "duckdb/common/types/vector.hpp"
+#include "duckdb/execution/expression_executor.hpp"
 #include "duckdb/main/extension/extension_loader.hpp"
+#include "duckdb/planner/expression.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -26,6 +28,44 @@ namespace duckdb {
 // with linear interpolation between adjacent order statistics.
 
 namespace {
+
+// ── Bind data ──────────────────────────────────────────────────────────────
+
+struct SummaryStatsBindData : public FunctionData {
+	// When true, skewness/kurtosis use the bias-corrected sample formulas
+	// (matching SAS PROC MEANS, scipy.stats with bias=False, Excel SKEW/KURT).
+	// When false, use the population formulas m3/m2^1.5 and m4/m2² - 3
+	// (matching R's default, scipy with bias=True, and the canonical
+	// Jarque-Bera definition).
+	bool bias_correction = true;
+
+	unique_ptr<FunctionData> Copy() const override {
+		auto copy = make_uniq<SummaryStatsBindData>();
+		copy->bias_correction = bias_correction;
+		return std::move(copy);
+	}
+
+	bool Equals(const FunctionData &other_p) const override {
+		return bias_correction == other_p.Cast<SummaryStatsBindData>().bias_correction;
+	}
+};
+
+static unique_ptr<FunctionData> SummaryStatsBindNoArg(ClientContext &, AggregateFunction &,
+                                                      vector<unique_ptr<Expression>> &) {
+	return make_uniq<SummaryStatsBindData>();
+}
+
+static unique_ptr<FunctionData> SummaryStatsBindBias(ClientContext &context, AggregateFunction &function,
+                                                     vector<unique_ptr<Expression>> &arguments) {
+	if (!arguments[1]->IsFoldable()) {
+		throw BinderException("summary_stats: bias_correction must be a constant boolean");
+	}
+	Value val = ExpressionExecutor::EvaluateScalar(context, *arguments[1]);
+	auto bd = make_uniq<SummaryStatsBindData>();
+	bd->bias_correction = val.GetValue<bool>();
+	Function::EraseArgument(function, arguments, 1);
+	return std::move(bd);
+}
 
 // ── Result struct type ─────────────────────────────────────────────────────
 
@@ -130,9 +170,15 @@ static void SummaryStatsDestroy(Vector &state_vector, AggregateInputData &, idx_
 	}
 }
 
-static void SummaryStatsFinalize(Vector &state_vector, AggregateInputData &, Vector &result, idx_t count, idx_t offset) {
+static void SummaryStatsFinalize(Vector &state_vector, AggregateInputData &aggr_input_data, Vector &result,
+                                 idx_t count, idx_t offset) {
 	auto states = FlatVector::GetData<SummaryStatsState *>(state_vector);
 	auto &children = StructVector::GetEntries(result);
+
+	bool bias_correction = true;
+	if (aggr_input_data.bind_data) {
+		bias_correction = aggr_input_data.bind_data->Cast<SummaryStatsBindData>().bias_correction;
+	}
 
 	for (idx_t i = 0; i < count; i++) {
 		auto &state = *states[i];
@@ -172,23 +218,28 @@ static void SummaryStatsFinalize(Vector &state_vector, AggregateInputData &, Vec
 			sd = std::sqrt(variance);
 		}
 
-		// Fisher-Pearson adjusted skewness (NaN for n < 3 or zero variance).
+		// Skewness: g1 is the population formula (m3/n) / (m2/n)^1.5; the
+		// bias_correction branch then applies the Fisher-Pearson adjustment.
+		// NaN for n < 3 or zero variance regardless of formula.
 		double skewness = std::numeric_limits<double>::quiet_NaN();
 		if (n >= 3 && m2 > 0.0) {
 			double m2n = m2 / dn;
 			double m3n = m3 / dn;
 			double g1 = m3n / std::pow(m2n, 1.5);
-			skewness = std::sqrt(dn * (dn - 1.0)) / (dn - 2.0) * g1;
+			skewness = bias_correction ? std::sqrt(dn * (dn - 1.0)) / (dn - 2.0) * g1 : g1;
 		}
 
-		// Sample excess kurtosis (NaN for n < 4 or zero variance).
+		// Excess kurtosis: g2 is the population m4/m2² - 3; the bias_correction
+		// branch applies R's e1071 / Excel KURT adjustment. NaN for n < 4 or
+		// zero variance.
 		double kurtosis = std::numeric_limits<double>::quiet_NaN();
 		if (n >= 4 && m2 > 0.0) {
 			double m2n = m2 / dn;
 			double m4n = m4 / dn;
 			double g2 = m4n / (m2n * m2n) - 3.0;
-			// Unbiased adjustment per R's e1071 / Excel KURT
-			kurtosis = ((dn - 1.0) / ((dn - 2.0) * (dn - 3.0))) * ((dn + 1.0) * g2 + 6.0);
+			kurtosis = bias_correction
+			               ? ((dn - 1.0) / ((dn - 2.0) * (dn - 3.0))) * ((dn + 1.0) * g2 + 6.0)
+			               : g2;
 		}
 
 		// Order stats ─────────────────────────────────────────────────
@@ -219,12 +270,18 @@ static void SummaryStatsFinalize(Vector &state_vector, AggregateInputData &, Vec
 
 } // namespace
 
+static AggregateFunction MakeSummaryStats(vector<LogicalType> args, bind_aggregate_function_t bind_fn) {
+	return AggregateFunction("summary_stats", std::move(args), SummaryStatsResultType(),
+	                         AggregateFunction::StateSize<SummaryStatsState>, SummaryStatsInit, SummaryStatsUpdate,
+	                         SummaryStatsCombine, SummaryStatsFinalize, FunctionNullHandling::SPECIAL_HANDLING,
+	                         nullptr, bind_fn, SummaryStatsDestroy);
+}
+
 void RegisterSummaryStats(ExtensionLoader &loader) {
-	AggregateFunction fn("summary_stats", {LogicalType::DOUBLE}, SummaryStatsResultType(),
-	                     AggregateFunction::StateSize<SummaryStatsState>, SummaryStatsInit, SummaryStatsUpdate,
-	                     SummaryStatsCombine, SummaryStatsFinalize, FunctionNullHandling::SPECIAL_HANDLING,
-	                     nullptr, nullptr, SummaryStatsDestroy);
-	loader.RegisterFunction(fn);
+	AggregateFunctionSet set("summary_stats");
+	set.AddFunction(MakeSummaryStats({LogicalType::DOUBLE}, SummaryStatsBindNoArg));
+	set.AddFunction(MakeSummaryStats({LogicalType::DOUBLE, LogicalType::BOOLEAN}, SummaryStatsBindBias));
+	loader.RegisterFunction(set);
 }
 
 } // namespace duckdb

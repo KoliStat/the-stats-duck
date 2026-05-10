@@ -1,6 +1,13 @@
 # name: test/sql/summary_stats.test
 # description: Descriptive statistics aggregate
 # group: [stats_duck]
+#
+# NOTE on skewness/kurtosis convention: stats_duck uses the bias-corrected
+# sample formulas, matching SAS PROC MEANS, scipy.stats.kurtosis(_, bias=False),
+# and Excel. For x=[1,2,3,4]: skewness=0, kurtosis=-1.2.
+# R's default formulas use population moments (m3/m2^1.5 and m4/m2² - 3) and
+# give kurtosis=-1.3 for the same input. Our jarque_bera function instead uses
+# the population formula because the canonical JB statistic is defined that way.
 
 require stats_duck
 
@@ -116,3 +123,62 @@ FROM grouped GROUP BY g ORDER BY g
 ----
 a	2.0	1.0
 b	20.0	10.0
+
+# ─── bias_correction option ─────────────────────────────────────────────────
+
+# x=[1,2,3,4]: bias-corrected kurt = -1.2 (SAS, scipy bias=False, Excel KURT);
+# population kurt = m4/m2² - 3 = 2.5625/1.5625 - 3 = -1.36 (R default).
+statement ok
+CREATE TABLE small AS SELECT * FROM (VALUES (1.0),(2.0),(3.0),(4.0)) AS t(x);
+
+query T
+SELECT ROUND((summary_stats(x)).kurtosis, 4) FROM small
+----
+-1.2
+
+query T
+SELECT ROUND((summary_stats(x, true)).kurtosis, 4) FROM small
+----
+-1.2
+
+query T
+SELECT ROUND((summary_stats(x, false)).kurtosis, 4) FROM small
+----
+-1.36
+
+# Skewness for symmetric input is 0 under both formulas
+query TT
+SELECT (summary_stats(x, true)).skewness,
+       (summary_stats(x, false)).skewness
+FROM small
+----
+0.0	0.0
+
+# Right-skewed: both formulas give a positive value, but bias-corrected > population
+statement ok
+CREATE TABLE right_skewed AS SELECT * FROM (VALUES
+    (1.0),(1.0),(1.0),(2.0),(2.0),(3.0),(10.0)
+) AS t(x);
+
+query T
+SELECT (summary_stats(x, true)).skewness > (summary_stats(x, false)).skewness
+FROM right_skewed
+----
+true
+
+# Mean / sd / quantiles are identical under either formula (no bias adjustment
+# applied to those; only skew/kurt change)
+query TTTT
+SELECT (summary_stats(x, true)).mean = (summary_stats(x, false)).mean,
+       (summary_stats(x, true)).sd = (summary_stats(x, false)).sd,
+       (summary_stats(x, true)).iqr = (summary_stats(x, false)).iqr,
+       (summary_stats(x, true)).median = (summary_stats(x, false)).median
+FROM right_skewed
+----
+true	true	true	true
+
+# Bind error: non-constant bias_correction
+statement error
+SELECT summary_stats(x, x > 0) FROM small
+----
+bias_correction must be a constant boolean

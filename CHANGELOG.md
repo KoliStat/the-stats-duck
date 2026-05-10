@@ -12,6 +12,12 @@ that name is preserved across releases for backward compatibility.
 
 ### Added
 
+- `summary_stats(x, [bias_correction])` — optional boolean parameter
+  (default `true`) selects between the bias-corrected sample formulas for
+  skewness/kurtosis (matching SAS PROC MEANS, scipy `bias=False`, Excel)
+  and the population formulas `m3/m2^1.5` / `m4/m2² - 3` (matching R's
+  default). Mean, SD, variance, quantiles, and IQR are unaffected. The
+  default preserves prior behaviour, so existing callers see no change.
 - `spearman_test(x, y, [alpha], [alternative])` — Spearman rank correlation
   aggregate. Buffers paired rows (ranks need full data), midrank tie correction,
   significance via Student's t with `df = n-2` (the Pearson-on-ranks asymptotic
