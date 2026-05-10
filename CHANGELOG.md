@@ -12,6 +12,12 @@ that name is preserved across releases for backward compatibility.
 
 ### Added
 
+- `mann_whitney_u(x, y, [alternative], [continuity])` — optional boolean
+  `continuity` (default `false`) toggles the half-step continuity correction
+  on the normal-approximation Z. Default matches scipy.stats.mannwhitneyu and
+  R's `wilcox.test(..., correct=FALSE)`. With `continuity=true`, the output
+  matches SAS PROC NPAR1WAY (`Z=-2.5067, p=0.0122` for the canonical
+  `[1..5]` vs `[6..10]` separated dataset).
 - `summary_stats(x, [bias_correction])` — optional boolean parameter
   (default `true`) selects between the bias-corrected sample formulas for
   skewness/kurtosis (matching SAS PROC MEANS, scipy `bias=False`, Excel)

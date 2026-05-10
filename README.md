@@ -44,7 +44,7 @@ diagnostics, multiple-testing corrections, and more distribution families.
 | `ttest_1samp(column, [mu], [alpha], [alternative])`                  | One-sample t-test                        |
 | `ttest_2samp(column1, column2, [equal_var], [alpha], [alternative])` | Two-sample t-test (Welch's or Student's) |
 | `ttest_paired(column1, column2, [alpha], [alternative])`             | Paired t-test                            |
-| `mann_whitney_u(column1, column2, [alternative])`                    | Mann-Whitney U test (Wilcoxon rank-sum)  |
+| `mann_whitney_u(column1, column2, [alternative], [continuity])`      | Mann-Whitney U test (Wilcoxon rank-sum)  |
 | `wilcoxon_signed_rank(column1, column2, [alternative])`              | Wilcoxon signed-rank test                |
 | `pearson_test(x, y, [alpha], [alternative])`                         | Pearson correlation with significance    |
 | `spearman_test(x, y, [alpha], [alternative])`                        | Spearman rank correlation                |
@@ -65,6 +65,7 @@ p-value, and relevant effect sizes / confidence intervals.
 | `equal_var`   | `BOOLEAN` | `false`       | Assume equal variances — Student's pooled test (two-sample only) |
 | `alpha`       | `DOUBLE`  | `0.05`        | Significance level for confidence intervals (t-tests only)       |
 | `alternative` | `VARCHAR` | `'two-sided'` | `'two-sided'`, `'less'`, or `'greater'`                          |
+| `continuity`  | `BOOLEAN` | `false`       | Apply continuity correction (mann_whitney_u, chisq_independence) |
 
 #### Result struct fields
 

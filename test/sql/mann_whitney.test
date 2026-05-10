@@ -80,3 +80,52 @@ statement error
 SELECT mann_whitney_u(a, b, 'invalid') FROM overlap
 ----
 alternative must be 'two-sided', 'less', or 'greater'
+
+# ─── continuity correction ──────────────────────────────────────────────────
+
+# separated: A=[1..5], B=[6..10] (no ties).
+# Without cc:  Z = (0 - 12.5) / sqrt(25/12 * 11) = -2.6112; p = 0.0090
+# With cc:     |U-mu| shrinks to 12,  Z = -12 / 4.7871 = -2.5067; p = 0.0122
+# SAS PROC NPAR1WAY default = with cc (matches the second row exactly).
+query TT
+SELECT ROUND((r).z_statistic, 4),
+       ROUND((r).p_value, 4)
+FROM (SELECT mann_whitney_u(a, b) AS r FROM separated)
+----
+-2.6112	0.009
+
+query TT
+SELECT ROUND((r).z_statistic, 4),
+       ROUND((r).p_value, 4)
+FROM (SELECT mann_whitney_u(a, b, 'two-sided', false) AS r FROM separated)
+----
+-2.6112	0.009
+
+query TT
+SELECT ROUND((r).z_statistic, 4),
+       ROUND((r).p_value, 4)
+FROM (SELECT mann_whitney_u(a, b, 'two-sided', true) AS r FROM separated)
+----
+-2.5067	0.0122
+
+# Continuity makes |Z| smaller (and p larger), preserving the sign
+query T
+SELECT ABS((mann_whitney_u(a, b, 'two-sided', true)).z_statistic)
+       < ABS((mann_whitney_u(a, b, 'two-sided', false)).z_statistic)
+FROM separated
+----
+true
+
+# Identical groups with cc: U-mu = 0 → corrected diff stays 0 → Z = 0
+query TT
+SELECT ROUND((r).z_statistic, 4),
+       ROUND((r).p_value, 4)
+FROM (SELECT mann_whitney_u(a, b, 'two-sided', true) AS r FROM identical)
+----
+0.0	1.0
+
+# Bind error: non-constant continuity
+statement error
+SELECT mann_whitney_u(a, b, 'two-sided', a > b) FROM separated
+----
+continuity must be a constant boolean

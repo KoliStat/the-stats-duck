@@ -83,15 +83,23 @@ static string ExtractConstantString(ClientContext &context, AggregateFunction &f
 
 struct NonParamBindData : public FunctionData {
 	string alternative = "two-sided";
+	// Continuity correction toggle. Currently only consulted by the
+	// Mann-Whitney finalize. SAS PROC NPAR1WAY uses the corrected Z by
+	// default; R wilcox.test sets correct=TRUE by default but recommends
+	// FALSE in the docs; scipy.stats.mannwhitneyu uses no correction. We
+	// default to false to match scipy / R correct=FALSE / our prior output.
+	bool continuity = false;
 
 	unique_ptr<FunctionData> Copy() const override {
 		auto copy = make_uniq<NonParamBindData>();
 		copy->alternative = alternative;
+		copy->continuity = continuity;
 		return std::move(copy);
 	}
 
 	bool Equals(const FunctionData &other_p) const override {
-		return alternative == other_p.Cast<NonParamBindData>().alternative;
+		auto &other = other_p.Cast<NonParamBindData>();
+		return alternative == other.alternative && continuity == other.continuity;
 	}
 };
 
@@ -104,6 +112,23 @@ static unique_ptr<FunctionData> NonParamBindAlt(ClientContext &context, Aggregat
                                                  vector<unique_ptr<Expression>> &arguments) {
 	auto bd = make_uniq<NonParamBindData>();
 	bd->alternative = ExtractConstantString(context, function, arguments, arguments.size() - 1);
+	ValidateAlternative(bd->alternative);
+	return std::move(bd);
+}
+
+// 4-arg binder used by mann_whitney_u(x, y, alternative, continuity).
+// The constant continuity flag is at index 3, alternative at index 2.
+static unique_ptr<FunctionData> NonParamBindAltCorrect(ClientContext &context, AggregateFunction &function,
+                                                       vector<unique_ptr<Expression>> &arguments) {
+	auto bd = make_uniq<NonParamBindData>();
+	if (!arguments[3]->IsFoldable()) {
+		throw BinderException("continuity must be a constant boolean");
+	}
+	Value cval = ExpressionExecutor::EvaluateScalar(context, *arguments[3]);
+	bd->continuity = cval.GetValue<bool>();
+	Function::EraseArgument(function, arguments, 3);
+
+	bd->alternative = ExtractConstantString(context, function, arguments, 2);
 	ValidateAlternative(bd->alternative);
 	return std::move(bd);
 }
@@ -199,8 +224,11 @@ static void MannWhitneyFinalize(Vector &state_vector, AggregateInputData &aggr_i
 	auto &children = StructVector::GetEntries(result);
 
 	string alternative = "two-sided";
+	bool continuity = false;
 	if (aggr_input_data.bind_data) {
-		alternative = aggr_input_data.bind_data->Cast<NonParamBindData>().alternative;
+		auto &bd = aggr_input_data.bind_data->Cast<NonParamBindData>();
+		alternative = bd.alternative;
+		continuity = bd.continuity;
 	}
 
 	for (idx_t i = 0; i < count; i++) {
@@ -245,7 +273,18 @@ static void MannWhitneyFinalize(Vector &state_vector, AggregateInputData &aggr_i
 		double mu_U = dn1 * dn2 / 2.0;
 		double sigma_U = std::sqrt(dn1 * dn2 / 12.0 * (N + 1.0 - tie_correction / (N * (N - 1.0))));
 
-		double z = (sigma_U > 0.0) ? (U1 - mu_U) / sigma_U : 0.0;
+		double z;
+		if (sigma_U <= 0.0) {
+			z = 0.0;
+		} else if (continuity) {
+			// SAS-style: shrink |U - mu| toward zero by 0.5 before standardising.
+			double diff = U1 - mu_U;
+			double abs_diff = std::abs(diff);
+			double corrected = (abs_diff > 0.5) ? abs_diff - 0.5 : 0.0;
+			z = std::copysign(corrected, diff) / sigma_U;
+		} else {
+			z = (U1 - mu_U) / sigma_U;
+		}
 		double p_value = NormalPValue(z, alternative);
 		double rank_biserial = 1.0 - 2.0 * U1 / (dn1 * dn2);
 
@@ -270,6 +309,9 @@ void RegisterMannWhitneyU(ExtensionLoader &loader) {
 	set.AddFunction(MakeMannWhitneyAgg({LogicalType::DOUBLE, LogicalType::DOUBLE}, NonParamBindDefault));
 	set.AddFunction(
 	    MakeMannWhitneyAgg({LogicalType::DOUBLE, LogicalType::DOUBLE, LogicalType::VARCHAR}, NonParamBindAlt));
+	set.AddFunction(MakeMannWhitneyAgg(
+	    {LogicalType::DOUBLE, LogicalType::DOUBLE, LogicalType::VARCHAR, LogicalType::BOOLEAN},
+	    NonParamBindAltCorrect));
 	loader.RegisterFunction(set);
 }
 
