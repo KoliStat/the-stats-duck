@@ -12,6 +12,11 @@ that name is preserved across releases for backward compatibility.
 
 ### Added
 
+- `summary_stats` result struct gains three fields: `mode` (the smallest
+  modal value), `mode_frequency` (its count), `is_multimodal` (true when
+  multiple values tie for the maximum frequency). For all-distinct input
+  the function returns `NaN` / `0` / `false`, matching SAS PROC UNIVARIATE's
+  "Mode ." for data without repeated values.
 - `sign_test_1samp(x, [mu], [alternative])` and
   `sign_test_paired(x, y, [alternative])` — one-sample and paired sign tests.
   Classify each observation as positive, negative, or zero, exclude zeros,

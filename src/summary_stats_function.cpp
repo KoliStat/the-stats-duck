@@ -84,6 +84,9 @@ static LogicalType SummaryStatsResultType() {
 	children.emplace_back("iqr", LogicalType::DOUBLE);
 	children.emplace_back("skewness", LogicalType::DOUBLE);
 	children.emplace_back("kurtosis", LogicalType::DOUBLE);
+	children.emplace_back("mode", LogicalType::DOUBLE);
+	children.emplace_back("mode_frequency", LogicalType::BIGINT);
+	children.emplace_back("is_multimodal", LogicalType::BOOLEAN);
 	return LogicalType::STRUCT(std::move(children));
 }
 
@@ -251,6 +254,41 @@ static void SummaryStatsFinalize(Vector &state_vector, AggregateInputData &aggr_
 		double q3 = Quantile(values, 0.75);
 		double iqr = q3 - q1;
 
+		// Mode ─────────────────────────────────────────────────────────
+		// Single scan over the sorted values tracks run lengths. Each
+		// completed run is fed to `consider_run`, which keeps the longest
+		// seen so far and counts ties at the maximum length. After the loop
+		// the trailing run is fed once. For all-distinct input (n>=2 and
+		// every run is length 1) we report mode = NaN / frequency = 0,
+		// matching SAS PROC UNIVARIATE's "Mode ." convention.
+		int64_t mode_count = 0;
+		double mode_value = values[0];
+		int64_t n_modes_at_max = 0;
+		int64_t run_len = 1;
+		auto consider_run = [&](double run_val) {
+			if (run_len > mode_count) {
+				mode_count = run_len;
+				mode_value = run_val;
+				n_modes_at_max = 1;
+			} else if (run_len == mode_count) {
+				n_modes_at_max++;
+			}
+		};
+		for (idx_t k = 1; k < n; k++) {
+			if (values[k] == values[k - 1]) {
+				run_len++;
+			} else {
+				consider_run(values[k - 1]);
+				run_len = 1;
+			}
+		}
+		consider_run(values[n - 1]);
+
+		bool all_distinct = n > 1 && mode_count == 1;
+		double mode_out = all_distinct ? std::numeric_limits<double>::quiet_NaN() : mode_value;
+		int64_t mode_freq_out = all_distinct ? 0 : mode_count;
+		bool is_multimodal = !all_distinct && n_modes_at_max > 1;
+
 		// Write out ──────────────────────────────────────────────────
 		FlatVector::GetData<int64_t>(*children[0])[idx] = static_cast<int64_t>(n);
 		FlatVector::GetData<int64_t>(*children[1])[idx] = state.n_missing;
@@ -265,6 +303,9 @@ static void SummaryStatsFinalize(Vector &state_vector, AggregateInputData &aggr_
 		FlatVector::GetData<double>(*children[10])[idx] = iqr;
 		FlatVector::GetData<double>(*children[11])[idx] = skewness;
 		FlatVector::GetData<double>(*children[12])[idx] = kurtosis;
+		FlatVector::GetData<double>(*children[13])[idx] = mode_out;
+		FlatVector::GetData<int64_t>(*children[14])[idx] = mode_freq_out;
+		FlatVector::GetData<bool>(*children[15])[idx] = is_multimodal;
 	}
 }
 

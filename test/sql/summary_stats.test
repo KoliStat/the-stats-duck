@@ -182,3 +182,44 @@ statement error
 SELECT summary_stats(x, x > 0) FROM small
 ----
 bias_correction must be a constant boolean
+
+# ─── mode fields ────────────────────────────────────────────────────────────
+
+# Single mode
+query TTT
+SELECT (s).mode, (s).mode_frequency, (s).is_multimodal
+FROM (SELECT summary_stats(x) AS s
+      FROM (VALUES (1.0),(2.0),(2.0),(3.0),(4.0)) AS t(x))
+----
+2.0	2	false
+
+# Bimodal: two values share max frequency; smaller is reported as the mode
+query TTT
+SELECT (s).mode, (s).mode_frequency, (s).is_multimodal
+FROM (SELECT summary_stats(x) AS s
+      FROM (VALUES (1.0),(1.0),(2.0),(3.0),(3.0),(4.0)) AS t(x))
+----
+1.0	2	true
+
+# All distinct: SAS-style "Mode ." → we return NaN, frequency 0, not multimodal
+query TT
+SELECT isnan((s).mode), (s).is_multimodal
+FROM (SELECT summary_stats(x) AS s
+      FROM (VALUES (1.0),(2.0),(3.0),(4.0),(5.0)) AS t(x))
+----
+true	false
+
+# Trimodal at frequency 2
+query TTT
+SELECT (s).mode, (s).mode_frequency, (s).is_multimodal
+FROM (SELECT summary_stats(x) AS s
+      FROM (VALUES (1.0),(1.0),(2.0),(2.0),(3.0),(3.0),(4.0)) AS t(x))
+----
+1.0	2	true
+
+# Single value: trivially its own mode at frequency 1; not multimodal
+query TTT
+SELECT (s).mode, (s).mode_frequency, (s).is_multimodal
+FROM (SELECT summary_stats(x) AS s FROM (VALUES (42.0)) AS t(x))
+----
+42.0	1	false
