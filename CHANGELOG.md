@@ -12,6 +12,11 @@ that name is preserved across releases for backward compatibility.
 
 ### Added
 
+- `summary_stats(x, bias_correction, quantile_type)` — third optional
+  parameter (INTEGER, default 7) selects the Hyndman & Fan quantile
+  algorithm. Type 7 (default) matches R and Excel INC; type 5 matches SAS
+  PROC UNIVARIATE. For `x=[1,2,3,4]`, type 7 yields Q1=1.75/Q3=3.25 while
+  type 5 yields Q1=1.5/Q3=3.5 (matching SAS PROC MEANS).
 - `summary_stats` result struct gains three fields: `mode` (the smallest
   modal value), `mode_frequency` (its count), `is_multimodal` (true when
   multiple values tie for the maximum frequency). For all-distinct input

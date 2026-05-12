@@ -95,7 +95,7 @@ p-value, and relevant effect sizes / confidence intervals.
 
 | Function                | Description                                                            |
 | ----------------------- | ---------------------------------------------------------------------- |
-| `summary_stats(column, [bias_correction])` | n, n_missing, mean, sd, variance, min, q1, median, q3, max, iqr, skewness, kurtosis, mode, mode_frequency, is_multimodal |
+| `summary_stats(column, [bias_correction], [quantile_type])` | n, n_missing, mean, sd, variance, min, q1, median, q3, max, iqr, skewness, kurtosis, mode, mode_frequency, is_multimodal |
 
 `bias_correction` (BOOLEAN, default `true`) toggles the skewness/kurtosis
 formulas. With `true` the output matches SAS PROC MEANS, scipy with
@@ -108,6 +108,14 @@ maximum frequency, the smallest of them is returned and `is_multimodal`
 is set to `true`). For all-distinct input — every value appears exactly
 once — `mode` is `NaN` and `mode_frequency` is `0`, matching SAS PROC
 UNIVARIATE's "Mode ." output.
+
+`quantile_type` (INTEGER, default `7`) picks the Hyndman & Fan (1996)
+quantile algorithm used for `q1`, `median`, and `q3`. Supported values:
+- `7` — R / Excel INC default. `position = 1 + q * (n - 1)`.
+- `5` — SAS PROC UNIVARIATE default. `position = q * n + 0.5`.
+
+For `x = [1, 2, 3, 4]`: type 7 gives Q1=1.75 / Q3=3.25 (matching R); type 5
+gives Q1=1.5 / Q3=3.5 (matching SAS PROC MEANS).
 
 ### Distribution functions (scalar)
 
@@ -192,6 +200,7 @@ report. To reproduce SAS PROC output exactly, use the toggles below.
 | PROC GLM — one-way ANOVA F-test                 | `anova_oneway(value, group)`                                          |
 | PROC UNIVARIATE — Signed Rank (sign-rank test)  | `wilcoxon_signed_rank(x, 0)` *(against a 0 column or constant)*       |
 | PROC UNIVARIATE — Sign test (M statistic)       | `sign_test_1samp(x, [mu_0])`                                          |
+| PROC UNIVARIATE — quantiles (Type 5)            | `summary_stats(x, true, 5)`                                           |
 
 Defaults preserve modern conventions so users on the modern side of the
 fence get sensible numbers without touching the API; SAS users add the

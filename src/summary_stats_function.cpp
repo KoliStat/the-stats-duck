@@ -38,15 +38,22 @@ struct SummaryStatsBindData : public FunctionData {
 	// (matching R's default, scipy with bias=True, and the canonical
 	// Jarque-Bera definition).
 	bool bias_correction = true;
+	// Quantile algorithm (Hyndman & Fan 1996 type number):
+	//   7 — R / Excel INC default: pos = 1 + q*(n-1)  (our v0.2 behaviour)
+	//   5 — SAS PROC UNIVARIATE default: pos = q*n + 0.5
+	// Other types are valid in R but not yet supported here.
+	int32_t quantile_type = 7;
 
 	unique_ptr<FunctionData> Copy() const override {
 		auto copy = make_uniq<SummaryStatsBindData>();
 		copy->bias_correction = bias_correction;
+		copy->quantile_type = quantile_type;
 		return std::move(copy);
 	}
 
 	bool Equals(const FunctionData &other_p) const override {
-		return bias_correction == other_p.Cast<SummaryStatsBindData>().bias_correction;
+		auto &other = other_p.Cast<SummaryStatsBindData>();
+		return bias_correction == other.bias_correction && quantile_type == other.quantile_type;
 	}
 };
 
@@ -63,6 +70,25 @@ static unique_ptr<FunctionData> SummaryStatsBindBias(ClientContext &context, Agg
 	Value val = ExpressionExecutor::EvaluateScalar(context, *arguments[1]);
 	auto bd = make_uniq<SummaryStatsBindData>();
 	bd->bias_correction = val.GetValue<bool>();
+	Function::EraseArgument(function, arguments, 1);
+	return std::move(bd);
+}
+
+static unique_ptr<FunctionData> SummaryStatsBindBiasQuantile(ClientContext &context, AggregateFunction &function,
+                                                              vector<unique_ptr<Expression>> &arguments) {
+	if (!arguments[1]->IsFoldable() || !arguments[2]->IsFoldable()) {
+		throw BinderException("summary_stats: bias_correction and quantile_type must be constants");
+	}
+	Value bias_val = ExpressionExecutor::EvaluateScalar(context, *arguments[1]);
+	Value qtype_val = ExpressionExecutor::EvaluateScalar(context, *arguments[2]);
+	auto bd = make_uniq<SummaryStatsBindData>();
+	bd->bias_correction = bias_val.GetValue<bool>();
+	bd->quantile_type = qtype_val.GetValue<int32_t>();
+	if (bd->quantile_type != 5 && bd->quantile_type != 7) {
+		throw BinderException("summary_stats: quantile_type must be 5 (SAS) or 7 (R/Excel, default); got %d",
+		                      bd->quantile_type);
+	}
+	Function::EraseArgument(function, arguments, 2);
 	Function::EraseArgument(function, arguments, 1);
 	return std::move(bd);
 }
@@ -90,21 +116,27 @@ static LogicalType SummaryStatsResultType() {
 	return LogicalType::STRUCT(std::move(children));
 }
 
-// ── Quantile helper (R type 7) ──────────────────────────────────────────────
+// ── Quantile helper (Hyndman & Fan type 5 or 7) ─────────────────────────────
 
-static double Quantile(const std::vector<double> &sorted, double q) {
+static double Quantile(const std::vector<double> &sorted, double q, int32_t qtype) {
 	// Precondition: `sorted` is non-empty and already sorted ascending.
 	idx_t n = sorted.size();
 	if (n == 1) {
 		return sorted[0];
 	}
-	double pos = 1.0 + q * static_cast<double>(n - 1); // 1-based
+	double n_d = static_cast<double>(n);
+	// 1-based position. Type 7 anchors at the endpoints (q=0 → pos 1, q=1 →
+	// pos n). Type 5 centres each datum at (k - 0.5)/n, so pos = q*n + 0.5.
+	double pos = (qtype == 5) ? q * n_d + 0.5 : 1.0 + q * (n_d - 1.0);
+	if (pos <= 1.0) {
+		return sorted[0];
+	}
+	if (pos >= n_d) {
+		return sorted[n - 1];
+	}
 	double floor_pos = std::floor(pos);
 	double frac = pos - floor_pos;
 	idx_t lo = static_cast<idx_t>(floor_pos) - 1; // 0-based
-	if (lo >= n - 1) {
-		return sorted[n - 1];
-	}
 	return sorted[lo] + frac * (sorted[lo + 1] - sorted[lo]);
 }
 
@@ -179,8 +211,11 @@ static void SummaryStatsFinalize(Vector &state_vector, AggregateInputData &aggr_
 	auto &children = StructVector::GetEntries(result);
 
 	bool bias_correction = true;
+	int32_t quantile_type = 7;
 	if (aggr_input_data.bind_data) {
-		bias_correction = aggr_input_data.bind_data->Cast<SummaryStatsBindData>().bias_correction;
+		auto &bd = aggr_input_data.bind_data->Cast<SummaryStatsBindData>();
+		bias_correction = bd.bias_correction;
+		quantile_type = bd.quantile_type;
 	}
 
 	for (idx_t i = 0; i < count; i++) {
@@ -249,9 +284,9 @@ static void SummaryStatsFinalize(Vector &state_vector, AggregateInputData &aggr_
 		std::sort(values.begin(), values.end());
 		double vmin = values.front();
 		double vmax = values.back();
-		double q1 = Quantile(values, 0.25);
-		double median = Quantile(values, 0.50);
-		double q3 = Quantile(values, 0.75);
+		double q1 = Quantile(values, 0.25, quantile_type);
+		double median = Quantile(values, 0.50, quantile_type);
+		double q3 = Quantile(values, 0.75, quantile_type);
 		double iqr = q3 - q1;
 
 		// Mode ─────────────────────────────────────────────────────────
@@ -322,6 +357,8 @@ void RegisterSummaryStats(ExtensionLoader &loader) {
 	AggregateFunctionSet set("summary_stats");
 	set.AddFunction(MakeSummaryStats({LogicalType::DOUBLE}, SummaryStatsBindNoArg));
 	set.AddFunction(MakeSummaryStats({LogicalType::DOUBLE, LogicalType::BOOLEAN}, SummaryStatsBindBias));
+	set.AddFunction(MakeSummaryStats({LogicalType::DOUBLE, LogicalType::BOOLEAN, LogicalType::INTEGER},
+	                                  SummaryStatsBindBiasQuantile));
 	loader.RegisterFunction(set);
 }
 

@@ -223,3 +223,47 @@ SELECT (s).mode, (s).mode_frequency, (s).is_multimodal
 FROM (SELECT summary_stats(x) AS s FROM (VALUES (42.0)) AS t(x))
 ----
 42.0	1	false
+
+# ─── quantile_type option ───────────────────────────────────────────────────
+
+statement ok
+CREATE TABLE four AS SELECT * FROM (VALUES (1.0),(2.0),(3.0),(4.0)) AS t(x);
+
+# Default = Type 7 (R / Excel INC): Q1 = 1.75, Q3 = 3.25, IQR = 1.5
+query TTT
+SELECT (s).q1, (s).q3, (s).iqr FROM (SELECT summary_stats(x) AS s FROM four)
+----
+1.75	3.25	1.5
+
+# Explicit Type 7 matches default
+query TTT
+SELECT (s).q1, (s).q3, (s).iqr FROM (SELECT summary_stats(x, true, 7) AS s FROM four)
+----
+1.75	3.25	1.5
+
+# Type 5 = SAS PROC UNIVARIATE default: Q1 = 1.5, Q3 = 3.5, IQR = 2.0
+# (matches the PROC MEANS Lower/Upper Quartile output for [1,2,3,4])
+query TTT
+SELECT (s).q1, (s).q3, (s).iqr FROM (SELECT summary_stats(x, true, 5) AS s FROM four)
+----
+1.5	3.5	2.0
+
+# Type 5 and Type 7 agree on the median for symmetric data
+query T
+SELECT (summary_stats(x, true, 5)).median = (summary_stats(x, true, 7)).median FROM four
+----
+true
+
+# bias_correction is independent of quantile_type
+query TT
+SELECT (summary_stats(x, true, 5)).kurtosis,
+       (summary_stats(x, false, 5)).kurtosis
+FROM four
+----
+-1.2	-1.36
+
+# Bind error: unsupported quantile_type
+statement error
+SELECT summary_stats(x, true, 4) FROM four
+----
+quantile_type must be 5 (SAS) or 7 (R/Excel, default)
