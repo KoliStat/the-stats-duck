@@ -15,8 +15,8 @@ authors:
     given-names: Massimo
 repository-code: "https://github.com/caerbannogwhite/the-stats-duck"
 url: "https://github.com/caerbannogwhite/the-stats-duck"
-version: 0.2.0-bring-out-your-dead
-date-released: "2026-05-03"
+version: 0.3.0-customer
+date-released: "2026-05-13"
 license: Apache-2.0
 keywords:
   - duckdb

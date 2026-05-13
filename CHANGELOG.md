@@ -10,105 +10,112 @@ that name is preserved across releases for backward compatibility.
 
 ## [Unreleased]
 
+## [0.3.0-customer] - 2026-05-13
+
+Focused on closing the gap with SAS PROC UNIVARIATE / PROC MEANS /
+PROC FREQ / PROC CORR while keeping modern statistical defaults. Every
+new optional parameter ships with a `false` / population / no-correction
+default; existing callers see no behavioural change.
+
 ### Added
 
-- `summary_stats(x, bias_correction, quantile_type)` — third optional
-  parameter (INTEGER, default 7) selects the Hyndman & Fan quantile
-  algorithm. Type 7 (default) matches R and Excel INC; type 5 matches SAS
-  PROC UNIVARIATE. For `x=[1,2,3,4]`, type 7 yields Q1=1.75/Q3=3.25 while
-  type 5 yields Q1=1.5/Q3=3.5 (matching SAS PROC MEANS).
-- `summary_stats` result struct gains three fields: `mode` (the smallest
-  modal value), `mode_frequency` (its count), `is_multimodal` (true when
-  multiple values tie for the maximum frequency). For all-distinct input
-  the function returns `NaN` / `0` / `false`, matching SAS PROC UNIVARIATE's
-  "Mode ." for data without repeated values.
-- `sign_test_1samp(x, [mu], [alternative])` and
-  `sign_test_paired(x, y, [alternative])` — one-sample and paired sign tests.
-  Classify each observation as positive, negative, or zero, exclude zeros,
-  and compute a binomial p-value against p=0.5. Matches SAS PROC UNIVARIATE
-  "Tests for Location: Sign" exactly (M = -4.5, p = 0.0039 on R's sleep
-  dataset). Result struct: `(test_type, m_statistic, n_pos, n_neg, n_zero,
-  p_value, alternative, n)`. Completes the "Tests for Location" trio
-  alongside Student's t and Wilcoxon signed-rank.
-- `wilcoxon_signed_rank(x, y, [alternative], [continuity])` — optional boolean
-  `continuity` (default `false`) toggles the half-step continuity correction
-  on the normal-approximation Z. Reuses the `NonParamBindData.continuity`
-  field that was added alongside the Mann-Whitney option. Matches R
-  `wilcox.test(..., correct=TRUE, exact=FALSE)` and SAS PROC UNIVARIATE's
-  asymptotic Z (SAS additionally offers an exact small-n distribution —
-  out of scope here).
-- `chisq_independence(row, col, [continuity])` — optional boolean
-  `continuity` (default `false`) toggles Yates' continuity correction.
-  Only applied when the table is exactly 2x2 (df=1); silently dropped
-  on larger tables, matching R `chisq.test(correct=TRUE)`. SAS PROC FREQ
-  reports `Continuity Adj. Chi-Square 9.9556` for the (30,10,15,25)
-  table — and so do we with `continuity=true`.
-- `mann_whitney_u(x, y, [alternative], [continuity])` — optional boolean
-  `continuity` (default `false`) toggles the half-step continuity correction
-  on the normal-approximation Z. Default matches scipy.stats.mannwhitneyu and
-  R's `wilcox.test(..., correct=FALSE)`. With `continuity=true`, the output
-  matches SAS PROC NPAR1WAY (`Z=-2.5067, p=0.0122` for the canonical
-  `[1..5]` vs `[6..10]` separated dataset).
-- `summary_stats(x, [bias_correction])` — optional boolean parameter
-  (default `true`) selects between the bias-corrected sample formulas for
-  skewness/kurtosis (matching SAS PROC MEANS, scipy `bias=False`, Excel)
-  and the population formulas `m3/m2^1.5` / `m4/m2² - 3` (matching R's
-  default). Mean, SD, variance, quantiles, and IQR are unaffected. The
-  default preserves prior behaviour, so existing callers see no change.
-- `spearman_test(x, y, [alpha], [alternative])` — Spearman rank correlation
-  aggregate. Buffers paired rows (ranks need full data), midrank tie correction,
-  significance via Student's t with `df = n-2` (the Pearson-on-ranks asymptotic
-  that R's `cor.test` returns), Fisher-z confidence interval on rho. Returns
-  `STRUCT(test_type, rho, t_statistic, df, p_value, alternative, ci_lower, ci_upper, n)`.
-- `kendall_test(x, y, [alternative])` — Kendall's tau-b aggregate. Buffers paired
-  rows, O(n²) pair counting with Knight's tie-corrected variance, normal-
-  approximation z-statistic. No `alpha` argument (no widely-used closed-form CI
-  for tau). Always uses the normal approximation — R's `cor.test` switches to
-  an exact test for small-n tie-free input by default; we don't, so small-n
-  p-values may differ slightly. Returns
-  `STRUCT(test_type, tau, z_statistic, p_value, alternative, n)`.
-- `COPY tbl TO 'file.por'` — write SPSS Portable (POR) files via ReadStat. Same
-  type and NULL semantics as the SAV writer, but with XPT-style strict
+- **Rank correlations.** `spearman_test(x, y, [alpha], [alternative])`
+  and `kendall_test(x, y, [alternative])` complete the correlation family
+  started in v0.1. Spearman: midrank tie correction, Pearson-on-ranks
+  Student's t (df = n-2), Fisher-z CI on rho. Kendall: tau-b only, O(n²)
+  pair counting with Knight's tie-corrected variance and a normal-
+  approximation z. Result-struct shape mirrors `pearson_test`. SAS-
+  verified against PROC CORR.
+
+- **Sign tests.** `sign_test_1samp(x, [mu], [alternative])` and
+  `sign_test_paired(x, y, [alternative])` complete PROC UNIVARIATE's
+  "Tests for Location" trio (alongside Student's t and Wilcoxon
+  signed-rank). M = (n_pos - n_neg) / 2 matches SAS exactly (M = -4.5,
+  p = 0.0039 on R's sleep dataset). Binomial p-value via the
+  regularized incomplete beta identity.
+
+- **`summary_stats` gets three new fields and two options.**
+  - `mode` (smallest modal value), `mode_frequency`, `is_multimodal`
+    fields. For all-distinct input → `NaN / 0 / false`, matching SAS
+    PROC UNIVARIATE's "Mode ." convention.
+  - `bias_correction` (BOOLEAN, default `true`) toggles between
+    bias-corrected sample formulas for skewness/kurtosis (SAS / pandas
+    / Excel) and population formulas `m3/m2^1.5` / `m4/m2² - 3` (R /
+    scipy default). Mean, SD, variance, quantiles, IQR unaffected.
+  - `quantile_type` (INTEGER, default `7`) picks the Hyndman & Fan
+    quantile algorithm. Type 7 (R / Excel INC) is the default; type 5
+    matches SAS PROC UNIVARIATE — `Q1 = 1.5` / `Q3 = 3.5` on `[1,2,3,4]`
+    vs Type 7's `1.75` / `3.25`.
+
+- **Continuity-correction toggles** on three nonparametric tests, all
+  defaulting to `false` (matching scipy / R `correct=FALSE`):
+  - `mann_whitney_u(x, y, [alternative], [continuity])` — set `true`
+    for SAS PROC NPAR1WAY (Z = -2.5067, p = 0.0122 on `[1..5]` vs
+    `[6..10]`).
+  - `wilcoxon_signed_rank(x, y, [alternative], [continuity])` — set
+    `true` for SAS PROC UNIVARIATE's asymptotic signed-rank Z.
+  - `chisq_independence(row, col, [continuity])` — set `true` for
+    Yates' (2x2 only; silently dropped on larger tables, matching
+    `chisq.test(correct=TRUE)`). SAS-verified: χ² = 9.9556 on the
+    (30, 10, 15, 25) table.
+
+- **SPSS Portable (POR) export**: `COPY tbl TO 'file.por'`. Same type
+  and NULL semantics as the SAV writer, with XPT-style strict
   column-name rules (≤ 8 chars uppercase, A-Z 0-9 _) and no compression
-  (POR is plain ASCII). Optional `LABEL` option. POR is the legacy
-  cross-platform sibling of SAV, still encountered in some government and
-  academic data archives. The reader has supported `.por` since v0.1.0.
-- XPT export now accepts a `VERSION` option (5 or 8). Version 5 is the default
-  (preserves backwards compatibility with v0.2.0). Version 8 lifts the column-
-  name limit to 32 chars and raises the dataset name limit to 32 chars. v8
-  files round-trip through `read_stat()`, pyreadstat, haven, and R; some
-  legacy SAS toolchains still expect v5, hence the conservative default.
-- `COPY tbl TO 'file.{xpt,sas7bdat,sav,por}'` now picks up DuckDB column
-  comments (set via `COMMENT ON COLUMN tbl.col IS '...'`) and writes them as
-  ReadStat variable labels — visible in SAS, SPSS, pyreadstat, haven, and R as
-  the column's descriptive label. Only applies when the COPY source is a
-  named base table; `COPY (SELECT …) TO …` has no source-table comment
-  metadata and writes empty labels. XPT v8 stores labels longer than 40 chars
-  in the LABELV8 long-label subrecord.
-- `read_stat_metadata(path, [format], [encoding])` — table function that
-  returns one row per variable with `(column_name, type, format, label)`,
-  without scanning the data. Useful for inspecting SAS / SPSS / Stata files
-  before importing, and for verifying that column comments propagated through
-  to ReadStat variable labels on export.
-- `make mingw_release` — local build target that produces a
-  `windows_amd64_mingw`-stamped `stats_duck.duckdb_extension` for loading
-  into mingw-built DuckDB hosts (the zig-bundled DuckDB inside `sassy`,
-  DuckDB's own `duckdb_cli-windows-amd64-mingw.zip` releases, etc.). The
-  default `make release` on Windows still produces an MSVC-tagged
-  `windows_amd64` binary; both can coexist. CI already ships both flavors
-  via extension-ci-tools' standard distribution matrix — this target is
-  for local verification and side-loading. See README's "Building with
-  MinGW" section.
-- `make zig_mingw_release` — second `windows_amd64_mingw` build variant
-  that uses zig's bundled clang + **libc++** instead of mingw-gcc's
-  **libstdc++**. The DuckDB platform string doesn't distinguish the two
-  C++ runtimes, so a `mingw_release` artifact loaded into a libc++-linked
-  DuckDB host (e.g. zig-built `sassy` with `link_libcpp = true`) passes
-  the platform check and segfaults at function registration — std::map
-  and friends have ABI-incompatible layouts across the two STLs. Output
-  lands at `build/zig_mingw_release/...` so it's distinguishable from
-  the GCC variant. Requires zig 0.16+ on `PATH`. Drives `cmake` via the
-  shim scripts in `scripts/zig-shims/`.
+  (POR is plain ASCII). The reader has supported `.por` since v0.1.0.
+
+- **XPT version-8 export**: `COPY tbl TO 'file.xpt' (VERSION 8)` lifts
+  the v5 column-name limit (8 chars) to 32 chars and raises the dataset
+  name limit similarly. Default remains v5 for backward compatibility.
+  v8 files round-trip through `read_stat()`, pyreadstat, haven, and R;
+  some legacy SAS toolchains still expect v5.
+
+- **Column-label propagation on export**: `COPY tbl TO
+  'file.{xpt,sas7bdat,sav,por}'` picks up DuckDB column comments
+  (`COMMENT ON COLUMN tbl.col IS '...'`) and writes them as ReadStat
+  variable labels — visible in SAS, SPSS, pyreadstat, haven, and R as
+  the column's descriptive label. Only applies when the COPY source is
+  a named base table; `COPY (SELECT …) TO …` writes empty labels. XPT
+  v8 stores labels longer than 40 chars in the `LABELV8` long-label
+  subrecord.
+
+- **`read_stat_metadata(path, [format], [encoding])`** — table function
+  returning one row per variable with `(column_name, type, format,
+  label)`, without scanning the data. Useful for inspecting SAS / SPSS
+  / Stata files before importing, and for verifying that column
+  comments propagated through to ReadStat variable labels on export.
+
+- **Local mingw build targets**: `make mingw_release` produces a
+  `windows_amd64_mingw`-stamped extension for loading into mingw-built
+  DuckDB hosts. `make zig_mingw_release` does the same with zig's
+  bundled clang + libc++ for libc++-linked DuckDB hosts (e.g. the
+  zig-bundled DuckDB inside `sassy` with `link_libcpp = true`). See the
+  README's "Building with MinGW" / "Building with zig" sections.
+
+- **SAS compatibility section** in the README — single-table reference
+  for every per-call toggle and how to set it to reproduce SAS PROC
+  output exactly.
+
+- **Test suite expanded from 32 to 39 cases / 848 to 1117 assertions.**
+  New `.test` files for `anova_oneway`, `chisq_independence`,
+  `chisq_goodness_of_fit`, `jarque_bera`, `summary_stats`,
+  `distribution_functions`, `sign_test`, plus the rank-correlation
+  tests. Reference values are R 4.5.3-verified via an out-of-tree
+  script. Backfills `pearson_test.test`, which was previously missing.
+
+### Fixed
+
+- `pearson_test` and `spearman_test` no longer return `p_value = 0`
+  when `|r| = 1` produces an infinite t-statistic. The hard-coded
+  short-circuit was wrong for one-sided alternatives (`r = 1` with
+  `alternative = 'less'` must give `p = 1`, not `0`). `StudentTCDF`
+  handles `±inf` correctly; the short-circuit is removed.
+
+- Readstat's `iconv` cast in `readstat_convert.c` mismatched
+  `win_iconv`'s `WINICONV_CONST char **` by one `const`, which mingw
+  GCC ≥ 15 (the toolchain on `windows-latest` after early-May 2026)
+  rejects as an error. CMakeLists now defines `ICONV_CONST=const` on
+  Windows so the typedef chain lines up.
 
 ## [0.2.0-bring-out-your-dead] - 2026-05-03
 
@@ -203,5 +210,6 @@ First public release.
 - `linux_amd64_musl` is excluded due to a known upstream issue in the v1.2.2 extension-ci-tools Alpine Dockerfile.
 - WASM binaries served via GitHub Pages at `https://caerbannogwhite.github.io/the-stats-duck`.
 
+[0.3.0-customer]: https://github.com/caerbannogwhite/the-stats-duck/releases/tag/v0.3.0
 [0.2.0-bring-out-your-dead]: https://github.com/caerbannogwhite/the-stats-duck/releases/tag/v0.2.0
 [0.1.0-mortician]: https://github.com/caerbannogwhite/the-stats-duck/releases/tag/v0.1.0
