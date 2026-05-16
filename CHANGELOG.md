@@ -12,6 +12,17 @@ that name is preserved across releases for backward compatibility.
 
 ### Added
 
+- `table_one(data, variables [, by])` — Table-1-style descriptives summary as
+  a DuckDB table function. Auto-classifies each variable from its catalog
+  column type (integer / floating-point → numeric, everything else →
+  categorical); emits long-format rows
+  `(variable, level, statistic, stratum, display)` with `level` = NULL for
+  numeric variables. Numeric stats: `n`, `missing`, `mean (sd)`,
+  `median [q1, q3]`, `min, max`. Categorical: per-level `n (%)` plus a
+  trailing `missing` row when any are present. With `by`, emits an `Overall`
+  stratum plus one stratum per distinct `by` value. v0.4 MVP — between-group
+  p-value column, `force_categorical` / `force_numerical` overrides, and the
+  `overall := false` toggle will land in v0.5.
 - `adjust_p(pvals LIST<DOUBLE>, method VARCHAR) → LIST<DOUBLE>` — multiple-
   testing correction. Methods match R's `p.adjust`: `'bonferroni'`, `'holm'`,
   `'hochberg'`, `'BH'` (alias `'fdr'`), `'BY'`, `'none'`. Returns adjusted

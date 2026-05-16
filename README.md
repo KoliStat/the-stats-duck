@@ -141,6 +141,41 @@ gives Q1=1.5 / Q3=3.5 (matching SAS PROC MEANS).
 | `pf(x, df1, df2)`        | F distribution CDF      |
 | `qf(p, df1, df2)`        | F distribution quantile |
 
+### Table 1 summary (table function)
+
+| Function                                          | Description                                                |
+| ------------------------------------------------- | ---------------------------------------------------------- |
+| `table_one(data, variables [, by])`               | Long-format descriptives table for mixed variable types    |
+
+```sql
+SELECT * FROM table_one(
+    'patients',
+    variables := ['age', 'sex', 'bmi'],
+    by := 'arm'           -- optional
+);
+```
+
+Output columns (long format, fixed schema):
+`variable`, `level`, `statistic`, `stratum`, `display`
+
+- Each numeric variable yields rows for `n`, `missing`, `mean (sd)`,
+  `median [q1, q3]`, `min, max` — `level` is NULL.
+- Each categorical variable yields one row per level with `n (%)` and an
+  optional trailing `missing` row.
+- `stratum` is `'Overall'` when `by` is unset, and `'Overall'` plus one
+  value per distinct `by` value otherwise.
+- Variable types are auto-classified from the catalog: integer / floating-
+  point types are numeric, everything else (VARCHAR, BOOLEAN, ENUM,
+  date/time) is categorical.
+
+Pivot to wide for display:
+
+```sql
+PIVOT table_one('patients', variables := ['age', 'sex'], by := 'arm')
+    ON stratum USING first(display)
+    GROUP BY variable, level, statistic;
+```
+
 ### Multiple-testing correction (scalar)
 
 | Function                                | Description                                                                |
