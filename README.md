@@ -53,6 +53,7 @@ diagnostics, multiple-testing corrections, and more distribution families.
 | `chisq_independence(row, col, [continuity])`                         | Chi-square test of independence          |
 | `chisq_goodness_of_fit(category)`                                    | Chi-square goodness-of-fit (uniform)     |
 | `jarque_bera(column)`                                                | Jarque-Bera normality test               |
+| `anderson_darling(column)`                                           | Anderson-Darling normality test          |
 | `sign_test_1samp(column, [mu], [alternative])`                       | Sign test on the median                  |
 | `sign_test_paired(column1, column2, [alternative])`                  | Paired sign test                         |
 
@@ -88,6 +89,8 @@ p-value, and relevant effect sizes / confidence intervals.
 **Chi-square:** `test_type`, `chi_square`, `df`, `p_value`, `n`, `n_rows`/`n_cols` or `n_categories`
 
 **Jarque-Bera:** `test_type`, `jb_statistic`, `skewness`, `excess_kurtosis`, `df`, `p_value`, `n`
+
+**Anderson-Darling:** `test_type`, `a_squared`, `a_squared_adjusted`, `p_value`, `n`
 
 **Sign test:** `test_type`, `m_statistic`, `n_pos`, `n_neg`, `n_zero`, `p_value`, `alternative`, `n`
 

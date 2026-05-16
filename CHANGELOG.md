@@ -10,6 +10,16 @@ that name is preserved across releases for backward compatibility.
 
 ## [Unreleased]
 
+### Added
+
+- `anderson_darling(x)` — Anderson-Darling normality test against the fitted
+  normal (mean and variance estimated from the sample, "case 3"). Buffer-based
+  aggregate: state holds the values; sort + scan happen in Finalize. Statistic
+  is the standard A² with Stephens' size adjustment `(1 + 0.75/n + 2.25/n²)`,
+  p-value via Stephens (1986)'s four-segment polynomial approximation. Valid
+  for `n >= 8` (returns NULL otherwise, matching R's `nortest::ad.test`).
+  Returns `STRUCT(test_type, a_squared, a_squared_adjusted, p_value, n)`.
+
 ## [0.3.2-here-s-one] - 2026-05-13
 
 ### Fixed

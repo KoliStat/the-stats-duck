@@ -11,4 +11,12 @@ namespace duckdb {
 //! p_value, n).
 void RegisterJarqueBera(ExtensionLoader &loader);
 
+//! Registers anderson_darling(column) — Anderson-Darling normality test
+//! against the fitted normal (mean and variance estimated from the sample).
+//! Buffer-based aggregate: state holds the values, sort + scan happen in
+//! Finalize. p-value via Stephens (1986)'s four-segment approximation; valid
+//! for n >= 8 (returns NULL otherwise). Returns STRUCT(test_type, a_squared,
+//! a_squared_adjusted, p_value, n).
+void RegisterAndersonDarling(ExtensionLoader &loader);
+
 } // namespace duckdb
