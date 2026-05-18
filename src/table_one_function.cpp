@@ -257,8 +257,13 @@ static void EmitNumericRows(Connection &conn, const std::string &table,
 	               FormatDouble1(vmin) + ", " + FormatDouble1(vmax)});
 }
 
-//! For a categorical variable, emit one row per level (sorted ascending) with
-//! `n (%)` formatted display, plus a trailing "missing" row.
+//! For a categorical variable, emit one row per observed non-NULL level plus a
+//! "Missing" level row at the end. The Missing row is always emitted (even when
+//! the count is zero) so that downstream PIVOTs see a stable shape; users who
+//! don't want it can filter with `WHERE level <> 'Missing'`. All `n (%)`
+//! percentages share the same denominator — total rows in the stratum,
+//! including the missing count — so the per-stratum level percentages sum to
+//! 100%.
 static void EmitCategoricalRows(Connection &conn, const std::string &table,
                                 const std::string &var, const std::string &by_col,
                                 const std::string &group_value,
@@ -272,7 +277,6 @@ static void EmitCategoricalRows(Connection &conn, const std::string &table,
 	}
 	sql << " GROUP BY 1 ORDER BY 1";
 
-	// Trailing missing count (separate query — cleaner than COALESCE wrangling).
 	std::stringstream missing_sql;
 	missing_sql << "SELECT COUNT(*) FROM " << QuoteIdent(table) << " WHERE "
 	            << QuoteIdent(var) << " IS NULL";
@@ -286,37 +290,39 @@ static void EmitCategoricalRows(Connection &conn, const std::string &table,
 		                            result->GetError());
 	}
 
-	// First pass: collect all rows, summing for the denominator.
 	struct Cell {
 		std::string level;
 		int64_t n;
 	};
 	std::vector<Cell> cells;
-	int64_t total = 0;
+	int64_t nonmissing_total = 0;
 	while (auto chunk = result->Fetch()) {
 		for (idx_t i = 0; i < chunk->size(); i++) {
 			std::string lvl = chunk->GetValue(0, i).ToString();
 			int64_t n = chunk->GetValue(1, i).GetValue<int64_t>();
 			cells.push_back({lvl, n});
-			total += n;
+			nonmissing_total += n;
 		}
 	}
 
+	int64_t miss = 0;
+	auto miss_result = conn.Query(missing_sql.str());
+	if (miss_result->HasError()) {
+		throw InvalidInputException("table_one: failed to count missing for '%s' (%s)", var,
+		                            miss_result->GetError());
+	}
+	auto miss_chunk = miss_result->Fetch();
+	if (miss_chunk && miss_chunk->size() > 0) {
+		miss = miss_chunk->GetValue(0, 0).GetValue<int64_t>();
+	}
+
+	double denom = static_cast<double>(nonmissing_total + miss);
 	for (auto &c : cells) {
 		out.push_back({var, c.level, "n (%)", stratum_label,
-		               FormatPercent(static_cast<double>(c.n), static_cast<double>(total))});
+		               FormatPercent(static_cast<double>(c.n), denom)});
 	}
-
-	auto miss_result = conn.Query(missing_sql.str());
-	if (!miss_result->HasError()) {
-		auto miss_chunk = miss_result->Fetch();
-		if (miss_chunk && miss_chunk->size() > 0) {
-			int64_t miss = miss_chunk->GetValue(0, 0).GetValue<int64_t>();
-			if (miss > 0) {
-				out.push_back({var, "", "missing", stratum_label, FormatInt(miss)});
-			}
-		}
-	}
+	out.push_back({var, "Missing", "n (%)", stratum_label,
+	               FormatPercent(static_cast<double>(miss), denom)});
 }
 
 // ── InitGlobal: pre-compute every row ──────────────────────────────────────

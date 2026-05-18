@@ -39,15 +39,18 @@ n	7
 
 # ─── Categorical variable rows ──────────────────────────────────────────────
 
-# sex has 4 F / 4 M, no missing → emit two `n (%)` rows, no missing row.
+# sex has 4 F / 4 M, no missing → still emit a `Missing` level row with 0 (0.0%)
+# so the output shape is stable across variables with and without missing data.
 query TTT
 SELECT level, statistic, display FROM table_one('patients', variables := ['sex'])
 ORDER BY level
 ----
 F	n (%)	4 (50.0%)
 M	n (%)	4 (50.0%)
+Missing	n (%)	0 (0.0%)
 
-# Categorical with missing values is reflected in a trailing "missing" row.
+# Categorical with missing values: Missing becomes a real level row, so all
+# level percentages share the same denominator (total = 4) and sum to 100%.
 statement ok
 CREATE TABLE has_missing AS SELECT * FROM (VALUES
     ('A'), ('A'), ('B'), (NULL)
@@ -55,11 +58,11 @@ CREATE TABLE has_missing AS SELECT * FROM (VALUES
 
 query TTT
 SELECT level, statistic, display FROM table_one('has_missing', variables := ['cat'])
-ORDER BY COALESCE(level, 'z'), statistic
+ORDER BY level
 ----
-A	n (%)	2 (66.7%)
-B	n (%)	1 (33.3%)
-NULL	missing	1
+A	n (%)	2 (50.0%)
+B	n (%)	1 (25.0%)
+Missing	n (%)	1 (25.0%)
 
 # ─── `by` stratification ──────────────────────────────────────────────────────
 
@@ -73,25 +76,30 @@ mean (sd)	A	54.8 (6.7)
 mean (sd)	B	56.6 (9.2)
 mean (sd)	Overall	55.6 (7.2)
 
-# Categorical with by — each level emitted once per stratum.
+# Categorical with by — each level (including Missing) emitted once per stratum.
 query TTT
 SELECT level, statistic, stratum FROM table_one('patients', variables := ['sex'], by := 'arm')
 WHERE statistic = 'n (%)' ORDER BY stratum, level
 ----
 F	n (%)	A
 M	n (%)	A
+Missing	n (%)	A
 F	n (%)	B
 M	n (%)	B
+Missing	n (%)	B
 F	n (%)	Overall
 M	n (%)	Overall
+Missing	n (%)	Overall
 
-# Each by-stratum's percentages sum to 100% within the stratum.
+# Each by-stratum's percentages sum to 100% within the stratum (with the
+# Missing row always present, even when its count is zero).
 query T
 SELECT display FROM table_one('patients', variables := ['sex'], by := 'arm')
 WHERE stratum = 'A' ORDER BY level
 ----
 2 (50.0%)
 2 (50.0%)
+0 (0.0%)
 
 # ─── Multiple variables in one call ─────────────────────────────────────────
 

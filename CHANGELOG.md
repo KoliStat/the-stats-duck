@@ -18,11 +18,15 @@ that name is preserved across releases for backward compatibility.
   categorical); emits long-format rows
   `(variable, level, statistic, stratum, display)` with `level` = NULL for
   numeric variables. Numeric stats: `n`, `missing`, `mean (sd)`,
-  `median [q1, q3]`, `min, max`. Categorical: per-level `n (%)` plus a
-  trailing `missing` row when any are present. With `by`, emits an `Overall`
-  stratum plus one stratum per distinct `by` value. v0.4 MVP — between-group
-  p-value column, `force_categorical` / `force_numerical` overrides, and the
-  `overall := false` toggle will land in v0.5.
+  `median [q1, q3]`, `min, max`. Categorical: per-level `n (%)` followed by
+  a `Missing` level row that is always emitted (even when its count is zero)
+  so downstream PIVOTs see a stable shape — filter with `WHERE level <>
+  'Missing'` if you don't want it. All categorical-level percentages share
+  the same denominator (stratum total including missings) so they sum to
+  100%. With `by`, emits an `Overall` stratum plus one stratum per distinct
+  `by` value. v0.4 MVP — between-group p-value column, `force_categorical` /
+  `force_numerical` overrides, and the `overall := false` toggle will land
+  in v0.5.
 - `adjust_p(pvals LIST<DOUBLE>, method VARCHAR) → LIST<DOUBLE>` — multiple-
   testing correction. Methods match R's `p.adjust`: `'bonferroni'`, `'holm'`,
   `'hochberg'`, `'BH'` (alias `'fdr'`), `'BY'`, `'none'`. Returns adjusted
