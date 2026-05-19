@@ -1,0 +1,94 @@
+# name: test/sql/anderson_darling.test
+# description: Anderson-Darling normality test
+# group: [stats_duck]
+
+require stats_duck
+
+# Uniform integer sequence 1..10. After standardisation it looks roughly
+# linear in quantile space (not normal), but for small n the EDF-vs-fitted-
+# normal discrepancy is modest — A² ≈ 0.14, p ≈ 0.96. (Cross-check with
+# R: nortest::ad.test(1:10).)
+statement ok
+CREATE TABLE seq AS SELECT range AS x FROM range(1, 11);
+
+query TTTTT
+SELECT (r).test_type,
+       ROUND((r).a_squared, 4),
+       ROUND((r).a_squared_adjusted, 4),
+       ROUND((r).p_value, 4),
+       (r).n
+FROM (SELECT anderson_darling(x::DOUBLE) AS r FROM seq)
+----
+Anderson-Darling	0.1411	0.1549	0.9567	10
+
+# Approximately-normal symmetric data → small A², high p
+statement ok
+CREATE TABLE near_normal AS SELECT * FROM (VALUES
+    (-1.5),(-1.0),(-0.5),(-0.3),(0.0),(0.3),(0.5),(1.0),(1.5)
+) AS t(x);
+
+query T
+SELECT (r).p_value > 0.5
+FROM (SELECT anderson_darling(x) AS r FROM near_normal)
+----
+true
+
+# Clearly non-normal: right-skewed cluster + outlier. A² >> 1, p tiny.
+statement ok
+CREATE TABLE skewed AS SELECT * FROM (VALUES
+    (0.1),(0.2),(0.3),(0.4),(0.5),(0.6),(0.7),(0.8),
+    (5.0),(5.5),(6.0),(6.5),(7.0)
+) AS t(x);
+
+query TT
+SELECT (r).a_squared > 1.0,
+       (r).p_value < 0.01
+FROM (SELECT anderson_darling(x) AS r FROM skewed)
+----
+true	true
+
+# a_squared_adjusted is always strictly greater than a_squared
+# (the (1 + 0.75/n + 2.25/n²) multiplier is > 1 for any finite n).
+query T
+SELECT (r).a_squared_adjusted > (r).a_squared
+FROM (SELECT anderson_darling(x) AS r FROM near_normal)
+----
+true
+
+# n < 8: Stephens' approximation isn't valid → NULL
+query T
+SELECT anderson_darling(x) FROM (VALUES (1.0),(2.0),(3.0),(4.0),(5.0),(6.0),(7.0)) AS t(x)
+----
+NULL
+
+# All values identical: sd = 0, standardisation undefined → NULL
+query T
+SELECT anderson_darling(x) FROM (VALUES (5.0),(5.0),(5.0),(5.0),(5.0),(5.0),(5.0),(5.0)) AS t(x)
+----
+NULL
+
+# NULLs are skipped (need 8 non-NULL to compute)
+statement ok
+INSERT INTO near_normal VALUES (NULL), (NULL);
+
+query T
+SELECT (r).n FROM (SELECT anderson_darling(x) AS r FROM near_normal)
+----
+9
+
+# GROUP BY: per-group AD
+statement ok
+CREATE TABLE grouped AS SELECT * FROM (VALUES
+    ('a',-1.5),('a',-1.0),('a',-0.5),('a',-0.3),('a',0.0),
+    ('a',0.3),('a',0.5),('a',1.0),('a',1.5),
+    ('b',0.1),('b',0.2),('b',0.3),('b',0.4),('b',0.5),
+    ('b',0.6),('b',0.7),('b',5.0),('b',6.0),('b',7.0)
+) AS t(g, x);
+
+query TT
+SELECT g, (anderson_darling(x)).p_value > 0.05
+FROM grouped GROUP BY g ORDER BY g
+----
+a	true
+b	false
+

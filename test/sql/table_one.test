@@ -1,0 +1,135 @@
+# name: test/sql/table_one.test
+# description: Table-1 style descriptives summary (v0.4 MVP)
+# stratum: [stats_duck]
+
+require stats_duck
+
+statement ok
+CREATE TABLE patients AS SELECT * FROM (VALUES
+    (54.2, 'F', 24.5, 'A'),
+    (61.0, 'F', 28.1, 'A'),
+    (45.7, 'M', 22.3, 'A'),
+    (58.3, 'M', NULL, 'A'),
+    (67.1, 'F', 31.2, 'B'),
+    (52.9, 'M', 26.0, 'B'),
+    (49.8, 'F', 23.9, 'B'),
+    (NULL, 'M', 27.4, 'B')
+) AS t(age, sex, bmi, arm);
+
+# ─── Output schema is fixed (variable, level, statistic, stratum, display) ────
+
+query TTTTT
+SELECT * FROM table_one('patients', variables := ['age']) ORDER BY statistic
+----
+age	NULL	mean (sd)	Overall	55.6 (7.2)
+age	NULL	median [q1, q3]	Overall	54.2 [51.3, 59.6]
+age	NULL	min, max	Overall	45.7, 67.1
+age	NULL	missing	Overall	1
+age	NULL	n	Overall	7
+
+# ─── Numeric variable rows ──────────────────────────────────────────────────
+
+# Counts are correct (n=7 valid, 1 missing) — verifies pairwise-complete handling.
+query TT
+SELECT statistic, display FROM table_one('patients', variables := ['age'])
+WHERE statistic IN ('n', 'missing') ORDER BY statistic
+----
+missing	1
+n	7
+
+# ─── Categorical variable rows ──────────────────────────────────────────────
+
+# sex has 4 F / 4 M, no missing → still emit a `Missing` level row with 0 (0.0%)
+# so the output shape is stable across variables with and without missing data.
+query TTT
+SELECT level, statistic, display FROM table_one('patients', variables := ['sex'])
+ORDER BY level
+----
+F	n (%)	4 (50.0%)
+M	n (%)	4 (50.0%)
+Missing	n (%)	0 (0.0%)
+
+# Categorical with missing values: Missing becomes a real level row, so all
+# level percentages share the same denominator (total = 4) and sum to 100%.
+statement ok
+CREATE TABLE has_missing AS SELECT * FROM (VALUES
+    ('A'), ('A'), ('B'), (NULL)
+) AS t(cat);
+
+query TTT
+SELECT level, statistic, display FROM table_one('has_missing', variables := ['cat'])
+ORDER BY level
+----
+A	n (%)	2 (50.0%)
+B	n (%)	1 (25.0%)
+Missing	n (%)	1 (25.0%)
+
+# ─── `by` stratification ──────────────────────────────────────────────────────
+
+# Overall is always first; then strata alphabetical. For arm='A', age has
+# 4 valid values [54.2, 61.0, 45.7, 58.3] → mean=54.8, sd≈6.7.
+query TTT
+SELECT statistic, stratum, display FROM table_one('patients', variables := ['age'], by := 'arm')
+WHERE statistic = 'mean (sd)' ORDER BY stratum
+----
+mean (sd)	A	54.8 (6.7)
+mean (sd)	B	56.6 (9.2)
+mean (sd)	Overall	55.6 (7.2)
+
+# Categorical with by — each level (including Missing) emitted once per stratum.
+query TTT
+SELECT level, statistic, stratum FROM table_one('patients', variables := ['sex'], by := 'arm')
+WHERE statistic = 'n (%)' ORDER BY stratum, level
+----
+F	n (%)	A
+M	n (%)	A
+Missing	n (%)	A
+F	n (%)	B
+M	n (%)	B
+Missing	n (%)	B
+F	n (%)	Overall
+M	n (%)	Overall
+Missing	n (%)	Overall
+
+# Each by-stratum's percentages sum to 100% within the stratum (with the
+# Missing row always present, even when its count is zero).
+query T
+SELECT display FROM table_one('patients', variables := ['sex'], by := 'arm')
+WHERE stratum = 'A' ORDER BY level
+----
+2 (50.0%)
+2 (50.0%)
+0 (0.0%)
+
+# ─── Multiple variables in one call ─────────────────────────────────────────
+
+# All variables appear in the order they were declared.
+query T
+SELECT DISTINCT variable FROM table_one('patients', variables := ['bmi', 'sex', 'age'])
+ORDER BY variable
+----
+age
+bmi
+sex
+
+# ─── Error cases ────────────────────────────────────────────────────────────
+
+statement error
+SELECT * FROM table_one('patients', variables := ['nonexistent'])
+----
+column 'nonexistent' not found
+
+statement error
+SELECT * FROM table_one('does_not_exist', variables := ['age'])
+----
+Table
+
+statement error
+SELECT * FROM table_one('patients', variables := [], by := 'arm')
+----
+'variables' must not be empty
+
+statement error
+SELECT * FROM table_one('patients', variables := ['age'], by := 'missing_col')
+----
+'by' column 'missing_col' not found

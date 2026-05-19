@@ -9,6 +9,8 @@
 #include "correlation_function.hpp"
 #include "rank_correlation_function.hpp"
 #include "sign_test_function.hpp"
+#include "adjust_p_function.hpp"
+#include "table_one_function.hpp"
 #include "normality_function.hpp"
 #include "anova_function.hpp"
 #include "chisq_function.hpp"
@@ -33,6 +35,8 @@ static void LoadInternal(ExtensionLoader &loader) {
 	RegisterKendallTest(loader);
 	RegisterSignTest(loader);
 	RegisterJarqueBera(loader);
+	RegisterShapiroWilk(loader);
+	RegisterAndersonDarling(loader);
 	RegisterAnovaOneway(loader);
 	RegisterChiSquareTests(loader);
 
@@ -41,6 +45,12 @@ static void LoadInternal(ExtensionLoader &loader) {
 
 	// Scalar distribution functions (dnorm/pnorm/qnorm/dt/pt/qt/dchisq/...)
 	RegisterDistributionFunctions(loader);
+
+	// Multiple-testing corrections
+	RegisterAdjustP(loader);
+
+	// Table 1 helper
+	RegisterTableOne(loader);
 
 	// Data import
 	RegisterReadStat(loader);

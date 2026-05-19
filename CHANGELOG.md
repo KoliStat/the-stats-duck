@@ -10,6 +10,61 @@ that name is preserved across releases for backward compatibility.
 
 ## [Unreleased]
 
+## [0.4.0-nine-pence] - 2026-05-19
+
+Two themes for v0.4: rounding out the normality-test family that v0.3
+left at jarque_bera only, and shipping the first table-function helper
+oriented at clinical-trial reporting workflows. Plus a multiple-testing
+correction primitive that the rest of the test family was missing.
+
+### Added
+
+- **Normality tests.** Two new aggregates complete the family alongside
+  the existing `jarque_bera`:
+
+  - `anderson_darling(x)` — Anderson-Darling normality test against the
+    fitted normal (mean and variance estimated from the sample, "case 3").
+    Buffer-based aggregate: state holds the values; sort + scan happen in
+    Finalize. Statistic is the standard A² with Stephens' size adjustment
+    `(1 + 0.75/n + 2.25/n²)`, p-value via Stephens (1986)'s four-segment
+    polynomial approximation. Valid for `n >= 8` (returns NULL otherwise,
+    matching R's `nortest::ad.test`). Returns
+    `STRUCT(test_type, a_squared, a_squared_adjusted, p_value, n)`.
+
+  - `shapiro_wilk(x)` — Shapiro-Wilk normality test via Royston (1995)'s
+    AS R94 polynomial approximation. Valid for n in [3, 5000]. The same
+    algorithm shipped by scipy.stats.shapiro and R's shapiro.test, with
+    no exact coefficient table to keep around — modern best practice for
+    any n. W and p-values agree with R to 7+ decimal places on R's
+    reference cases (W = 0.96038, p = 0.5514 for `shapiro.test(1:20)`,
+    exact match). Special-cased for n = 3 (exact arcsine formula) and
+    the small-n branch n in [4, 11] (log-of-log transformation per AS R94).
+    Returns `STRUCT(test_type, w_statistic, p_value, n)`.
+
+- **Multiple-testing correction.** `adjust_p(pvals LIST<DOUBLE>, method
+  VARCHAR) → LIST<DOUBLE>` — methods match R's `p.adjust`: `'bonferroni'`,
+  `'holm'`, `'hochberg'`, `'BH'` (alias `'fdr'`), `'BY'`, `'none'`. Returns
+  adjusted p-values in input order; NULLs pass through and are excluded
+  from `n`. R-verified to all displayed digits across all five methods on
+  a standard reference set. Pairs with any of the per-row tests via
+  `LIST(p_value)` over a `GROUP BY` analysis.
+
+- **Table 1 helper.** `table_one(data, variables [, by])` — Table-1-style
+  descriptives summary as a DuckDB table function. Auto-classifies each
+  variable from its catalog column type (integer / floating-point →
+  numeric, everything else → categorical) and emits long-format rows
+  `(variable, level, statistic, stratum, display)` with `level` = NULL
+  for numeric variables. Numeric stats: `n`, `missing`, `mean (sd)`,
+  `median [q1, q3]`, `min, max`. Categorical: per-level `n (%)` followed
+  by a `Missing` level row that is always emitted (even when its count
+  is zero) so downstream PIVOTs see a stable shape — filter with `WHERE
+  level <> 'Missing'` if you don't want it. All categorical-level
+  percentages share the same denominator (stratum total including
+  missings) so they sum to 100%. With `by`, emits an `Overall` stratum
+  plus one stratum per distinct `by` value. v0.4 MVP — between-group
+  p-value column, `force_categorical` / `force_numerical` overrides, and
+  the `overall := false` toggle land in a follow-up.
+
 ## [0.3.2-here-s-one] - 2026-05-13
 
 ### Fixed
@@ -22,7 +77,7 @@ that name is preserved across releases for backward compatibility.
   `src/include` (and similar). POSIX mode strips the quotes. CMake's
   MinGW Makefiles generator emits forward slashes inside the response
   files, so the POSIX backslash-as-escape rule doesn't bite. `make
-  zig_mingw_release` now completes from a clean state.
+zig_mingw_release` now completes from a clean state.
 
 ## [0.3.1-customer] - 2026-05-13
 
@@ -91,7 +146,7 @@ default; existing callers see no behavioural change.
 
 - **SPSS Portable (POR) export**: `COPY tbl TO 'file.por'`. Same type
   and NULL semantics as the SAV writer, with XPT-style strict
-  column-name rules (≤ 8 chars uppercase, A-Z 0-9 _) and no compression
+  column-name rules (≤ 8 chars uppercase, A-Z 0-9 \_) and no compression
   (POR is plain ASCII). The reader has supported `.por` since v0.1.0.
 
 - **XPT version-8 export**: `COPY tbl TO 'file.xpt' (VERSION 8)` lifts
@@ -101,7 +156,7 @@ default; existing callers see no behavioural change.
   some legacy SAS toolchains still expect v5.
 
 - **Column-label propagation on export**: `COPY tbl TO
-  'file.{xpt,sas7bdat,sav,por}'` picks up DuckDB column comments
+'file.{xpt,sas7bdat,sav,por}'` picks up DuckDB column comments
   (`COMMENT ON COLUMN tbl.col IS '...'`) and writes them as ReadStat
   variable labels — visible in SAS, SPSS, pyreadstat, haven, and R as
   the column's descriptive label. Only applies when the COPY source is
@@ -111,7 +166,7 @@ default; existing callers see no behavioural change.
 
 - **`read_stat_metadata(path, [format], [encoding])`** — table function
   returning one row per variable with `(column_name, type, format,
-  label)`, without scanning the data. Useful for inspecting SAS / SPSS
+label)`, without scanning the data. Useful for inspecting SAS / SPSS
   / Stata files before importing, and for verifying that column
   comments propagated through to ReadStat variable labels on export.
 
@@ -170,7 +225,7 @@ default; existing callers see no behavioural change.
   collapse to empty strings (SAS character columns have no NULL/empty distinction).
   Output goes through DuckDB's `FileSystem` so registered/remote/WASM paths work
   the same as `read_stat()`. Optional `LABEL` and `TABLE_NAME` options. XPT v5
-  column-name rules (≤ 8 chars uppercase, A-Z 0-9 _) are validated at bind — no
+  column-name rules (≤ 8 chars uppercase, A-Z 0-9 \_) are validated at bind — no
   silent truncation. Buffers the full result set in a `ColumnDataCollection`
   (spillable via DuckDB's buffer manager) before emitting, since ReadStat's writer
   requires the row count up front.
