@@ -12,6 +12,16 @@ that name is preserved across releases for backward compatibility.
 
 ### Added
 
+- `table_one`: new `p_value` output column carrying the between-group test
+  result. NULL when no `by` is set or there's only one stratum. Numeric
+  variables use one-way ANOVA via `anova_oneway(value, group)`; categorical
+  variables use chi-square independence via `chisq_independence(var, group)`.
+  Multi-column `by` folds into a single grouping by concatenating columns
+  with `' / '` (the same separator used for stratum labels). The same
+  p_value is stamped on every row of a given variable so a PIVOT can grab
+  it via `FIRST(p_value)`. Test failures (zero variance, too few samples
+  for a 2×2, etc.) → NULL rather than throwing — keeps the whole table
+  rendering even when one variable's test can't run.
 - `table_one`: `force_categorical := [...]` and `force_numerical := [...]`
   named parameters to override the per-variable auto-classification. Useful
   for integer columns that are really categorical (e.g. `stage ∈ {1,2,3,4}`,

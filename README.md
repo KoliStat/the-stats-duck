@@ -156,7 +156,7 @@ SELECT * FROM table_one(
 ```
 
 Output columns (long format, fixed schema):
-`variable`, `level`, `statistic`, `stratum`, `display`
+`variable`, `level`, `statistic`, `stratum`, `display`, `p_value`
 
 - Each numeric variable yields rows for `n`, `missing`, `mean (sd)`,
   `median [q1, q3]`, `min, max` — `level` is NULL.
@@ -169,6 +169,12 @@ Output columns (long format, fixed schema):
   by joining values with `' / '` in declared order (e.g. `'Adelie / female'`
   for `by := ['species', 'sex']`). Rows where any by-column is NULL are
   excluded from the stratum breakdown.
+- `p_value` is the between-group test result, repeated on every row of the
+  same variable so a PIVOT can grab it with `FIRST(p_value)`. NULL when
+  `by` is unset or has only one stratum. Numeric variables use one-way
+  ANOVA (`anova_oneway`); categorical variables use chi-square independence
+  (`chisq_independence`). NULL when the underlying test is infeasible (zero
+  variance, too few samples).
 - Variable types are auto-classified from the catalog: integer / floating-
   point types are numeric, everything else (VARCHAR, BOOLEAN, ENUM,
   date/time) is categorical. Override per-variable with

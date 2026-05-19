@@ -16,16 +16,17 @@ CREATE TABLE patients AS SELECT * FROM (VALUES
     (NULL, 'M', 27.4, 'B')
 ) AS t(age, sex, bmi, arm);
 
-# ─── Output schema is fixed (variable, level, statistic, stratum, display) ────
+# ─── Output schema is fixed (variable, level, statistic, stratum, display, p_value) ────
 
-query TTTTT
+# Without `by`: p_value is NULL on every row (nothing to compare against).
+query TTTTTR
 SELECT * FROM table_one('patients', variables := ['age']) ORDER BY statistic
 ----
-age	NULL	mean (sd)	Overall	55.6 (7.2)
-age	NULL	median [q1, q3]	Overall	54.2 [51.3, 59.6]
-age	NULL	min, max	Overall	45.7, 67.1
-age	NULL	missing	Overall	1
-age	NULL	n	Overall	7
+age	NULL	mean (sd)	Overall	55.6 (7.2)	NULL
+age	NULL	median [q1, q3]	Overall	54.2 [51.3, 59.6]	NULL
+age	NULL	min, max	Overall	45.7, 67.1	NULL
+age	NULL	missing	Overall	1	NULL
+age	NULL	n	Overall	7	NULL
 
 # ─── Numeric variable rows ──────────────────────────────────────────────────
 
@@ -271,3 +272,68 @@ SELECT * FROM table_one('staged', variables := ['height'],
     force_numerical := ['hieght'])
 ----
 force_numerical entry 'hieght' is not in 'variables'
+
+# ─── Between-group p-value column ───────────────────────────────────────────
+
+# Without `by`: p_value is NULL for every row (no comparison to make).
+query R
+SELECT DISTINCT p_value FROM table_one('patients', variables := ['age'])
+----
+NULL
+
+# Numeric variable, single-column `by`: one-way ANOVA across the strata. All
+# rows of a given variable share the same p_value so PIVOTs can grab it via
+# FIRST(p_value).
+query TR
+SELECT DISTINCT variable, p_value FROM table_one('patients',
+    variables := ['age', 'bmi'], by := ['arm'])
+ORDER BY variable
+----
+age	0.774647
+bmi	0.391848
+
+# Categorical variable, single-column `by`: chi-square independence. sex is
+# 2 F / 2 M in every arm → contingency table is identical between arms,
+# so the test is exactly p = 1.0.
+query R
+SELECT DISTINCT p_value FROM table_one('patients',
+    variables := ['sex'], by := ['arm'])
+----
+1
+
+# Multi-column `by`: the strata are tuples; the test folds them into a
+# single categorical group via the same " / " concatenation used for
+# stratum labels.
+query TR
+SELECT DISTINCT variable, p_value FROM table_one('patients',
+    variables := ['age', 'bmi'], by := ['arm', 'sex'])
+ORDER BY variable
+----
+age	0.872123
+bmi	0.673101
+
+# force_categorical composes with p_value: when stage is treated as a
+# category (rather than numeric), the test switches from ANOVA to chi-square.
+# This 3×2 contingency on (stage, arm) — built so each arm has its own
+# stage distribution — yields a chi-square p-value distinct from the
+# ANOVA-on-integers result.
+statement ok
+CREATE TABLE staged_by_arm AS SELECT * FROM (VALUES
+    (1, 'A'), (1, 'A'), (2, 'A'), (3, 'A'),
+    (2, 'B'), (3, 'B'), (3, 'B'), (3, 'B')
+) AS t(stage, arm);
+
+# As a numeric variable: ANOVA on stage by arm.
+query R
+SELECT DISTINCT p_value FROM table_one('staged_by_arm',
+    variables := ['stage'], by := ['arm'])
+----
+0.113532
+
+# Forced to categorical: chi-square on the 3×2 contingency.
+query R
+SELECT DISTINCT p_value FROM table_one('staged_by_arm',
+    variables := ['stage'], by := ['arm'],
+    force_categorical := ['stage'])
+----
+0.223130

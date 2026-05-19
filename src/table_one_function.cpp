@@ -10,6 +10,7 @@
 #include "duckdb/main/extension/extension_loader.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <sstream>
 #include <string>
@@ -39,6 +40,12 @@ struct TableOneRow {
 	std::string statistic;
 	std::string stratum; // "Overall" or a `by`-column value
 	std::string display;
+	// Between-group p-value: NaN means "no test applicable" → emitted as NULL.
+	// The same value is stamped on every row of the same variable so a PIVOT
+	// can pick it up with FIRST(p_value). NULL when `by` is unset / single
+	// stratum or when the underlying test fails (e.g. zero variance, too few
+	// samples).
+	double p_value = std::nan("");
 };
 
 struct TableOneBindData : public TableFunctionData {
@@ -252,9 +259,13 @@ static unique_ptr<FunctionData> TableOneBind(ClientContext &context, TableFuncti
 	}
 
 	// Output schema (static — see header comment).
-	names = {"variable", "level", "statistic", "stratum", "display"};
+	// p_value is the between-group test result for the variable; it is
+	// repeated on every row of the same variable so a PIVOT can grab it via
+	// FIRST(p_value). NULL when no `by` is set, when there's only one
+	// stratum, or when the test failed.
+	names = {"variable", "level", "statistic", "stratum", "display", "p_value"};
 	return_types = {LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR,
-	                LogicalType::VARCHAR, LogicalType::VARCHAR};
+	                LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::DOUBLE};
 	return std::move(bd);
 }
 
@@ -406,6 +417,74 @@ static void EmitCategoricalRows(Connection &conn, const std::string &table,
 	               FormatPercent(static_cast<double>(miss), denom)});
 }
 
+// ── Between-group p-value ──────────────────────────────────────────────────
+
+//! Compute the between-group p-value for a single variable. Returns NaN
+//! ("no result") when no test applies (no by-columns, fewer than 2 strata)
+//! or when the underlying aggregate failed (e.g. zero variance, too few
+//! samples for ANOVA / chi-square).
+//!
+//! Numeric variables → one-way ANOVA via `anova_oneway(value, group)`. Works
+//! for 2 groups (where F = t² pooled) and 3+ groups uniformly.
+//!
+//! Categorical variables → chi-square independence via
+//! `chisq_independence(row, col)` with the variable as rows and the (possibly
+//! concatenated) `by` columns as cols.
+//!
+//! Multi-column `by` is folded into a single grouping string by concatenating
+//! the columns with " / " — same separator used for stratum labels.
+static double ComputeBetweenGroupPValue(Connection &conn, const std::string &table,
+                                        const std::string &var, bool numeric,
+                                        const std::vector<std::string> &by_cols,
+                                        idx_t n_strata) {
+	if (by_cols.empty() || n_strata < 2) {
+		return std::nan("");
+	}
+
+	// Build the grouping expression: single column verbatim, multi-column
+	// concatenated with the same " / " separator used in stratum labels.
+	std::string group_expr;
+	if (by_cols.size() == 1) {
+		group_expr = QuoteIdent(by_cols[0]) + "::VARCHAR";
+	} else {
+		for (size_t i = 0; i < by_cols.size(); i++) {
+			if (i > 0) {
+				group_expr += " || ' / ' || ";
+			}
+			group_expr += QuoteIdent(by_cols[i]) + "::VARCHAR";
+		}
+	}
+
+	// Common WHERE: variable + every by-column non-NULL.
+	std::string where_clause = QuoteIdent(var) + " IS NOT NULL";
+	for (auto &b : by_cols) {
+		where_clause += " AND " + QuoteIdent(b) + " IS NOT NULL";
+	}
+
+	std::stringstream sql;
+	if (numeric) {
+		sql << "SELECT (anova_oneway(" << QuoteIdent(var) << "::DOUBLE, " << group_expr
+		    << ")).p_value FROM " << QuoteIdent(table) << " WHERE " << where_clause;
+	} else {
+		sql << "SELECT (chisq_independence(" << QuoteIdent(var) << "::VARCHAR, " << group_expr
+		    << ")).p_value FROM " << QuoteIdent(table) << " WHERE " << where_clause;
+	}
+
+	auto result = conn.Query(sql.str());
+	if (result->HasError()) {
+		return std::nan(""); // test infeasible (e.g. zero variance, sparse 2x2) → NULL
+	}
+	auto chunk = result->Fetch();
+	if (!chunk || chunk->size() == 0) {
+		return std::nan("");
+	}
+	auto v = chunk->GetValue(0, 0);
+	if (v.IsNull()) {
+		return std::nan("");
+	}
+	return v.GetValue<double>();
+}
+
 // ── InitGlobal: pre-compute every row ──────────────────────────────────────
 
 static unique_ptr<GlobalTableFunctionState> TableOneInitGlobal(ClientContext &context,
@@ -476,6 +555,8 @@ static unique_ptr<GlobalTableFunctionState> TableOneInitGlobal(ClientContext &co
 		const std::string &var = bd.variables[var_idx];
 		bool numeric = bd.is_numeric[var_idx];
 
+		size_t first_row = state->rows.size();
+
 		// Overall
 		std::vector<std::string> empty_values;
 		if (numeric) {
@@ -494,6 +575,15 @@ static unique_ptr<GlobalTableFunctionState> TableOneInitGlobal(ClientContext &co
 				EmitCategoricalRows(conn, bd.data_table, var, bd.by_columns, tup, label,
 				                    state->rows);
 			}
+		}
+
+		// Compute the between-group p-value once per variable, then stamp it
+		// on every row we just emitted for this variable. NaN sentinel →
+		// Execute will SetNull on those cells.
+		double p_value = ComputeBetweenGroupPValue(conn, bd.data_table, var, numeric,
+		                                            bd.by_columns, by_tuples.size());
+		for (size_t i = first_row; i < state->rows.size(); i++) {
+			state->rows[i].p_value = p_value;
 		}
 	};
 
@@ -521,6 +611,11 @@ static void TableOneExecute(ClientContext &context, TableFunctionInput &input, D
 		output.SetValue(2, emitted, Value(row.statistic));
 		output.SetValue(3, emitted, Value(row.stratum));
 		output.SetValue(4, emitted, Value(row.display));
+		if (std::isnan(row.p_value)) {
+			FlatVector::SetNull(output.data[5], emitted, true);
+		} else {
+			output.SetValue(5, emitted, Value::DOUBLE(row.p_value));
+		}
 		emitted++;
 	}
 	output.SetCardinality(emitted);
