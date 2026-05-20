@@ -12,6 +12,15 @@ that name is preserved across releases for backward compatibility.
 
 ### Added
 
+- **Gamma / Beta / Exponential distribution functions.** d/p/q triples in the
+  same R-style API as the existing `d/p/qnorm` / `d/p/qt` / `d/p/qchisq` /
+  `d/p/qf` families. `dgamma(x, shape, [rate])` / `pgamma` / `qgamma` (rate
+  defaults to 1, matching R); `dbeta(x, alpha, beta)` / `pbeta` / `qbeta` on
+  the [0, 1] support; `dexp(x, [rate])` / `pexp` / `qexp` (rate defaults to 1;
+  `qexp` is closed-form `-log(1-p)/rate`). All implemented on top of the
+  existing regularized incomplete gamma / beta infrastructure in
+  `distributions.hpp`. Cross-verified against R to 6+ decimal places.
+
 - **Kolmogorov-Smirnov tests.** Two new aggregates:
 
   - `ks_test_1samp(x)` — one-sample KS against the fitted normal

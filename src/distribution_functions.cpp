@@ -188,6 +188,132 @@ static void QFExec(DataChunk &args, ExpressionState &, Vector &result) {
 	    });
 }
 
+// ── Gamma ───────────────────────────────────────────────────────────────────
+
+static void DGamma2Exec(DataChunk &args, ExpressionState &, Vector &result) {
+	BinaryExecutor::ExecuteWithNulls<double, double, double>(
+	    args.data[0], args.data[1], result, args.size(),
+	    [](double x, double shape, ValidityMask &mask, idx_t idx) {
+		    return SafeCall([&] { return stats_duck::GammaPDF(x, shape); }, mask, idx);
+	    });
+}
+
+static void DGamma3Exec(DataChunk &args, ExpressionState &, Vector &result) {
+	TernaryExecutor::ExecuteWithNulls<double, double, double, double>(
+	    args.data[0], args.data[1], args.data[2], result, args.size(),
+	    [](double x, double shape, double rate, ValidityMask &mask, idx_t idx) {
+		    return SafeCall([&] { return stats_duck::GammaPDF(x, shape, rate); }, mask, idx);
+	    });
+}
+
+static void PGamma2Exec(DataChunk &args, ExpressionState &, Vector &result) {
+	BinaryExecutor::ExecuteWithNulls<double, double, double>(
+	    args.data[0], args.data[1], result, args.size(),
+	    [](double x, double shape, ValidityMask &mask, idx_t idx) {
+		    return SafeCall([&] { return stats_duck::GammaCDF(x, shape); }, mask, idx);
+	    });
+}
+
+static void PGamma3Exec(DataChunk &args, ExpressionState &, Vector &result) {
+	TernaryExecutor::ExecuteWithNulls<double, double, double, double>(
+	    args.data[0], args.data[1], args.data[2], result, args.size(),
+	    [](double x, double shape, double rate, ValidityMask &mask, idx_t idx) {
+		    return SafeCall([&] { return stats_duck::GammaCDF(x, shape, rate); }, mask, idx);
+	    });
+}
+
+static void QGamma2Exec(DataChunk &args, ExpressionState &, Vector &result) {
+	BinaryExecutor::ExecuteWithNulls<double, double, double>(
+	    args.data[0], args.data[1], result, args.size(),
+	    [](double p, double shape, ValidityMask &mask, idx_t idx) {
+		    return SafeCall([&] { return stats_duck::GammaQuantile(p, shape); }, mask, idx);
+	    });
+}
+
+static void QGamma3Exec(DataChunk &args, ExpressionState &, Vector &result) {
+	TernaryExecutor::ExecuteWithNulls<double, double, double, double>(
+	    args.data[0], args.data[1], args.data[2], result, args.size(),
+	    [](double p, double shape, double rate, ValidityMask &mask, idx_t idx) {
+		    return SafeCall([&] { return stats_duck::GammaQuantile(p, shape, rate); }, mask, idx);
+	    });
+}
+
+// ── Beta ────────────────────────────────────────────────────────────────────
+
+static void DBetaExec(DataChunk &args, ExpressionState &, Vector &result) {
+	TernaryExecutor::ExecuteWithNulls<double, double, double, double>(
+	    args.data[0], args.data[1], args.data[2], result, args.size(),
+	    [](double x, double alpha, double beta, ValidityMask &mask, idx_t idx) {
+		    return SafeCall([&] { return stats_duck::BetaPDF(x, alpha, beta); }, mask, idx);
+	    });
+}
+
+static void PBetaExec(DataChunk &args, ExpressionState &, Vector &result) {
+	TernaryExecutor::ExecuteWithNulls<double, double, double, double>(
+	    args.data[0], args.data[1], args.data[2], result, args.size(),
+	    [](double x, double alpha, double beta, ValidityMask &mask, idx_t idx) {
+		    return SafeCall([&] { return stats_duck::BetaCDF(x, alpha, beta); }, mask, idx);
+	    });
+}
+
+static void QBetaExec(DataChunk &args, ExpressionState &, Vector &result) {
+	TernaryExecutor::ExecuteWithNulls<double, double, double, double>(
+	    args.data[0], args.data[1], args.data[2], result, args.size(),
+	    [](double p, double alpha, double beta, ValidityMask &mask, idx_t idx) {
+		    return SafeCall([&] { return stats_duck::BetaQuantile(p, alpha, beta); }, mask, idx);
+	    });
+}
+
+// ── Exponential ─────────────────────────────────────────────────────────────
+
+static void DExpStdExec(DataChunk &args, ExpressionState &, Vector &result) {
+	UnaryExecutor::ExecuteWithNulls<double, double>(
+	    args.data[0], result, args.size(),
+	    [](double x, ValidityMask &mask, idx_t idx) {
+		    return SafeCall([&] { return stats_duck::ExponentialPDF(x); }, mask, idx);
+	    });
+}
+
+static void DExp2Exec(DataChunk &args, ExpressionState &, Vector &result) {
+	BinaryExecutor::ExecuteWithNulls<double, double, double>(
+	    args.data[0], args.data[1], result, args.size(),
+	    [](double x, double rate, ValidityMask &mask, idx_t idx) {
+		    return SafeCall([&] { return stats_duck::ExponentialPDF(x, rate); }, mask, idx);
+	    });
+}
+
+static void PExpStdExec(DataChunk &args, ExpressionState &, Vector &result) {
+	UnaryExecutor::ExecuteWithNulls<double, double>(
+	    args.data[0], result, args.size(),
+	    [](double x, ValidityMask &mask, idx_t idx) {
+		    return SafeCall([&] { return stats_duck::ExponentialCDF(x); }, mask, idx);
+	    });
+}
+
+static void PExp2Exec(DataChunk &args, ExpressionState &, Vector &result) {
+	BinaryExecutor::ExecuteWithNulls<double, double, double>(
+	    args.data[0], args.data[1], result, args.size(),
+	    [](double x, double rate, ValidityMask &mask, idx_t idx) {
+		    return SafeCall([&] { return stats_duck::ExponentialCDF(x, rate); }, mask, idx);
+	    });
+}
+
+static void QExpStdExec(DataChunk &args, ExpressionState &, Vector &result) {
+	UnaryExecutor::ExecuteWithNulls<double, double>(
+	    args.data[0], result, args.size(),
+	    [](double p, ValidityMask &mask, idx_t idx) {
+		    return SafeCall([&] { return stats_duck::ExponentialQuantile(p); }, mask, idx);
+	    });
+}
+
+static void QExp2Exec(DataChunk &args, ExpressionState &, Vector &result) {
+	BinaryExecutor::ExecuteWithNulls<double, double, double>(
+	    args.data[0], args.data[1], result, args.size(),
+	    [](double p, double rate, ValidityMask &mask, idx_t idx) {
+		    return SafeCall([&] { return stats_duck::ExponentialQuantile(p, rate); }, mask, idx);
+	    });
+}
+
 } // namespace
 
 void RegisterDistributionFunctions(ExtensionLoader &loader) {
@@ -230,6 +356,54 @@ void RegisterDistributionFunctions(ExtensionLoader &loader) {
 	loader.RegisterFunction(ScalarFunction("df", {DBL, DBL, DBL}, DBL, DFExec));
 	loader.RegisterFunction(ScalarFunction("pf", {DBL, DBL, DBL}, DBL, PFExec));
 	loader.RegisterFunction(ScalarFunction("qf", {DBL, DBL, DBL}, DBL, QFExec));
+
+	// ── Gamma ───────────────────────────────────────────────────────────────
+	// dgamma(x, shape) defaults rate = 1; dgamma(x, shape, rate) for the
+	// explicit form. Matches R's `dgamma(x, shape, rate = 1)`.
+	{
+		ScalarFunctionSet dgamma("dgamma");
+		dgamma.AddFunction(ScalarFunction({DBL, DBL}, DBL, DGamma2Exec));
+		dgamma.AddFunction(ScalarFunction({DBL, DBL, DBL}, DBL, DGamma3Exec));
+		loader.RegisterFunction(dgamma);
+	}
+	{
+		ScalarFunctionSet pgamma("pgamma");
+		pgamma.AddFunction(ScalarFunction({DBL, DBL}, DBL, PGamma2Exec));
+		pgamma.AddFunction(ScalarFunction({DBL, DBL, DBL}, DBL, PGamma3Exec));
+		loader.RegisterFunction(pgamma);
+	}
+	{
+		ScalarFunctionSet qgamma("qgamma");
+		qgamma.AddFunction(ScalarFunction({DBL, DBL}, DBL, QGamma2Exec));
+		qgamma.AddFunction(ScalarFunction({DBL, DBL, DBL}, DBL, QGamma3Exec));
+		loader.RegisterFunction(qgamma);
+	}
+
+	// ── Beta ────────────────────────────────────────────────────────────────
+	loader.RegisterFunction(ScalarFunction("dbeta", {DBL, DBL, DBL}, DBL, DBetaExec));
+	loader.RegisterFunction(ScalarFunction("pbeta", {DBL, DBL, DBL}, DBL, PBetaExec));
+	loader.RegisterFunction(ScalarFunction("qbeta", {DBL, DBL, DBL}, DBL, QBetaExec));
+
+	// ── Exponential ─────────────────────────────────────────────────────────
+	// One-arg form defaults rate = 1 (matches R's `dexp(x, rate = 1)`).
+	{
+		ScalarFunctionSet dexp("dexp");
+		dexp.AddFunction(ScalarFunction({DBL}, DBL, DExpStdExec));
+		dexp.AddFunction(ScalarFunction({DBL, DBL}, DBL, DExp2Exec));
+		loader.RegisterFunction(dexp);
+	}
+	{
+		ScalarFunctionSet pexp("pexp");
+		pexp.AddFunction(ScalarFunction({DBL}, DBL, PExpStdExec));
+		pexp.AddFunction(ScalarFunction({DBL, DBL}, DBL, PExp2Exec));
+		loader.RegisterFunction(pexp);
+	}
+	{
+		ScalarFunctionSet qexp("qexp");
+		qexp.AddFunction(ScalarFunction({DBL}, DBL, QExpStdExec));
+		qexp.AddFunction(ScalarFunction({DBL, DBL}, DBL, QExp2Exec));
+		loader.RegisterFunction(qexp);
+	}
 }
 
 } // namespace duckdb

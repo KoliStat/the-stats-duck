@@ -146,6 +146,15 @@ gives Q1=1.5 / Q3=3.5 (matching SAS PROC MEANS).
 | `df(x, df1, df2)`        | F distribution PDF      |
 | `pf(x, df1, df2)`        | F distribution CDF      |
 | `qf(p, df1, df2)`        | F distribution quantile |
+| `dgamma(x, shape, [rate])` | Gamma PDF (rate=1 default) |
+| `pgamma(x, shape, [rate])` | Gamma CDF             |
+| `qgamma(p, shape, [rate])` | Gamma quantile        |
+| `dbeta(x, alpha, beta)`  | Beta PDF on [0, 1]      |
+| `pbeta(x, alpha, beta)`  | Beta CDF                |
+| `qbeta(p, alpha, beta)`  | Beta quantile           |
+| `dexp(x, [rate])`        | Exponential PDF (rate=1 default) |
+| `pexp(x, [rate])`        | Exponential CDF         |
+| `qexp(p, [rate])`        | Exponential quantile (closed form) |
 
 ### Table 1 summary (table function)
 
