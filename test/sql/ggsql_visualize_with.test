@@ -1,0 +1,99 @@
+# name: test/sql/ggsql_visualize_with.test
+# description: v0.5 — `WITH … VISUALIZE` support so CTEs can feed the FROM clause directly
+# group: [stats_duck]
+
+require stats_duck
+
+statement ok
+CREATE TABLE penguins AS
+SELECT * FROM (VALUES
+    (39.1, 18.7, 'Adelie'), (39.5, 17.4, 'Adelie'),
+    (44.0, 18.0, 'Gentoo'), (45.2, 14.5, 'Gentoo'),
+    (50.0, 19.3, 'Chinstrap')
+) AS t(bill_len, bill_dep, species);
+
+# ─── Single CTE ─────────────────────────────────────────────────────────────
+
+# CTE is preserved verbatim in the projected SQL.
+query TT
+WITH big AS (SELECT * FROM penguins WHERE bill_len > 40)
+VISUALIZE bill_len AS x, bill_dep AS y FROM big DRAW point
+----
+{"$schema":"https://vega.github.io/schema/vega-lite/v5.json","data":{"name":"layer_0"},"mark":"point","encoding":{"x":{"field":"x","type":"quantitative"},"y":{"field":"y","type":"quantitative"}}}	{layer_0='WITH big AS (SELECT * FROM penguins WHERE bill_len > 40) SELECT bill_len AS x, bill_dep AS y FROM big'}
+
+# ─── Multi-CTE ──────────────────────────────────────────────────────────────
+
+# Comma-separated CTEs round-trip through the tokenizer with whitespace
+# normalised (`(…) , (…)`); functionally equivalent to the input.
+query TT
+WITH a AS (SELECT * FROM penguins WHERE bill_len > 40),
+     b AS (SELECT bill_len, bill_dep * 2 AS bill_dep FROM a)
+VISUALIZE bill_len AS x, bill_dep AS y FROM b DRAW point
+----
+{"$schema":"https://vega.github.io/schema/vega-lite/v5.json","data":{"name":"layer_0"},"mark":"point","encoding":{"x":{"field":"x","type":"quantitative"},"y":{"field":"y","type":"quantitative"}}}	{layer_0='WITH a AS (SELECT * FROM penguins WHERE bill_len > 40) , b AS (SELECT bill_len, bill_dep * 2 AS bill_dep FROM a) SELECT bill_len AS x, bill_dep AS y FROM b'}
+
+# ─── CTE + wrapping mark (line orders the projection) ───────────────────────
+
+# `line` wraps the projected SQL in a subquery for ORDER BY. CTEs are scoped
+# to the inner query, so the wrap composes without lifting the WITH.
+query TT
+WITH d AS (SELECT * FROM penguins WHERE species != 'Chinstrap')
+VISUALIZE bill_len AS x, bill_dep AS y FROM d DRAW line
+----
+{"$schema":"https://vega.github.io/schema/vega-lite/v5.json","data":{"name":"layer_0"},"mark":"line","encoding":{"x":{"field":"x","type":"quantitative"},"y":{"field":"y","type":"quantitative"}}}	{layer_0='SELECT * FROM (WITH d AS (SELECT * FROM penguins WHERE species != \'Chinstrap\') SELECT bill_len AS x, bill_dep AS y FROM d) ORDER BY x'}
+
+# ─── CTE + FACET + SCALE + TITLE (full composition) ─────────────────────────
+
+# Every modifier still works in the presence of a WITH clause.
+query TT
+WITH d AS (SELECT * FROM penguins)
+VISUALIZE bill_len AS x, bill_dep AS y, species AS color FROM d
+DRAW point
+FACET BY species
+SCALE color TO viridis
+TITLE 'CTE composition test'
+----
+{"$schema":"https://vega.github.io/schema/vega-lite/v5.json","data":{"name":"layer_0"},"facet":{"field":"facet","type":"nominal"},"spec":{"mark":"point","encoding":{"x":{"field":"x","type":"quantitative"},"y":{"field":"y","type":"quantitative"},"color":{"field":"color","type":"nominal","scale":{"scheme":"viridis"}}}},"title":{"text":"CTE composition test"}}	{layer_0='WITH d AS (SELECT * FROM penguins) SELECT bill_len AS x, bill_dep AS y, species AS color, species AS facet FROM d'}
+
+# ─── Leading comments are skipped ───────────────────────────────────────────
+
+# Block comment before WITH.
+query TT
+/* a header comment */
+WITH big AS (SELECT * FROM penguins WHERE bill_len > 40)
+VISUALIZE bill_len AS x, bill_dep AS y FROM big DRAW point
+----
+{"$schema":"https://vega.github.io/schema/vega-lite/v5.json","data":{"name":"layer_0"},"mark":"point","encoding":{"x":{"field":"x","type":"quantitative"},"y":{"field":"y","type":"quantitative"}}}	{layer_0='WITH big AS (SELECT * FROM penguins WHERE bill_len > 40) SELECT bill_len AS x, bill_dep AS y FROM big'}
+
+# Line comment before WITH (the common case when annotating a query).
+query TT
+-- annotate the filter
+WITH big AS (SELECT * FROM penguins WHERE bill_len > 40)
+VISUALIZE bill_len AS x, bill_dep AS y FROM big DRAW point
+----
+{"$schema":"https://vega.github.io/schema/vega-lite/v5.json","data":{"name":"layer_0"},"mark":"point","encoding":{"x":{"field":"x","type":"quantitative"},"y":{"field":"y","type":"quantitative"}}}	{layer_0='WITH big AS (SELECT * FROM penguins WHERE bill_len > 40) SELECT bill_len AS x, bill_dep AS y FROM big'}
+
+# ─── Fall-through: plain WITH … SELECT … still works ───────────────────────
+
+# A WITH clause without a top-level VISUALIZE keyword is left for DuckDB's
+# regular SQL parser to handle.
+query I
+WITH cte AS (SELECT 42 AS n) SELECT n FROM cte
+----
+42
+
+# Quoted-identifier or string literal containing "visualize" must NOT be
+# misidentified — depth/quote tracking in the keyword scanner protects this.
+query T
+WITH cte AS (SELECT 'visualize me later' AS msg) SELECT msg FROM cte
+----
+visualize me later
+
+# ─── Error: WITH not followed by VISUALIZE inside a ggsql-claimed statement ─
+
+# Only fires when our heuristic does claim the statement; otherwise this would
+# fall through to DuckDB. Constructing the trigger requires a top-level
+# VISUALIZE keyword somewhere — e.g. as a column alias in the CTE body —
+# but those are protected by paren-depth tracking. Hence we can't easily
+# craft a deterministic error case here; the parse-time guard exists in
+# ParseGgsql for defensive purposes only.

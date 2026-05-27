@@ -12,6 +12,19 @@ that name is preserved across releases for backward compatibility.
 
 ### Added
 
+- **ggsql: `WITH … VISUALIZE`** — a leading CTE clause is now accepted in
+  front of a `VISUALIZE` statement. The captured `WITH [RECURSIVE] <cte> AS
+  (...) [, <cte> AS (...)]*` block is prepended to each layer's projected
+  SQL, so the `FROM` clause and aesthetic expressions can reference
+  CTE-bound names. Composes with every existing modifier (`FACET BY`,
+  `SCALE`, `TITLE`, multi-layer `DRAW`) — wrapping marks like `line` and
+  `bar` keep the CTE scoped to the inner subquery via standard SQL CTE
+  scoping rules. Leading SQL comments (`--`, `/* … */`) before the `WITH`
+  are skipped during keyword detection. Statements that start with `WITH`
+  but contain no top-level `VISUALIZE` keyword fall through to DuckDB's
+  regular SQL parser unchanged, so existing CTE-using queries are
+  unaffected.
+
 - **`bin_edges` / `bin_label` — auto-binning helpers.**
   `bin_edges(x [, method]) → LIST<DOUBLE>` is a buffer-based aggregate that
   returns the edge vector for the chosen rule: `'sturges'` (default,

@@ -22,7 +22,16 @@ namespace ggsql {
 namespace {
 
 string BuildProjectedSql(const VisualizeStatement &stmt) {
-	string sql = "SELECT ";
+	string sql;
+	// Prepend any leading WITH clause so the FROM and aesthetic expressions
+	// can resolve CTE-bound names. CTEs are scoped to the inner query when a
+	// mark wraps the projection (e.g. `SELECT * FROM (<projected>) ORDER BY x`),
+	// so passing the WITH through verbatim composes cleanly with line / bar /
+	// area / errorband / regression wraps without any extra plumbing.
+	if (!stmt.with_clause.empty()) {
+		sql += stmt.with_clause + " ";
+	}
+	sql += "SELECT ";
 	for (size_t i = 0; i < stmt.aesthetics.size(); i++) {
 		if (i > 0) {
 			sql += ", ";
@@ -333,11 +342,120 @@ bool StartsWithIdentifier(const string &lower, const string &keyword) {
 	return next == ' ' || next == '\t' || next == '\n' || next == '\r' || next == ';';
 }
 
+// Strip leading whitespace and SQL comments (`-- to end of line`, `/* ... */`)
+// from the front of `s`. DuckDB hands the parser extension the raw statement
+// text including any comments, so we need to skip past them before deciding
+// whether the statement is ours.
+static void SkipLeadingCommentsAndWhitespace(string &s) {
+	size_t i = 0;
+	while (i < s.size()) {
+		char c = s[i];
+		if (c == ' ' || c == '\t' || c == '\n' || c == '\r') {
+			i++;
+			continue;
+		}
+		if (c == '-' && i + 1 < s.size() && s[i + 1] == '-') {
+			i += 2;
+			while (i < s.size() && s[i] != '\n') {
+				i++;
+			}
+			continue;
+		}
+		if (c == '/' && i + 1 < s.size() && s[i + 1] == '*') {
+			i += 2;
+			while (i + 1 < s.size() && !(s[i] == '*' && s[i + 1] == '/')) {
+				i++;
+			}
+			if (i + 1 < s.size()) {
+				i += 2; // past `*/`
+			}
+			continue;
+		}
+		break;
+	}
+	if (i > 0) {
+		s.erase(0, i);
+	}
+}
+
 ParserExtensionParseResult GgsqlParse(ParserExtensionInfo *, const string &query) {
 	string trimmed = query;
-	StringUtil::Trim(trimmed);
+	SkipLeadingCommentsAndWhitespace(trimmed);
+	StringUtil::Trim(trimmed); // trailing whitespace too
 	auto lower = StringUtil::Lower(trimmed);
-	if (!StartsWithIdentifier(lower, "visualize")) {
+	if (StartsWithIdentifier(lower, "visualize")) {
+		// Direct path — bare VISUALIZE statement.
+	} else if (StartsWithIdentifier(lower, "with")) {
+		// Could be ours (WITH … VISUALIZE …) or DuckDB's (WITH … SELECT …).
+		// Only claim it if a top-level VISUALIZE keyword exists in the
+		// input — case-insensitive, whole-word match, ignoring strings /
+		// quoted identifiers / parenthesised expressions. The cheap
+		// approach is a manual scan rather than a full tokenize: keep
+		// track of paren depth and skip over string/quoted-ident content,
+		// then look for `visualize` as a standalone token at depth 0.
+		bool has_visualize = false;
+		int depth = 0;
+		char quote = 0;
+		auto is_ident_part = [](char c) {
+			return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+			       (c >= '0' && c <= '9') || c == '_';
+		};
+		for (size_t i = 0; i < trimmed.size(); i++) {
+			char c = trimmed[i];
+			if (quote != 0) {
+				if (c == quote) {
+					if (i + 1 < trimmed.size() && trimmed[i + 1] == quote) {
+						i++; // SQL '' / "" escape
+					} else {
+						quote = 0;
+					}
+				}
+				continue;
+			}
+			if (c == '\'' || c == '"') {
+				quote = c;
+				continue;
+			}
+			if (c == '(') {
+				depth++;
+				continue;
+			}
+			if (c == ')') {
+				depth--;
+				continue;
+			}
+			if (depth > 0) {
+				continue;
+			}
+			// At depth 0: try to match the whole-word "visualize" case-insensitively.
+			if ((c == 'v' || c == 'V') && i + 9 <= trimmed.size()) {
+				static const char kKeyword[] = "visualize";
+				bool match = true;
+				for (size_t k = 0; k < 9; k++) {
+					char a = trimmed[i + k];
+					char b = kKeyword[k];
+					char a_lower = (a >= 'A' && a <= 'Z') ? (a - 'A' + 'a') : a;
+					if (a_lower != b) {
+						match = false;
+						break;
+					}
+				}
+				if (match) {
+					// Must be a standalone token — surrounded by non-identifier chars.
+					bool left_ok = (i == 0) || !is_ident_part(trimmed[i - 1]);
+					bool right_ok = (i + 9 == trimmed.size()) ||
+					                !is_ident_part(trimmed[i + 9]);
+					if (left_ok && right_ok) {
+						has_visualize = true;
+						break;
+					}
+				}
+			}
+		}
+		if (!has_visualize) {
+			return ParserExtensionParseResult(); // hand off to DuckDB
+		}
+	} else {
 		return ParserExtensionParseResult();
 	}
 	auto parsed = ParseGgsql(trimmed);

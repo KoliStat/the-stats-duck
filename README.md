@@ -256,6 +256,7 @@ columns — `spec` (a complete Vega-Lite v5 JSON spec) and `layer_sqls` (a
 runs each layer's SQL and feeds the rows to vega-embed via the `datasets` API.
 
 ```
+[WITH [RECURSIVE] <cte> AS (...) [, <cte> AS (...)]*]
 VISUALIZE <expr> AS <aesthetic> [: <type>] (, <expr> AS <aesthetic> ...)
 FROM <table>
 DRAW <mark> (DRAW <mark>)*
@@ -263,6 +264,12 @@ DRAW <mark> (DRAW <mark>)*
 [SCALE <channel> {TO <scheme> | ZERO true|false | DOMAIN <lo> <hi> | LABEL '<text>'}]*
 [TITLE '<text>' [SUBTITLE '<text>']]
 ```
+
+A leading `WITH` clause is supported; CTEs are scoped to each layer's
+projected SQL so they compose with wrapping marks (`line`, `bar`, `area`,
+`errorband`, `regression`) without extra work. `WITH … SELECT …` statements
+without a top-level `VISUALIZE` keyword fall through to DuckDB's normal SQL
+parser unchanged.
 
 **Marks:** `point`, `line`, `bar`, `histogram`, `text`, `area`, `rule`, `tick`,
 `errorbar`, `errorband`, `boxplot`, `heatmap`, `density`, `regression`. Custom

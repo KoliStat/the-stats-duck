@@ -177,6 +177,27 @@ ParseResult ParseGgsql(const string &query) {
 		return true;
 	};
 
+	// Optional leading `WITH … VISUALIZE`. Capture every top-level token from
+	// the WITH up to (but not including) VISUALIZE — the tokenizer already
+	// flattens parenthesised CTE bodies into single tokens, so we don't need
+	// to track depth here. Reconstruct the SQL by joining with single spaces;
+	// SQL is whitespace-tolerant, so `WITH t AS (…) , u AS (…)` parses the
+	// same as `WITH t AS (…), u AS (…)`.
+	if (!at_end() && IEqual(peek(), "WITH")) {
+		string with_text;
+		while (!at_end() && !IEqual(peek(), "VISUALIZE")) {
+			if (!with_text.empty()) {
+				with_text += " ";
+			}
+			with_text += tokens[i++];
+		}
+		if (at_end()) {
+			result.error = "WITH clause is not followed by VISUALIZE";
+			return result;
+		}
+		result.stmt.with_clause = std::move(with_text);
+	}
+
 	if (!consume("VISUALIZE")) {
 		return result;
 	}

@@ -33,6 +33,11 @@ struct VisualizeStatement {
 	string facet_layout; // "" (grid), "rows", or "cols" — only meaningful when a facet aesthetic is present
 	string title;        // "" if not set; raw text (caller JSON-escapes for output)
 	string subtitle;     // "" if not set; SUBTITLE alone (no TITLE) is rejected at parse time
+	// Optional leading `WITH [RECURSIVE] <cte> AS (...) [, ...]` block. Captured
+	// verbatim as a single SQL string and prepended to each layer's projected
+	// SQL so the FROM clause and aesthetic expressions can reference CTEs.
+	// Empty string when no WITH clause was provided.
+	string with_clause;
 };
 
 // Strip surrounding single quotes from a SQL string literal and collapse '' → '.
