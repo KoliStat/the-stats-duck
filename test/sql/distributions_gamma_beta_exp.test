@@ -1,0 +1,141 @@
+# name: test/sql/distributions_gamma_beta_exp.test
+# description: Gamma, Beta, and Exponential distribution functions (d/p/q triples)
+# group: [stats_duck]
+
+require stats_duck
+
+# ─── Gamma ──────────────────────────────────────────────────────────────────
+
+# dgamma(1, shape=2, rate=1) = 1 · e^(-1) = 1/e. The 2-arg form defaults rate=1.
+query R
+SELECT dgamma(1.0, 2.0)
+----
+0.367879
+
+# Explicit rate: dgamma(2, shape=3, rate=0.5) — R: 0.09196986
+query R
+SELECT dgamma(2.0, 3.0, 0.5)
+----
+0.091970
+
+# pgamma(2, shape=3, rate=1) — R: 0.3233236
+query R
+SELECT pgamma(2.0, 3.0)
+----
+0.323324
+
+# qgamma(0.5, shape=3) — R: 2.674060
+query R
+SELECT qgamma(0.5, 3.0)
+----
+2.674060
+
+# Round-trip: pgamma(qgamma(p)) ≈ p
+query I
+SELECT abs(pgamma(qgamma(0.7, 4.0, 1.5), 4.0, 1.5) - 0.7) < 1e-6
+----
+true
+
+# Invalid: shape <= 0 → NULL
+query R
+SELECT dgamma(1.0, -1.0)
+----
+NULL
+
+# Invalid: x < 0 returns 0 (PDF is zero outside support)
+query R
+SELECT dgamma(-1.0, 2.0)
+----
+0
+
+# ─── Beta ───────────────────────────────────────────────────────────────────
+
+# dbeta(0.3, 2, 5) — R: 2.1609
+query R
+SELECT dbeta(0.3, 2.0, 5.0)
+----
+2.160900
+
+# pbeta(0.3, 2, 5) — R: 0.5798249
+query R
+SELECT pbeta(0.3, 2.0, 5.0)
+----
+0.579825
+
+# qbeta(0.5, 2, 5) — R: 0.2644500
+query R
+SELECT qbeta(0.5, 2.0, 5.0)
+----
+0.264450
+
+# Uniform special case: Beta(1, 1) is U[0, 1]; PDF is constant 1.
+query RR
+SELECT dbeta(0.0, 1.0, 1.0), dbeta(1.0, 1.0, 1.0)
+----
+1	1
+
+# Outside support [0, 1] → 0
+query R
+SELECT dbeta(1.5, 2.0, 5.0)
+----
+0
+
+# Invalid: negative shape → NULL
+query R
+SELECT dbeta(0.5, -1.0, 5.0)
+----
+NULL
+
+# ─── Exponential ────────────────────────────────────────────────────────────
+
+# Default rate=1: dexp(1) = e^(-1) = 1/e
+query R
+SELECT dexp(1.0)
+----
+0.367879
+
+# pexp(1) = 1 - e^(-1)
+query R
+SELECT pexp(1.0)
+----
+0.632121
+
+# qexp(0.5) = ln(2)
+query R
+SELECT qexp(0.5)
+----
+0.693147
+
+# Custom rate λ=2: qexp(0.5, 2) = ln(2)/2
+query R
+SELECT qexp(0.5, 2.0)
+----
+0.346574
+
+# Round-trip
+query I
+SELECT abs(pexp(qexp(0.7, 1.5), 1.5) - 0.7) < 1e-9
+----
+true
+
+# x < 0 ⇒ PDF=0, CDF=0
+query RR
+SELECT dexp(-1.0), pexp(-1.0)
+----
+0	0
+
+# Invalid: rate <= 0 → NULL
+query R
+SELECT pexp(1.0, 0.0)
+----
+NULL
+
+# ─── Consistency: Exponential = Gamma(1, rate) ──────────────────────────────
+
+# dexp(x, rate) ≡ dgamma(x, 1, rate); pexp ≡ pgamma; qexp ≡ qgamma.
+query I
+SELECT abs(dexp(1.5, 2.0) - dgamma(1.5, 1.0, 2.0)) < 1e-12
+       AND abs(pexp(1.5, 2.0) - pgamma(1.5, 1.0, 2.0)) < 1e-12
+       AND abs(qexp(0.7, 2.0) - qgamma(0.7, 1.0, 2.0)) < 1e-6
+----
+true

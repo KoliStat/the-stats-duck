@@ -16,16 +16,17 @@ CREATE TABLE patients AS SELECT * FROM (VALUES
     (NULL, 'M', 27.4, 'B')
 ) AS t(age, sex, bmi, arm);
 
-# ─── Output schema is fixed (variable, level, statistic, stratum, display) ────
+# ─── Output schema is fixed (variable, level, statistic, stratum, display, p_value) ────
 
-query TTTTT
+# Without `by`: p_value is NULL on every row (nothing to compare against).
+query TTTTTR
 SELECT * FROM table_one('patients', variables := ['age']) ORDER BY statistic
 ----
-age	NULL	mean (sd)	Overall	55.6 (7.2)
-age	NULL	median [q1, q3]	Overall	54.2 [51.3, 59.6]
-age	NULL	min, max	Overall	45.7, 67.1
-age	NULL	missing	Overall	1
-age	NULL	n	Overall	7
+age	NULL	mean (sd)	Overall	55.6 (7.2)	NULL
+age	NULL	median [q1, q3]	Overall	54.2 [51.3, 59.6]	NULL
+age	NULL	min, max	Overall	45.7, 67.1	NULL
+age	NULL	missing	Overall	1	NULL
+age	NULL	n	Overall	7	NULL
 
 # ─── Numeric variable rows ──────────────────────────────────────────────────
 
@@ -69,7 +70,7 @@ Missing	n (%)	1 (25.0%)
 # Overall is always first; then strata alphabetical. For arm='A', age has
 # 4 valid values [54.2, 61.0, 45.7, 58.3] → mean=54.8, sd≈6.7.
 query TTT
-SELECT statistic, stratum, display FROM table_one('patients', variables := ['age'], by := 'arm')
+SELECT statistic, stratum, display FROM table_one('patients', variables := ['age'], by := ['arm'])
 WHERE statistic = 'mean (sd)' ORDER BY stratum
 ----
 mean (sd)	A	54.8 (6.7)
@@ -78,7 +79,7 @@ mean (sd)	Overall	55.6 (7.2)
 
 # Categorical with by — each level (including Missing) emitted once per stratum.
 query TTT
-SELECT level, statistic, stratum FROM table_one('patients', variables := ['sex'], by := 'arm')
+SELECT level, statistic, stratum FROM table_one('patients', variables := ['sex'], by := ['arm'])
 WHERE statistic = 'n (%)' ORDER BY stratum, level
 ----
 F	n (%)	A
@@ -94,7 +95,7 @@ Missing	n (%)	Overall
 # Each by-stratum's percentages sum to 100% within the stratum (with the
 # Missing row always present, even when its count is zero).
 query T
-SELECT display FROM table_one('patients', variables := ['sex'], by := 'arm')
+SELECT display FROM table_one('patients', variables := ['sex'], by := ['arm'])
 WHERE stratum = 'A' ORDER BY level
 ----
 2 (50.0%)
@@ -125,11 +126,214 @@ SELECT * FROM table_one('does_not_exist', variables := ['age'])
 Table
 
 statement error
-SELECT * FROM table_one('patients', variables := [], by := 'arm')
+SELECT * FROM table_one('patients', variables := [], by := ['arm'])
 ----
 'variables' must not be empty
 
 statement error
-SELECT * FROM table_one('patients', variables := ['age'], by := 'missing_col')
+SELECT * FROM table_one('patients', variables := ['age'], by := ['missing_col'])
 ----
 'by' column 'missing_col' not found
+
+# ─── Multi-column `by` ──────────────────────────────────────────────────────
+
+# Two-column stratification: Cartesian product of distinct (arm, sex) tuples.
+# Stratum label joins values in declared order with " / ". Every arm × sex
+# combination in the patients fixture has at least one row, so all four
+# tuples appear alongside Overall.
+query T rowsort
+SELECT DISTINCT stratum FROM table_one('patients',
+    variables := ['age'], by := ['arm', 'sex'])
+----
+A / F
+A / M
+B / F
+B / M
+Overall
+
+# Per-stratum numeric summary picks up the right subset. For arm=A, sex=F:
+# ages 54.2 and 61.0 → mean 57.6, sd ≈ 4.8.
+query TT
+SELECT statistic, display FROM table_one('patients',
+    variables := ['age'], by := ['arm', 'sex'])
+WHERE stratum = 'A / F' AND statistic IN ('n', 'mean (sd)') ORDER BY statistic
+----
+mean (sd)	57.6 (4.8)
+n	2
+
+# Three-or-more by columns work the same way (no special-cased limit).
+# Here arm × sex × (a constant-1 column) collapses back to arm × sex strata
+# with a "1" tail on every label.
+statement ok
+CREATE TABLE patients_const AS SELECT *, 1 AS site FROM patients;
+
+query T rowsort
+SELECT DISTINCT stratum FROM table_one('patients_const',
+    variables := ['age'], by := ['arm', 'sex', 'site'])
+----
+A / F / 1
+A / M / 1
+B / F / 1
+B / M / 1
+Overall
+
+# Empty `by` list is equivalent to no `by` — only the Overall stratum.
+query T rowsort
+SELECT DISTINCT stratum FROM table_one('patients',
+    variables := ['age'], by := [])
+----
+Overall
+
+# Missing column inside a multi-column `by` is rejected the same way as
+# the single-column case.
+statement error
+SELECT * FROM table_one('patients', variables := ['age'], by := ['arm', 'bogus'])
+----
+'by' column 'bogus' not found
+
+# ─── force_categorical / force_numerical overrides ──────────────────────────
+
+# Fixture: stage is an INTEGER (catalog → numeric) but really categorical.
+# height is VARCHAR holding numeric strings (catalog → categorical) but really
+# numeric.
+statement ok
+CREATE TABLE staged AS SELECT * FROM (VALUES
+    (1, '1.65'), (2, '1.80'), (2, '1.72'), (3, '1.55'), (3, '1.90')
+) AS t(stage, height);
+
+# Without overrides: stage is numeric (mean/sd row), height is categorical
+# (one row per distinct string).
+query TT
+SELECT statistic, display FROM table_one('staged', variables := ['stage'])
+WHERE statistic = 'mean (sd)'
+----
+mean (sd)	2.2 (0.8)
+
+query TT
+SELECT level, statistic FROM table_one('staged', variables := ['height'])
+WHERE statistic = 'n (%)' ORDER BY level
+----
+1.55	n (%)
+1.65	n (%)
+1.72	n (%)
+1.80	n (%)
+1.90	n (%)
+Missing	n (%)
+
+# force_categorical flips stage into the categorical branch: per-level n (%)
+# rows instead of mean/sd.
+query TTT
+SELECT level, statistic, display FROM table_one('staged',
+    variables := ['stage'], force_categorical := ['stage'])
+ORDER BY level
+----
+1	n (%)	1 (20.0%)
+2	n (%)	2 (40.0%)
+3	n (%)	2 (40.0%)
+Missing	n (%)	0 (0.0%)
+
+# force_numerical flips height into the numeric branch: mean/sd over the
+# parsed DOUBLEs.
+query TT
+SELECT statistic, display FROM table_one('staged',
+    variables := ['height'], force_numerical := ['height'])
+WHERE statistic IN ('n', 'mean (sd)') ORDER BY statistic
+----
+mean (sd)	1.7 (0.1)
+n	5
+
+# Both overrides at once on different variables.
+query TTT rowsort
+SELECT variable, statistic, display FROM table_one('staged',
+    variables := ['stage', 'height'],
+    force_categorical := ['stage'],
+    force_numerical := ['height'])
+WHERE statistic IN ('mean (sd)', 'n')
+----
+height	mean (sd)	1.7 (0.1)
+height	n	5
+
+# A variable in both override lists is rejected.
+statement error
+SELECT * FROM table_one('staged', variables := ['stage'],
+    force_categorical := ['stage'], force_numerical := ['stage'])
+----
+'stage' is listed in both force_categorical and force_numerical
+
+# An override entry that isn't in `variables` is rejected (catches typos).
+statement error
+SELECT * FROM table_one('staged', variables := ['stage'],
+    force_categorical := ['stge'])
+----
+force_categorical entry 'stge' is not in 'variables'
+
+statement error
+SELECT * FROM table_one('staged', variables := ['height'],
+    force_numerical := ['hieght'])
+----
+force_numerical entry 'hieght' is not in 'variables'
+
+# ─── Between-group p-value column ───────────────────────────────────────────
+
+# Without `by`: p_value is NULL for every row (no comparison to make).
+query R
+SELECT DISTINCT p_value FROM table_one('patients', variables := ['age'])
+----
+NULL
+
+# Numeric variable, single-column `by`: one-way ANOVA across the strata. All
+# rows of a given variable share the same p_value so PIVOTs can grab it via
+# FIRST(p_value).
+query TR
+SELECT DISTINCT variable, p_value FROM table_one('patients',
+    variables := ['age', 'bmi'], by := ['arm'])
+ORDER BY variable
+----
+age	0.774647
+bmi	0.391848
+
+# Categorical variable, single-column `by`: chi-square independence. sex is
+# 2 F / 2 M in every arm → contingency table is identical between arms,
+# so the test is exactly p = 1.0.
+query R
+SELECT DISTINCT p_value FROM table_one('patients',
+    variables := ['sex'], by := ['arm'])
+----
+1
+
+# Multi-column `by`: the strata are tuples; the test folds them into a
+# single categorical group via the same " / " concatenation used for
+# stratum labels.
+query TR
+SELECT DISTINCT variable, p_value FROM table_one('patients',
+    variables := ['age', 'bmi'], by := ['arm', 'sex'])
+ORDER BY variable
+----
+age	0.872123
+bmi	0.673101
+
+# force_categorical composes with p_value: when stage is treated as a
+# category (rather than numeric), the test switches from ANOVA to chi-square.
+# This 3×2 contingency on (stage, arm) — built so each arm has its own
+# stage distribution — yields a chi-square p-value distinct from the
+# ANOVA-on-integers result.
+statement ok
+CREATE TABLE staged_by_arm AS SELECT * FROM (VALUES
+    (1, 'A'), (1, 'A'), (2, 'A'), (3, 'A'),
+    (2, 'B'), (3, 'B'), (3, 'B'), (3, 'B')
+) AS t(stage, arm);
+
+# As a numeric variable: ANOVA on stage by arm.
+query R
+SELECT DISTINCT p_value FROM table_one('staged_by_arm',
+    variables := ['stage'], by := ['arm'])
+----
+0.113532
+
+# Forced to categorical: chi-square on the 3×2 contingency.
+query R
+SELECT DISTINCT p_value FROM table_one('staged_by_arm',
+    variables := ['stage'], by := ['arm'],
+    force_categorical := ['stage'])
+----
+0.223130

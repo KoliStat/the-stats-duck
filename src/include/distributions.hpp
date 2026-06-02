@@ -426,4 +426,184 @@ inline double FQuantile(double p, double df1, double df2) {
 	return 0.5 * (lo + hi);
 }
 
+// ── Gamma distribution ──────────────────────────────────────────────────────
+// Parametrization: shape α > 0, rate β > 0 (matching R's default rate form;
+// scale = 1/rate). PDF = β^α / Γ(α) · x^(α-1) · e^(-βx) on x ≥ 0.
+
+inline double GammaPDF(double x, double shape, double rate = 1.0) {
+	if (shape <= 0.0 || rate <= 0.0) {
+		throw std::invalid_argument("shape and rate must be > 0");
+	}
+	if (x < 0.0) {
+		return 0.0;
+	}
+	if (x == 0.0) {
+		if (shape < 1.0) {
+			return std::numeric_limits<double>::infinity();
+		}
+		if (shape == 1.0) {
+			return rate;
+		}
+		return 0.0;
+	}
+	double log_pdf = shape * std::log(rate) + (shape - 1.0) * std::log(x) - rate * x -
+	                 std::lgamma(shape);
+	return std::exp(log_pdf);
+}
+
+inline double GammaCDF(double x, double shape, double rate = 1.0) {
+	if (shape <= 0.0 || rate <= 0.0) {
+		throw std::invalid_argument("shape and rate must be > 0");
+	}
+	if (x <= 0.0) {
+		return 0.0;
+	}
+	return GammaP(shape, rate * x);
+}
+
+inline double GammaQuantile(double p, double shape, double rate = 1.0) {
+	if (shape <= 0.0 || rate <= 0.0) {
+		throw std::invalid_argument("shape and rate must be > 0");
+	}
+	if (p < 0.0 || p > 1.0) {
+		throw std::invalid_argument("p must be in [0, 1]");
+	}
+	if (p == 0.0) {
+		return 0.0;
+	}
+	if (p == 1.0) {
+		return std::numeric_limits<double>::infinity();
+	}
+
+	// Bracket via the mean (shape/rate); expand until CDF(hi) ≥ p.
+	double lo = 0.0;
+	double hi = std::max(shape / rate * 2.0, 1.0 / rate);
+	while (GammaCDF(hi, shape, rate) < p) {
+		hi *= 2.0;
+	}
+	for (int i = 0; i < 100; i++) {
+		double mid = 0.5 * (lo + hi);
+		if (GammaCDF(mid, shape, rate) < p) {
+			lo = mid;
+		} else {
+			hi = mid;
+		}
+	}
+	return 0.5 * (lo + hi);
+}
+
+// ── Beta distribution ───────────────────────────────────────────────────────
+// Shape parameters α, β > 0, support [0, 1]. PDF = x^(α-1)(1-x)^(β-1) / B(α, β).
+
+inline double BetaPDF(double x, double alpha, double beta) {
+	if (alpha <= 0.0 || beta <= 0.0) {
+		throw std::invalid_argument("alpha and beta must be > 0");
+	}
+	if (x < 0.0 || x > 1.0) {
+		return 0.0;
+	}
+	if (x == 0.0) {
+		if (alpha < 1.0) {
+			return std::numeric_limits<double>::infinity();
+		}
+		if (alpha == 1.0) {
+			return beta;
+		}
+		return 0.0;
+	}
+	if (x == 1.0) {
+		if (beta < 1.0) {
+			return std::numeric_limits<double>::infinity();
+		}
+		if (beta == 1.0) {
+			return alpha;
+		}
+		return 0.0;
+	}
+	double log_pdf =
+	    (alpha - 1.0) * std::log(x) + (beta - 1.0) * std::log(1.0 - x) - LogBeta(alpha, beta);
+	return std::exp(log_pdf);
+}
+
+inline double BetaCDF(double x, double alpha, double beta) {
+	if (alpha <= 0.0 || beta <= 0.0) {
+		throw std::invalid_argument("alpha and beta must be > 0");
+	}
+	if (x <= 0.0) {
+		return 0.0;
+	}
+	if (x >= 1.0) {
+		return 1.0;
+	}
+	return BetaIncomplete(alpha, beta, x);
+}
+
+inline double BetaQuantile(double p, double alpha, double beta) {
+	if (alpha <= 0.0 || beta <= 0.0) {
+		throw std::invalid_argument("alpha and beta must be > 0");
+	}
+	if (p < 0.0 || p > 1.0) {
+		throw std::invalid_argument("p must be in [0, 1]");
+	}
+	if (p == 0.0) {
+		return 0.0;
+	}
+	if (p == 1.0) {
+		return 1.0;
+	}
+
+	// Bisect on [0, 1] — support is bounded, no need to expand.
+	double lo = 0.0;
+	double hi = 1.0;
+	for (int i = 0; i < 100; i++) {
+		double mid = 0.5 * (lo + hi);
+		if (BetaCDF(mid, alpha, beta) < p) {
+			lo = mid;
+		} else {
+			hi = mid;
+		}
+	}
+	return 0.5 * (lo + hi);
+}
+
+// ── Exponential distribution ────────────────────────────────────────────────
+// Rate λ > 0. PDF = λ · e^(-λx) on x ≥ 0. Special case of Gamma(1, λ) but
+// worth a closed-form path because the quantile is analytic.
+
+inline double ExponentialPDF(double x, double rate = 1.0) {
+	if (rate <= 0.0) {
+		throw std::invalid_argument("rate must be > 0");
+	}
+	if (x < 0.0) {
+		return 0.0;
+	}
+	return rate * std::exp(-rate * x);
+}
+
+inline double ExponentialCDF(double x, double rate = 1.0) {
+	if (rate <= 0.0) {
+		throw std::invalid_argument("rate must be > 0");
+	}
+	if (x <= 0.0) {
+		return 0.0;
+	}
+	return 1.0 - std::exp(-rate * x);
+}
+
+inline double ExponentialQuantile(double p, double rate = 1.0) {
+	if (rate <= 0.0) {
+		throw std::invalid_argument("rate must be > 0");
+	}
+	if (p < 0.0 || p > 1.0) {
+		throw std::invalid_argument("p must be in [0, 1]");
+	}
+	if (p == 0.0) {
+		return 0.0;
+	}
+	if (p == 1.0) {
+		return std::numeric_limits<double>::infinity();
+	}
+	return -std::log(1.0 - p) / rate;
+}
+
 } // namespace stats_duck

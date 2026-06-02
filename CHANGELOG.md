@@ -8,7 +8,135 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 The extension installs and loads in DuckDB under the technical name `stats_duck` —
 that name is preserved across releases for backward compatibility.
 
-## [Unreleased]
+## [0.5.0-dead-person] - 2026-05-31
+
+### Added
+
+- **`corr_matrix(data, variables [, method])` table function** — long-format
+  pairwise correlation matrix as `(row_var, col_var, coef, p_value, n)` rows.
+  `method` is `'pearson'` (default), `'spearman'`, or `'kendall'`; the `coef`
+  column carries the method-appropriate coefficient (r / rho / tau) under one
+  uniform name so downstream pipelines compose without method-specific casing.
+  All n² rows emitted (full symmetric matrix including diagonal and mirror
+  pairs) so the result drops straight into a `DRAW heatmap` without a
+  CROSS JOIN. Upper triangle is computed once in C++ and mirrored — for k
+  variables that's k·(k+1)/2 aggregate runs instead of k². Pairwise-complete
+  NULL handling per the underlying `pearson_test` / `spearman_test` /
+  `kendall_test` aggregates. Non-numeric columns are rejected at bind time.
+
+- **ggsql: `WITH … VISUALIZE`** — a leading CTE clause is now accepted in
+  front of a `VISUALIZE` statement. The captured `WITH [RECURSIVE] <cte> AS
+  (...) [, <cte> AS (...)]*` block is prepended to each layer's projected
+  SQL, so the `FROM` clause and aesthetic expressions can reference
+  CTE-bound names. Composes with every existing modifier (`FACET BY`,
+  `SCALE`, `TITLE`, multi-layer `DRAW`) — wrapping marks like `line` and
+  `bar` keep the CTE scoped to the inner subquery via standard SQL CTE
+  scoping rules. Leading SQL comments (`--`, `/* … */`) before the `WITH`
+  are skipped during keyword detection. Statements that start with `WITH`
+  but contain no top-level `VISUALIZE` keyword fall through to DuckDB's
+  regular SQL parser unchanged, so existing CTE-using queries are
+  unaffected.
+
+- **`bin_edges` / `bin_label` — auto-binning helpers.**
+  `bin_edges(x [, method]) → LIST<DOUBLE>` is a buffer-based aggregate that
+  returns the edge vector for the chosen rule: `'sturges'` (default,
+  `k = ⌈log₂(n)+1⌉`, R's `hist()` default), `'fd'` (Freedman-Diaconis), `'scott'`
+  (normal-reference), `'sqrt'`, `'rice'`, or `'auto'` (numpy's `max(sturges, fd)`).
+  Methods that depend on robust scale (FD, Scott) silently fall back to
+  Sturges when IQR/sd is zero. `bin_label(x, edges) → VARCHAR` formats the
+  bin containing `x` as `'[lo, hi)'` (or `'[lo, hi]'` for the rightmost bin so
+  the maximum is never dropped). Pairs naturally with `table_one` — bin a
+  numeric column up front, then summarise the binned column categorically.
+
+- **Local DuckDB submodule patch (`duckdb/third_party/fmt/include/fmt/format.h`).**
+  Upstream fmt checks `#ifdef _SECURE_SCL` to decide whether to use
+  `stdext::checked_array_iterator`, but Microsoft's CRT auto-defines
+  `_SECURE_SCL=0` in Release builds — and the v145 MSVC toolset (VS2026)
+  removed `stdext::checked_array_iterator` entirely, so the `#ifdef` branch
+  now fails to compile. Patched to `#if defined(_SECURE_SCL) && _SECURE_SCL > 0`,
+  which correctly takes the plain-pointer branch in Release. The patch is
+  localized and a candidate for upstream contribution; re-apply if the
+  DuckDB submodule moves.
+
+- `poibin_cdf(probs LIST<DOUBLE>, k BIGINT) → DOUBLE` — Poisson Binomial CDF.
+  Returns `P(X ≤ k)` where `X = Σᵢ Bᵢ`, each `Bᵢ ∼ Bernoulli(pᵢ)` independent
+  with its own success probability. Computed by Hong (2013)'s direct
+  convolution: O(n²) time, O(n) memory, numerically stable for the n that
+  show up in biostat-scale queries. Reduces exactly to `pbinom(k, n, p)` when
+  all probabilities are equal. NULL handling: NULL in either argument or
+  inside the list → NULL; any `pᵢ` outside `[0, 1]` → NULL.
+
+- **Gamma / Beta / Exponential distribution functions.** d/p/q triples in the
+  same R-style API as the existing `d/p/qnorm` / `d/p/qt` / `d/p/qchisq` /
+  `d/p/qf` families. `dgamma(x, shape, [rate])` / `pgamma` / `qgamma` (rate
+  defaults to 1, matching R); `dbeta(x, alpha, beta)` / `pbeta` / `qbeta` on
+  the [0, 1] support; `dexp(x, [rate])` / `pexp` / `qexp` (rate defaults to 1;
+  `qexp` is closed-form `-log(1-p)/rate`). All implemented on top of the
+  existing regularized incomplete gamma / beta infrastructure in
+  `distributions.hpp`. Cross-verified against R to 6+ decimal places.
+
+- **Kolmogorov-Smirnov tests.** Two new aggregates:
+
+  - `ks_test_1samp(x)` — one-sample KS against the fitted normal
+    `N(mean(x), sd(x))`. Returns `STRUCT(test_type, d_statistic, p_value, n)`.
+    Buffer-based aggregate; valid for `n >= 3`. P-value via the asymptotic
+    Kolmogorov distribution with Stephens (1970) small-sample correction.
+    Because mu/sigma are estimated from the sample the p-value is
+    **conservative** — pair with `shapiro_wilk` / `anderson_darling` when
+    normality is the primary question.
+  - `ks_test_2samp(x, y)` — two-sample KS on whether `x` and `y` come from
+    the same underlying distribution. Returns
+    `STRUCT(test_type, d_statistic, p_value, n_x, n_y)`. Asymptotic p-value
+    evaluated at the effective sample size `n_x*n_y/(n_x+n_y)`. Per-column
+    NULL handling (NULL in `x` doesn't drop the value from `y` on the same
+    row), matching `ttest_2samp` semantics.
+
+- `table_one`: new `p_value` output column carrying the between-group test
+  result. NULL when no `by` is set or there's only one stratum. Numeric
+  variables use one-way ANOVA via `anova_oneway(value, group)`; categorical
+  variables use chi-square independence via `chisq_independence(var, group)`.
+  Multi-column `by` folds into a single grouping by concatenating columns
+  with `' / '` (the same separator used for stratum labels). The same
+  p_value is stamped on every row of a given variable so a PIVOT can grab
+  it via `FIRST(p_value)`. Test failures (zero variance, too few samples
+  for a 2×2, etc.) → NULL rather than throwing — keeps the whole table
+  rendering even when one variable's test can't run.
+- `table_one`: `force_categorical := [...]` and `force_numerical := [...]`
+  named parameters to override the per-variable auto-classification. Useful
+  for integer columns that are really categorical (e.g. `stage ∈ {1,2,3,4}`,
+  treatment codes) and VARCHAR columns holding numeric strings. Each entry
+  must appear in `variables` (typos surface as bind errors); the two lists
+  must not overlap.
+
+### Changed
+
+- `table_one`: `by` named parameter is now `LIST<VARCHAR>` instead of
+  `VARCHAR`. Single-column callers need to wrap the column name in a list:
+  `by := ['arm']` instead of `by := 'arm'`. Multi-column stratification
+  (Cartesian product of distinct value tuples across the listed columns,
+  e.g. `by := ['species', 'sex']`) is the motivation — the v0.4 single-
+  column form had no place to grow. Stratum labels join values with
+  `' / '` in declared order (e.g. `'Adelie / female'`); rows where any
+  by-column is NULL are excluded from the breakdown.
+
+### Added
+
+- ggsql: three new marks — `heatmap`, `density`, `regression`. `heatmap` is a
+  `rect` mark with ordinal x/y and quantitative color (correlation matrices,
+  contingency tables). `density` is a KDE via Vega-Lite's `density` transform
+  on the `x` aesthetic; groups by `color` if mapped (one curve per level).
+  `regression` is a `line` mark via Vega-Lite's `regression` transform fitting
+  `y ~ x`; groups by `color` if mapped. Pairs naturally with `DRAW point
+  DRAW regression` for scatter-with-fit overlays.
+- ggsql: `TITLE '<text>' [SUBTITLE '<text>']` clause appended after any
+  `SCALE` clauses. Emitted as a Vega-Lite `TitleParams` object (always object
+  form, even without subtitle) so consumers don't need to handle both string
+  and object shapes. `SUBTITLE` without a preceding `TITLE` is a parse error.
+- ggsql: `SCALE <channel> LABEL '<text>'` operator injects an `axis.title`
+  block alongside the channel's existing `scale` block. Composes with
+  `TO` / `ZERO` / `DOMAIN` on the same channel and with `FACET BY` and
+  multi-layer specs. LABEL on an unmapped channel is a silent no-op, matching
+  the existing `SCALE` semantics.
 
 ## [0.4.0-nine-pence] - 2026-05-19
 

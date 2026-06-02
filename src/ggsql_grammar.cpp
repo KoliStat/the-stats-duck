@@ -95,6 +95,63 @@ bool IEqual(const string &tok, const char *kw) {
 
 } // namespace
 
+string UnquoteSqlString(const string &raw) {
+	if (raw.size() < 2 || raw.front() != '\'' || raw.back() != '\'') {
+		return raw;
+	}
+	string out;
+	out.reserve(raw.size() - 2);
+	for (size_t i = 1; i + 1 < raw.size(); i++) {
+		// Collapse SQL '' escape to a single quote.
+		if (raw[i] == '\'' && i + 2 < raw.size() && raw[i + 1] == '\'') {
+			out += '\'';
+			i++;
+		} else {
+			out += raw[i];
+		}
+	}
+	return out;
+}
+
+string JsonEscape(const string &s) {
+	string out;
+	out.reserve(s.size());
+	for (unsigned char c : s) {
+		switch (c) {
+		case '"':
+			out += "\\\"";
+			break;
+		case '\\':
+			out += "\\\\";
+			break;
+		case '\b':
+			out += "\\b";
+			break;
+		case '\f':
+			out += "\\f";
+			break;
+		case '\n':
+			out += "\\n";
+			break;
+		case '\r':
+			out += "\\r";
+			break;
+		case '\t':
+			out += "\\t";
+			break;
+		default:
+			if (c < 0x20) {
+				char buf[8];
+				snprintf(buf, sizeof(buf), "\\u%04x", c);
+				out += buf;
+			} else {
+				out += static_cast<char>(c);
+			}
+		}
+	}
+	return out;
+}
+
 ParseResult ParseGgsql(const string &query) {
 	ParseResult result;
 	auto tokenized = Tokenize(query);
@@ -119,6 +176,27 @@ ParseResult ParseGgsql(const string &query) {
 		i++;
 		return true;
 	};
+
+	// Optional leading `WITH … VISUALIZE`. Capture every top-level token from
+	// the WITH up to (but not including) VISUALIZE — the tokenizer already
+	// flattens parenthesised CTE bodies into single tokens, so we don't need
+	// to track depth here. Reconstruct the SQL by joining with single spaces;
+	// SQL is whitespace-tolerant, so `WITH t AS (…) , u AS (…)` parses the
+	// same as `WITH t AS (…), u AS (…)`.
+	if (!at_end() && IEqual(peek(), "WITH")) {
+		string with_text;
+		while (!at_end() && !IEqual(peek(), "VISUALIZE")) {
+			if (!with_text.empty()) {
+				with_text += " ";
+			}
+			with_text += tokens[i++];
+		}
+		if (at_end()) {
+			result.error = "WITH clause is not followed by VISUALIZE";
+			return result;
+		}
+		result.stmt.with_clause = std::move(with_text);
+	}
 
 	if (!consume("VISUALIZE")) {
 		return result;
@@ -233,7 +311,8 @@ ParseResult ParseGgsql(const string &query) {
 	}
 	result.stmt.from_table = tokens[i++];
 
-	while (!at_end() && !IEqual(peek(), "FACET") && !IEqual(peek(), "SCALE")) {
+	while (!at_end() && !IEqual(peek(), "FACET") && !IEqual(peek(), "SCALE") &&
+	       !IEqual(peek(), "TITLE") && !IEqual(peek(), "SUBTITLE")) {
 		if (!consume("DRAW")) {
 			return result;
 		}
@@ -260,13 +339,14 @@ ParseResult ParseGgsql(const string &query) {
 			return result;
 		}
 		if (at_end() || IEqual(peek(), "SCALE") || IEqual(peek(), "ROWS") ||
-		    IEqual(peek(), "COLS")) {
+		    IEqual(peek(), "COLS") || IEqual(peek(), "TITLE") || IEqual(peek(), "SUBTITLE")) {
 			result.error = "Expected expression after 'FACET BY'";
 			return result;
 		}
 		string expr;
 		while (!at_end() && !IEqual(peek(), "SCALE") && !IEqual(peek(), "ROWS") &&
-		       !IEqual(peek(), "COLS")) {
+		       !IEqual(peek(), "COLS") && !IEqual(peek(), "TITLE") &&
+		       !IEqual(peek(), "SUBTITLE")) {
 			if (!expr.empty()) {
 				expr += " ";
 			}
@@ -339,12 +419,43 @@ ParseResult ParseGgsql(const string &query) {
 			string hi = tokens[i++];
 			scale.property = "domain";
 			scale.value_json = "[" + lo + "," + hi + "]";
+		} else if (IEqual(op, "LABEL")) {
+			if (at_end()) {
+				result.error = "Expected axis label after 'SCALE <aesthetic> LABEL'";
+				return result;
+			}
+			scale.sub_object = "axis";
+			scale.property = "title";
+			scale.value_json = "\"" + JsonEscape(UnquoteSqlString(tokens[i++])) + "\"";
 		} else {
 			result.error = "Unknown SCALE operator '" + op +
-			               "' (expected TO / ZERO / DOMAIN)";
+			               "' (expected TO / ZERO / DOMAIN / LABEL)";
 			return result;
 		}
 		result.stmt.scales.push_back(std::move(scale));
+	}
+
+	// Optional `TITLE '<text>' [SUBTITLE '<text>']`. SUBTITLE without TITLE is
+	// rejected — keeps the surface area honest (Vega-Lite ignores a subtitle
+	// without a title anyway, so silently accepting it would mask typos).
+	if (!at_end() && IEqual(peek(), "TITLE")) {
+		i++;
+		if (at_end()) {
+			result.error = "Expected title text after 'TITLE'";
+			return result;
+		}
+		result.stmt.title = UnquoteSqlString(tokens[i++]);
+		if (!at_end() && IEqual(peek(), "SUBTITLE")) {
+			i++;
+			if (at_end()) {
+				result.error = "Expected subtitle text after 'SUBTITLE'";
+				return result;
+			}
+			result.stmt.subtitle = UnquoteSqlString(tokens[i++]);
+		}
+	} else if (!at_end() && IEqual(peek(), "SUBTITLE")) {
+		result.error = "SUBTITLE requires a preceding TITLE clause";
+		return result;
 	}
 
 	if (!at_end()) {

@@ -10,6 +10,7 @@
 #include "duckdb/main/extension/extension_loader.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <sstream>
 #include <string>
@@ -39,13 +40,35 @@ struct TableOneRow {
 	std::string statistic;
 	std::string stratum; // "Overall" or a `by`-column value
 	std::string display;
+	// Between-group p-value: NaN means "no test applicable" → emitted as NULL.
+	// The same value is stamped on every row of the same variable so a PIVOT
+	// can pick it up with FIRST(p_value). NULL when `by` is unset / single
+	// stratum or when the underlying test fails (e.g. zero variance, too few
+	// samples).
+	double p_value;
+
+	// Explicit constructor so 5-arg brace-init calls (the existing pattern in
+	// EmitNumericRows / EmitCategoricalRows) keep working with p_value
+	// defaulted to NaN. A C++17 NSDMI default would also work under MSVC, but
+	// emscripten's libc++ rejects brace-init of an aggregate with NSDMIs
+	// when the brace list is shorter than the field count — the constructor
+	// form is portable across both toolchains.
+	TableOneRow(std::string variable, std::string level, std::string statistic,
+	            std::string stratum, std::string display,
+	            double p_value = std::nan(""))
+	    : variable(std::move(variable)), level(std::move(level)),
+	      statistic(std::move(statistic)), stratum(std::move(stratum)),
+	      display(std::move(display)), p_value(p_value) {
+	}
 };
 
 struct TableOneBindData : public TableFunctionData {
 	// Parsed inputs
 	std::string data_table;            // unqualified table name (catalog resolution happens here)
 	std::vector<std::string> variables;
-	std::string by_column;             // empty → no grouping; "Overall" only
+	std::vector<std::string> by_columns; // empty → no grouping; "Overall" only.
+	                                     // Multi-column = Cartesian product of distinct
+	                                     // value tuples; stratum label joins with " / ".
 	// Classified per variable (filled at bind time)
 	std::vector<bool> is_numeric;
 };
@@ -161,10 +184,61 @@ static unique_ptr<FunctionData> TableOneBind(ClientContext &context, TableFuncti
 		throw BinderException("table_one: 'variables' must not be empty");
 	}
 
-	// Named param: by VARCHAR (optional).
+	// Named param: by LIST<VARCHAR> (optional). One element → single-column
+	// stratification (the v0.4 behaviour, now spelled `by := ['arm']`). Multiple
+	// elements → Cartesian product of distinct value tuples across the columns;
+	// the stratum label joins values with " / " in the declared column order.
 	auto it_by = input.named_parameters.find("by");
 	if (it_by != input.named_parameters.end() && !it_by->second.IsNull()) {
-		bd->by_column = it_by->second.GetValue<string>();
+		auto &by_children = ListValue::GetChildren(it_by->second);
+		for (auto &c : by_children) {
+			if (c.IsNull()) {
+				throw BinderException("table_one: 'by' list entries must not be NULL");
+			}
+			bd->by_columns.push_back(c.GetValue<string>());
+		}
+	}
+
+	// Named params: force_categorical / force_numerical — per-variable
+	// classification overrides. Integer columns that are really categorical
+	// (`stage ∈ {1,2,3,4}`, treatment codes, etc.) need force_categorical;
+	// VARCHAR columns holding numeric strings need force_numerical. Each entry
+	// must appear in `variables` so typos surface as bind errors rather than
+	// silent no-ops; the two lists must not overlap.
+	std::vector<std::string> force_categorical;
+	std::vector<std::string> force_numerical;
+	auto read_override = [&](const char *param_name, std::vector<std::string> &out) {
+		auto it = input.named_parameters.find(param_name);
+		if (it == input.named_parameters.end() || it->second.IsNull()) {
+			return;
+		}
+		auto &children = ListValue::GetChildren(it->second);
+		for (auto &c : children) {
+			if (c.IsNull()) {
+				throw BinderException("table_one: '%s' list entries must not be NULL",
+				                      param_name);
+			}
+			out.push_back(c.GetValue<string>());
+		}
+	};
+	read_override("force_categorical", force_categorical);
+	read_override("force_numerical", force_numerical);
+	for (auto &v : force_categorical) {
+		if (std::find(force_numerical.begin(), force_numerical.end(), v) !=
+		    force_numerical.end()) {
+			throw BinderException("table_one: '%s' is listed in both force_categorical "
+			                      "and force_numerical", v);
+		}
+		if (std::find(bd->variables.begin(), bd->variables.end(), v) == bd->variables.end()) {
+			throw BinderException("table_one: force_categorical entry '%s' is not in 'variables'",
+			                      v);
+		}
+	}
+	for (auto &v : force_numerical) {
+		if (std::find(bd->variables.begin(), bd->variables.end(), v) == bd->variables.end()) {
+			throw BinderException("table_one: force_numerical entry '%s' is not in 'variables'",
+			                      v);
+		}
 	}
 
 	// Catalog lookup — get column types so we can classify each variable.
@@ -181,29 +255,58 @@ static unique_ptr<FunctionData> TableOneBind(ClientContext &context, TableFuncti
 			                      v, bd->data_table);
 		}
 		auto &col = cols.GetColumn(v);
-		bd->is_numeric.push_back(IsNumericKind(col.GetType().id()));
+		bool numeric = IsNumericKind(col.GetType().id());
+		if (std::find(force_categorical.begin(), force_categorical.end(), v) !=
+		    force_categorical.end()) {
+			numeric = false;
+		} else if (std::find(force_numerical.begin(), force_numerical.end(), v) !=
+		           force_numerical.end()) {
+			numeric = true;
+		}
+		bd->is_numeric.push_back(numeric);
 	}
-	if (!bd->by_column.empty() && !cols.ColumnExists(bd->by_column)) {
-		throw BinderException("table_one: 'by' column '%s' not found in table '%s'",
-		                      bd->by_column, bd->data_table);
+	for (auto &b : bd->by_columns) {
+		if (!cols.ColumnExists(b)) {
+			throw BinderException("table_one: 'by' column '%s' not found in table '%s'",
+			                      b, bd->data_table);
+		}
 	}
 
 	// Output schema (static — see header comment).
-	names = {"variable", "level", "statistic", "stratum", "display"};
+	// p_value is the between-group test result for the variable; it is
+	// repeated on every row of the same variable so a PIVOT can grab it via
+	// FIRST(p_value). NULL when no `by` is set, when there's only one
+	// stratum, or when the test failed.
+	names = {"variable", "level", "statistic", "stratum", "display", "p_value"};
 	return_types = {LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR,
-	                LogicalType::VARCHAR, LogicalType::VARCHAR};
+	                LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::DOUBLE};
 	return std::move(bd);
 }
 
 // ── Per-variable row generation (runs via an internal Connection) ──────────
 
-//! For a numeric variable, fetch summary stats per group and append the
-//! formatted rows. If `group_value` is empty, the group label is "Overall"
-//! and the WHERE clause is omitted; otherwise we restrict to rows where
-//! the by-column equals `group_value`.
+//! Build the per-stratum WHERE fragment (without the leading " WHERE "). Empty
+//! when `by_cols` is empty (the Overall stratum) — caller should skip emitting
+//! a WHERE clause in that case.
+static std::string BuildStratumPredicate(const std::vector<std::string> &by_cols,
+                                         const std::vector<std::string> &group_values) {
+	std::string out;
+	for (size_t i = 0; i < by_cols.size(); i++) {
+		if (i > 0) {
+			out += " AND ";
+		}
+		out += QuoteIdent(by_cols[i]) + " = " + QuoteString(group_values[i]);
+	}
+	return out;
+}
+
+//! For a numeric variable, fetch summary stats per stratum and append the
+//! formatted rows. If `group_values` is empty, the stratum label is "Overall"
+//! and the WHERE clause is omitted; otherwise we restrict to rows where each
+//! by-column equals its parallel value in `group_values`.
 static void EmitNumericRows(Connection &conn, const std::string &table,
-                            const std::string &var, const std::string &by_col,
-                            const std::string &group_value,
+                            const std::string &var, const std::vector<std::string> &by_cols,
+                            const std::vector<std::string> &group_values,
                             const std::string &stratum_label,
                             std::vector<TableOneRow> &out) {
 	std::stringstream sql;
@@ -211,8 +314,8 @@ static void EmitNumericRows(Connection &conn, const std::string &table,
 	       "(s).median, (s).q1, (s).q3, (s).min, (s).max "
 	    << "FROM (SELECT summary_stats(" << QuoteIdent(var) << "::DOUBLE) AS s "
 	    << "FROM " << QuoteIdent(table);
-	if (!group_value.empty()) {
-		sql << " WHERE " << QuoteIdent(by_col) << " = " << QuoteString(group_value);
+	if (!group_values.empty()) {
+		sql << " WHERE " << BuildStratumPredicate(by_cols, group_values);
 	}
 	sql << ")";
 
@@ -265,23 +368,26 @@ static void EmitNumericRows(Connection &conn, const std::string &table,
 //! including the missing count — so the per-stratum level percentages sum to
 //! 100%.
 static void EmitCategoricalRows(Connection &conn, const std::string &table,
-                                const std::string &var, const std::string &by_col,
-                                const std::string &group_value,
+                                const std::string &var,
+                                const std::vector<std::string> &by_cols,
+                                const std::vector<std::string> &group_values,
                                 const std::string &stratum_label,
                                 std::vector<TableOneRow> &out) {
+	std::string stratum_pred =
+	    group_values.empty() ? std::string() : BuildStratumPredicate(by_cols, group_values);
 	std::stringstream sql;
 	sql << "SELECT " << QuoteIdent(var) << "::VARCHAR AS lvl, COUNT(*) AS n "
 	    << "FROM " << QuoteIdent(table) << " WHERE " << QuoteIdent(var) << " IS NOT NULL";
-	if (!group_value.empty()) {
-		sql << " AND " << QuoteIdent(by_col) << " = " << QuoteString(group_value);
+	if (!stratum_pred.empty()) {
+		sql << " AND " << stratum_pred;
 	}
 	sql << " GROUP BY 1 ORDER BY 1";
 
 	std::stringstream missing_sql;
 	missing_sql << "SELECT COUNT(*) FROM " << QuoteIdent(table) << " WHERE "
 	            << QuoteIdent(var) << " IS NULL";
-	if (!group_value.empty()) {
-		missing_sql << " AND " << QuoteIdent(by_col) << " = " << QuoteString(group_value);
+	if (!stratum_pred.empty()) {
+		missing_sql << " AND " << stratum_pred;
 	}
 
 	auto result = conn.Query(sql.str());
@@ -325,6 +431,74 @@ static void EmitCategoricalRows(Connection &conn, const std::string &table,
 	               FormatPercent(static_cast<double>(miss), denom)});
 }
 
+// ── Between-group p-value ──────────────────────────────────────────────────
+
+//! Compute the between-group p-value for a single variable. Returns NaN
+//! ("no result") when no test applies (no by-columns, fewer than 2 strata)
+//! or when the underlying aggregate failed (e.g. zero variance, too few
+//! samples for ANOVA / chi-square).
+//!
+//! Numeric variables → one-way ANOVA via `anova_oneway(value, group)`. Works
+//! for 2 groups (where F = t² pooled) and 3+ groups uniformly.
+//!
+//! Categorical variables → chi-square independence via
+//! `chisq_independence(row, col)` with the variable as rows and the (possibly
+//! concatenated) `by` columns as cols.
+//!
+//! Multi-column `by` is folded into a single grouping string by concatenating
+//! the columns with " / " — same separator used for stratum labels.
+static double ComputeBetweenGroupPValue(Connection &conn, const std::string &table,
+                                        const std::string &var, bool numeric,
+                                        const std::vector<std::string> &by_cols,
+                                        idx_t n_strata) {
+	if (by_cols.empty() || n_strata < 2) {
+		return std::nan("");
+	}
+
+	// Build the grouping expression: single column verbatim, multi-column
+	// concatenated with the same " / " separator used in stratum labels.
+	std::string group_expr;
+	if (by_cols.size() == 1) {
+		group_expr = QuoteIdent(by_cols[0]) + "::VARCHAR";
+	} else {
+		for (size_t i = 0; i < by_cols.size(); i++) {
+			if (i > 0) {
+				group_expr += " || ' / ' || ";
+			}
+			group_expr += QuoteIdent(by_cols[i]) + "::VARCHAR";
+		}
+	}
+
+	// Common WHERE: variable + every by-column non-NULL.
+	std::string where_clause = QuoteIdent(var) + " IS NOT NULL";
+	for (auto &b : by_cols) {
+		where_clause += " AND " + QuoteIdent(b) + " IS NOT NULL";
+	}
+
+	std::stringstream sql;
+	if (numeric) {
+		sql << "SELECT (anova_oneway(" << QuoteIdent(var) << "::DOUBLE, " << group_expr
+		    << ")).p_value FROM " << QuoteIdent(table) << " WHERE " << where_clause;
+	} else {
+		sql << "SELECT (chisq_independence(" << QuoteIdent(var) << "::VARCHAR, " << group_expr
+		    << ")).p_value FROM " << QuoteIdent(table) << " WHERE " << where_clause;
+	}
+
+	auto result = conn.Query(sql.str());
+	if (result->HasError()) {
+		return std::nan(""); // test infeasible (e.g. zero variance, sparse 2x2) → NULL
+	}
+	auto chunk = result->Fetch();
+	if (!chunk || chunk->size() == 0) {
+		return std::nan("");
+	}
+	auto v = chunk->GetValue(0, 0);
+	if (v.IsNull()) {
+		return std::nan("");
+	}
+	return v.GetValue<double>();
+}
+
 // ── InitGlobal: pre-compute every row ──────────────────────────────────────
 
 static unique_ptr<GlobalTableFunctionState> TableOneInitGlobal(ClientContext &context,
@@ -334,14 +508,35 @@ static unique_ptr<GlobalTableFunctionState> TableOneInitGlobal(ClientContext &co
 
 	Connection conn(*context.db);
 
-	// If `by` is set, discover its distinct values up front so we can iterate
-	// groups in a stable order. NULLs in `by` are excluded from the breakdown.
-	std::vector<std::string> by_values;
-	if (!bd.by_column.empty()) {
+	// If `by` is set, discover the distinct tuples of by-column values up front
+	// so we can iterate strata in a stable order. Rows where any by-column is
+	// NULL are excluded from the breakdown (matching the v0.4 single-column
+	// behaviour). Each tuple becomes its own stratum, labelled by joining the
+	// values with " / " in declared order.
+	std::vector<std::vector<std::string>> by_tuples;
+	if (!bd.by_columns.empty()) {
 		std::stringstream sql;
-		sql << "SELECT DISTINCT " << QuoteIdent(bd.by_column) << "::VARCHAR AS v "
-		    << "FROM " << QuoteIdent(bd.data_table) << " WHERE "
-		    << QuoteIdent(bd.by_column) << " IS NOT NULL ORDER BY 1";
+		sql << "SELECT DISTINCT ";
+		for (size_t i = 0; i < bd.by_columns.size(); i++) {
+			if (i > 0) {
+				sql << ", ";
+			}
+			sql << QuoteIdent(bd.by_columns[i]) << "::VARCHAR";
+		}
+		sql << " FROM " << QuoteIdent(bd.data_table) << " WHERE ";
+		for (size_t i = 0; i < bd.by_columns.size(); i++) {
+			if (i > 0) {
+				sql << " AND ";
+			}
+			sql << QuoteIdent(bd.by_columns[i]) << " IS NOT NULL";
+		}
+		sql << " ORDER BY ";
+		for (size_t i = 0; i < bd.by_columns.size(); i++) {
+			if (i > 0) {
+				sql << ", ";
+			}
+			sql << (i + 1);
+		}
 		auto result = conn.Query(sql.str());
 		if (result->HasError()) {
 			throw InvalidInputException("table_one: failed to enumerate `by` values (%s)",
@@ -349,29 +544,60 @@ static unique_ptr<GlobalTableFunctionState> TableOneInitGlobal(ClientContext &co
 		}
 		while (auto chunk = result->Fetch()) {
 			for (idx_t i = 0; i < chunk->size(); i++) {
-				by_values.push_back(chunk->GetValue(0, i).ToString());
+				std::vector<std::string> tup;
+				for (idx_t c = 0; c < bd.by_columns.size(); c++) {
+					tup.push_back(chunk->GetValue(c, i).ToString());
+				}
+				by_tuples.push_back(std::move(tup));
 			}
 		}
 	}
 
-	// Group iteration order: Overall first, then each by-value alphabetically.
+	auto join_tuple = [](const std::vector<std::string> &tup) {
+		std::string out;
+		for (size_t i = 0; i < tup.size(); i++) {
+			if (i > 0) {
+				out += " / ";
+			}
+			out += tup[i];
+		}
+		return out;
+	};
+
+	// Group iteration order: Overall first, then each by-tuple in distinct order.
 	auto emit_var = [&](idx_t var_idx) {
 		const std::string &var = bd.variables[var_idx];
 		bool numeric = bd.is_numeric[var_idx];
 
+		size_t first_row = state->rows.size();
+
 		// Overall
+		std::vector<std::string> empty_values;
 		if (numeric) {
-			EmitNumericRows(conn, bd.data_table, var, bd.by_column, "", "Overall", state->rows);
+			EmitNumericRows(conn, bd.data_table, var, bd.by_columns, empty_values, "Overall",
+			                state->rows);
 		} else {
-			EmitCategoricalRows(conn, bd.data_table, var, bd.by_column, "", "Overall", state->rows);
+			EmitCategoricalRows(conn, bd.data_table, var, bd.by_columns, empty_values, "Overall",
+			                    state->rows);
 		}
-		// Per-group breakdown.
-		for (auto &g : by_values) {
+		// Per-stratum breakdown.
+		for (auto &tup : by_tuples) {
+			std::string label = join_tuple(tup);
 			if (numeric) {
-				EmitNumericRows(conn, bd.data_table, var, bd.by_column, g, g, state->rows);
+				EmitNumericRows(conn, bd.data_table, var, bd.by_columns, tup, label, state->rows);
 			} else {
-				EmitCategoricalRows(conn, bd.data_table, var, bd.by_column, g, g, state->rows);
+				EmitCategoricalRows(conn, bd.data_table, var, bd.by_columns, tup, label,
+				                    state->rows);
 			}
+		}
+
+		// Compute the between-group p-value once per variable, then stamp it
+		// on every row we just emitted for this variable. NaN sentinel →
+		// Execute will SetNull on those cells.
+		double p_value = ComputeBetweenGroupPValue(conn, bd.data_table, var, numeric,
+		                                            bd.by_columns, by_tuples.size());
+		for (size_t i = first_row; i < state->rows.size(); i++) {
+			state->rows[i].p_value = p_value;
 		}
 	};
 
@@ -399,6 +625,11 @@ static void TableOneExecute(ClientContext &context, TableFunctionInput &input, D
 		output.SetValue(2, emitted, Value(row.statistic));
 		output.SetValue(3, emitted, Value(row.stratum));
 		output.SetValue(4, emitted, Value(row.display));
+		if (std::isnan(row.p_value)) {
+			FlatVector::SetNull(output.data[5], emitted, true);
+		} else {
+			output.SetValue(5, emitted, Value::DOUBLE(row.p_value));
+		}
 		emitted++;
 	}
 	output.SetCardinality(emitted);
@@ -410,7 +641,9 @@ void RegisterTableOne(ExtensionLoader &loader) {
 	TableFunction fn("table_one", {LogicalType::VARCHAR}, TableOneExecute, TableOneBind,
 	                  TableOneInitGlobal);
 	fn.named_parameters["variables"] = LogicalType::LIST(LogicalType::VARCHAR);
-	fn.named_parameters["by"] = LogicalType::VARCHAR;
+	fn.named_parameters["by"] = LogicalType::LIST(LogicalType::VARCHAR);
+	fn.named_parameters["force_categorical"] = LogicalType::LIST(LogicalType::VARCHAR);
+	fn.named_parameters["force_numerical"] = LogicalType::LIST(LogicalType::VARCHAR);
 	loader.RegisterFunction(fn);
 }
 

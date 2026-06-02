@@ -55,6 +55,8 @@ diagnostics, multiple-testing corrections, and more distribution families.
 | `jarque_bera(column)`                                                 | Jarque-Bera normality test                   |
 | `shapiro_wilk(column)`                                                | Shapiro-Wilk normality test (Royston AS R94) |
 | `anderson_darling(column)`                                            | Anderson-Darling normality test              |
+| `ks_test_1samp(column)`                                               | Kolmogorov-Smirnov one-sample (vs fitted normal) |
+| `ks_test_2samp(column1, column2)`                                     | Kolmogorov-Smirnov two-sample                |
 | `sign_test_1samp(column, [mu], [alternative])`                        | Sign test on the median                      |
 | `sign_test_paired(column1, column2, [alternative])`                   | Paired sign test                             |
 
@@ -94,6 +96,10 @@ p-value, and relevant effect sizes / confidence intervals.
 **Anderson-Darling:** `test_type`, `a_squared`, `a_squared_adjusted`, `p_value`, `n`
 
 **Shapiro-Wilk:** `test_type`, `w_statistic`, `p_value`, `n`
+
+**KS one-sample:** `test_type`, `d_statistic`, `p_value`, `n`
+
+**KS two-sample:** `test_type`, `d_statistic`, `p_value`, `n_x`, `n_y`
 
 **Sign test:** `test_type`, `m_statistic`, `n_pos`, `n_neg`, `n_zero`, `p_value`, `alternative`, `n`
 
@@ -140,38 +146,66 @@ gives Q1=1.5 / Q3=3.5 (matching SAS PROC MEANS).
 | `df(x, df1, df2)`        | F distribution PDF      |
 | `pf(x, df1, df2)`        | F distribution CDF      |
 | `qf(p, df1, df2)`        | F distribution quantile |
+| `dgamma(x, shape, [rate])` | Gamma PDF (rate=1 default) |
+| `pgamma(x, shape, [rate])` | Gamma CDF             |
+| `qgamma(p, shape, [rate])` | Gamma quantile        |
+| `dbeta(x, alpha, beta)`  | Beta PDF on [0, 1]      |
+| `pbeta(x, alpha, beta)`  | Beta CDF                |
+| `qbeta(p, alpha, beta)`  | Beta quantile           |
+| `dexp(x, [rate])`        | Exponential PDF (rate=1 default) |
+| `pexp(x, [rate])`        | Exponential CDF         |
+| `qexp(p, [rate])`        | Exponential quantile (closed form) |
+| `poibin_cdf(probs LIST<DOUBLE>, k BIGINT)` | Poisson Binomial CDF — `P(X ≤ k)` for `X = Σᵢ Bᵢ`, `Bᵢ ∼ Bernoulli(pᵢ)` |
+| `bin_edges(x [, method])` *(aggregate)* | Auto bin-edge vector for `x` — `sturges` (default), `fd`, `scott`, `sqrt`, `rice`, `auto` |
+| `bin_label(x, edges)` | Label for the bin containing `x` given an edge vector (typically from `bin_edges`) |
 
 ### Table 1 summary (table function)
 
 | Function                                          | Description                                                |
 | ------------------------------------------------- | ---------------------------------------------------------- |
 | `table_one(data, variables [, by])`               | Long-format descriptives table for mixed variable types    |
+| `corr_matrix(data, variables [, method])`         | Long-format pairwise correlation matrix (`pearson` / `spearman` / `kendall`) |
 
 ```sql
 SELECT * FROM table_one(
     'patients',
     variables := ['age', 'sex', 'bmi'],
-    by := 'arm'           -- optional
+    by := ['arm']         -- optional; pass multiple columns for cross-stratification
 );
 ```
 
 Output columns (long format, fixed schema):
-`variable`, `level`, `statistic`, `stratum`, `display`
+`variable`, `level`, `statistic`, `stratum`, `display`, `p_value`
 
 - Each numeric variable yields rows for `n`, `missing`, `mean (sd)`,
   `median [q1, q3]`, `min, max` — `level` is NULL.
-- Each categorical variable yields one row per level with `n (%)` and an
-  optional trailing `missing` row.
-- `stratum` is `'Overall'` when `by` is unset, and `'Overall'` plus one
-  value per distinct `by` value otherwise.
+- Each categorical variable yields one row per level with `n (%)` plus a
+  trailing `Missing` level row that is always emitted (filter with
+  `WHERE level <> 'Missing'` if you don't want it). All level percentages
+  share the stratum-total denominator so they sum to 100%.
+- `stratum` is `'Overall'` when `by` is unset / empty; otherwise the Cartesian
+  product of distinct value tuples across the listed by-columns, labelled
+  by joining values with `' / '` in declared order (e.g. `'Adelie / female'`
+  for `by := ['species', 'sex']`). Rows where any by-column is NULL are
+  excluded from the stratum breakdown.
+- `p_value` is the between-group test result, repeated on every row of the
+  same variable so a PIVOT can grab it with `FIRST(p_value)`. NULL when
+  `by` is unset or has only one stratum. Numeric variables use one-way
+  ANOVA (`anova_oneway`); categorical variables use chi-square independence
+  (`chisq_independence`). NULL when the underlying test is infeasible (zero
+  variance, too few samples).
 - Variable types are auto-classified from the catalog: integer / floating-
   point types are numeric, everything else (VARCHAR, BOOLEAN, ENUM,
-  date/time) is categorical.
+  date/time) is categorical. Override per-variable with
+  `force_categorical := ['stage']` (integer column that's really a
+  category) or `force_numerical := ['height']` (VARCHAR column holding
+  numeric strings). Entries must appear in `variables`, and the two lists
+  must not overlap.
 
 Pivot to wide for display:
 
 ```sql
-PIVOT table_one('patients', variables := ['age', 'sex'], by := 'arm')
+PIVOT table_one('patients', variables := ['age', 'sex'], by := ['arm'])
     ON stratum USING first(display)
     GROUP BY variable, level, statistic;
 ```
@@ -223,17 +257,33 @@ columns — `spec` (a complete Vega-Lite v5 JSON spec) and `layer_sqls` (a
 runs each layer's SQL and feeds the rows to vega-embed via the `datasets` API.
 
 ```
+[WITH [RECURSIVE] <cte> AS (...) [, <cte> AS (...)]*]
 VISUALIZE <expr> AS <aesthetic> [: <type>] (, <expr> AS <aesthetic> ...)
 FROM <table>
 DRAW <mark> (DRAW <mark>)*
 [FACET BY <expr> [ROWS | COLS]]
-[SCALE <channel> {TO <scheme> | ZERO true|false | DOMAIN <lo> <hi>}]*
+[SCALE <channel> {TO <scheme> | ZERO true|false | DOMAIN <lo> <hi> | LABEL '<text>'}]*
+[TITLE '<text>' [SUBTITLE '<text>']]
 ```
 
+A leading `WITH` clause is supported; CTEs are scoped to each layer's
+projected SQL so they compose with wrapping marks (`line`, `bar`, `area`,
+`errorband`, `regression`) without extra work. `WITH … SELECT …` statements
+without a top-level `VISUALIZE` keyword fall through to DuckDB's normal SQL
+parser unchanged.
+
 **Marks:** `point`, `line`, `bar`, `histogram`, `text`, `area`, `rule`, `tick`,
-`errorbar`, `errorband`, `boxplot`. Custom marks register as `ggsql_mark_v1_<name>`
-scalar functions and are discovered via DuckDB's catalog, so other extensions can
-ship their own marks without modifying stats_duck.
+`errorbar`, `errorband`, `boxplot`, `heatmap`, `density`, `regression`. Custom
+marks register as `ggsql_mark_v1_<name>` scalar functions and are discovered
+via DuckDB's catalog, so other extensions can ship their own marks without
+modifying stats_duck.
+
+`heatmap` is a `rect` mark with ordinal x/y and quantitative color (correlation
+matrices, contingency tables). `density` runs Vega-Lite's KDE on the `x`
+aesthetic, grouped by `color` if mapped (one curve per category). `regression`
+fits a linear `y ~ x` model server-side via Vega-Lite's regression transform,
+also grouped by `color`. Use `DRAW point DRAW regression` for a scatter-with-
+fit overlay.
 
 **Aesthetic channels:** `x`, `y`, `color`, `fill`, `stroke`, `shape`, `size`,
 `opacity`, `tooltip`, `text`, `x2`, `y2`. Unknown channels are silently dropped.
@@ -241,6 +291,13 @@ ship their own marks without modifying stats_duck.
 **Type overrides:** append `:quantitative`, `:ordinal`, `:nominal`, or
 `:temporal` to an aesthetic to force its Vega-Lite type
 (e.g. `year AS color:ordinal`).
+
+**Axis labels:** `SCALE x LABEL 'Bill length (mm)'` injects an `axis.title` into
+the channel; pairs with `TO` / `ZERO` / `DOMAIN` on the same channel.
+
+**Titles:** `TITLE 'Plot title' [SUBTITLE 'Plot subtitle']` appears once per
+spec, after `SCALE` clauses. Always emitted as a Vega-Lite `TitleParams` object
+so a subtitle can be added without reshaping consumer code.
 
 ## SAS compatibility
 

@@ -10,8 +10,12 @@
 #include "rank_correlation_function.hpp"
 #include "sign_test_function.hpp"
 #include "adjust_p_function.hpp"
+#include "poibin_function.hpp"
+#include "auto_bin_function.hpp"
+#include "corr_matrix_function.hpp"
 #include "table_one_function.hpp"
 #include "normality_function.hpp"
+#include "ks_test_function.hpp"
 #include "anova_function.hpp"
 #include "chisq_function.hpp"
 #include "read_stat_function.hpp"
@@ -37,6 +41,8 @@ static void LoadInternal(ExtensionLoader &loader) {
 	RegisterJarqueBera(loader);
 	RegisterShapiroWilk(loader);
 	RegisterAndersonDarling(loader);
+	RegisterKsTest1Samp(loader);
+	RegisterKsTest2Samp(loader);
 	RegisterAnovaOneway(loader);
 	RegisterChiSquareTests(loader);
 
@@ -48,6 +54,16 @@ static void LoadInternal(ExtensionLoader &loader) {
 
 	// Multiple-testing corrections
 	RegisterAdjustP(loader);
+
+	// Poisson Binomial CDF
+	RegisterPoibinCdf(loader);
+
+	// Auto-binning helpers
+	RegisterBinEdges(loader);
+	RegisterBinLabel(loader);
+
+	// Pairwise correlation matrix
+	RegisterCorrMatrix(loader);
 
 	// Table 1 helper
 	RegisterTableOne(loader);

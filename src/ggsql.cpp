@@ -14,13 +14,24 @@
 #include "duckdb/main/extension/extension_loader.hpp"
 #include "duckdb/parser/parser_extension.hpp"
 
+#include <algorithm>
+
 namespace duckdb {
 namespace ggsql {
 
 namespace {
 
 string BuildProjectedSql(const VisualizeStatement &stmt) {
-	string sql = "SELECT ";
+	string sql;
+	// Prepend any leading WITH clause so the FROM and aesthetic expressions
+	// can resolve CTE-bound names. CTEs are scoped to the inner query when a
+	// mark wraps the projection (e.g. `SELECT * FROM (<projected>) ORDER BY x`),
+	// so passing the WITH through verbatim composes cleanly with line / bar /
+	// area / errorband / regression wraps without any extra plumbing.
+	if (!stmt.with_clause.empty()) {
+		sql += stmt.with_clause + " ";
+	}
+	sql += "SELECT ";
 	for (size_t i = 0; i < stmt.aesthetics.size(); i++) {
 		if (i > 0) {
 			sql += ", ";
@@ -66,25 +77,34 @@ bool HasFacet(const VisualizeStatement &stmt) {
 	return false;
 }
 
-// Inject `,"scale":{<merged-properties>}` into each encoding channel that has
-// at least one matching ScaleSpec. Relies on the current encoding format using
-// only primitive sub-properties (no nested objects), so the first '}' after the
-// channel's opening '{' is the closing brace. Multiple SCALE clauses on the
-// same channel merge into one scale object.
+// Inject channel sub-objects (e.g. `,"scale":{...}` for TO/ZERO/DOMAIN,
+// `,"axis":{...}` for LABEL) into each encoding channel that has at least one
+// matching ScaleSpec. Relies on the current encoding format using only
+// primitive sub-properties at this point (no nested objects), so the first '}'
+// after the channel's opening '{' is its closing brace. Multiple ScaleSpec
+// entries on the same (channel, sub_object) merge into one block; multiple
+// sub_objects on the same channel each produce their own block.
 string ApplyScales(string layer_body, const vector<ScaleSpec> &scales) {
-	// Preserve user-specified order while grouping by channel.
-	std::map<string, string> merged; // channel → comma-separated "key":value list
-	std::vector<string> order;
+	// channel → sub_object → "k1":v1,"k2":v2  (within-block insertion order preserved)
+	std::map<string, std::map<string, string>> by_channel;
+	std::vector<string> channel_order;
+	std::map<string, std::vector<string>> sub_obj_order; // per-channel sub_object insertion order
 	for (const auto &scale : scales) {
-		auto it = merged.find(scale.aesthetic);
-		if (it == merged.end()) {
-			merged[scale.aesthetic] = "\"" + scale.property + "\":" + scale.value_json;
-			order.push_back(scale.aesthetic);
-		} else {
-			it->second += ",\"" + scale.property + "\":" + scale.value_json;
+		auto &props = by_channel[scale.aesthetic][scale.sub_object];
+		if (!props.empty()) {
+			props += ",";
+		}
+		props += "\"" + scale.property + "\":" + scale.value_json;
+		auto &ch_subs = sub_obj_order[scale.aesthetic];
+		if (std::find(ch_subs.begin(), ch_subs.end(), scale.sub_object) == ch_subs.end()) {
+			ch_subs.push_back(scale.sub_object);
+		}
+		if (std::find(channel_order.begin(), channel_order.end(), scale.aesthetic) ==
+		    channel_order.end()) {
+			channel_order.push_back(scale.aesthetic);
 		}
 	}
-	for (const auto &channel : order) {
+	for (const auto &channel : channel_order) {
 		string needle = "\"" + channel + "\":{";
 		size_t pos = layer_body.find(needle);
 		if (pos == string::npos) {
@@ -95,10 +115,28 @@ string ApplyScales(string layer_body, const vector<ScaleSpec> &scales) {
 		if (close_brace == string::npos) {
 			continue;
 		}
-		string injection = ",\"scale\":{" + merged[channel] + "}";
+		string injection;
+		for (const auto &sub_obj : sub_obj_order[channel]) {
+			injection += ",\"" + sub_obj + "\":{" + by_channel[channel][sub_obj] + "}";
+		}
 		layer_body.insert(close_brace, injection);
 	}
 	return layer_body;
+}
+
+// Build the Vega-Lite title block. Returns "" if no title is set. The block is
+// always emitted as a TitleParams object (not a bare string) so that subtitle
+// can be added without changing the shape; this keeps fixture output stable.
+string BuildTitleBlock(const VisualizeStatement &stmt) {
+	if (stmt.title.empty()) {
+		return "";
+	}
+	string out = ",\"title\":{\"text\":\"" + JsonEscape(stmt.title) + "\"";
+	if (!stmt.subtitle.empty()) {
+		out += ",\"subtitle\":\"" + JsonEscape(stmt.subtitle) + "\"";
+	}
+	out += "}";
+	return out;
 }
 
 // Replace the rendered "type":"..." inside the targeted channel with the user's
@@ -150,6 +188,8 @@ CompiledResult Compile(ClientContext &context, const VisualizeStatement &stmt) {
 	}
 	CompiledResult out;
 
+	string title_block = BuildTitleBlock(stmt);
+
 	if (stmt.layers.size() == 1) {
 		// Single layer: emit canonical Vega-Lite single-view shape (top-level
 		// data + mark + encoding). When faceted, wrap mark/encoding inside a
@@ -171,6 +211,7 @@ CompiledResult Compile(ClientContext &context, const VisualizeStatement &stmt) {
 		} else {
 			spec += rendered.layer_body;
 		}
+		spec += title_block;
 		spec += "}";
 
 		out.spec_json = std::move(spec);
@@ -207,6 +248,7 @@ CompiledResult Compile(ClientContext &context, const VisualizeStatement &stmt) {
 	} else {
 		spec += layer_array;
 	}
+	spec += title_block;
 	spec += "}";
 	out.spec_json = std::move(spec);
 	return out;
@@ -300,11 +342,120 @@ bool StartsWithIdentifier(const string &lower, const string &keyword) {
 	return next == ' ' || next == '\t' || next == '\n' || next == '\r' || next == ';';
 }
 
+// Strip leading whitespace and SQL comments (`-- to end of line`, `/* ... */`)
+// from the front of `s`. DuckDB hands the parser extension the raw statement
+// text including any comments, so we need to skip past them before deciding
+// whether the statement is ours.
+static void SkipLeadingCommentsAndWhitespace(string &s) {
+	size_t i = 0;
+	while (i < s.size()) {
+		char c = s[i];
+		if (c == ' ' || c == '\t' || c == '\n' || c == '\r') {
+			i++;
+			continue;
+		}
+		if (c == '-' && i + 1 < s.size() && s[i + 1] == '-') {
+			i += 2;
+			while (i < s.size() && s[i] != '\n') {
+				i++;
+			}
+			continue;
+		}
+		if (c == '/' && i + 1 < s.size() && s[i + 1] == '*') {
+			i += 2;
+			while (i + 1 < s.size() && !(s[i] == '*' && s[i + 1] == '/')) {
+				i++;
+			}
+			if (i + 1 < s.size()) {
+				i += 2; // past `*/`
+			}
+			continue;
+		}
+		break;
+	}
+	if (i > 0) {
+		s.erase(0, i);
+	}
+}
+
 ParserExtensionParseResult GgsqlParse(ParserExtensionInfo *, const string &query) {
 	string trimmed = query;
-	StringUtil::Trim(trimmed);
+	SkipLeadingCommentsAndWhitespace(trimmed);
+	StringUtil::Trim(trimmed); // trailing whitespace too
 	auto lower = StringUtil::Lower(trimmed);
-	if (!StartsWithIdentifier(lower, "visualize")) {
+	if (StartsWithIdentifier(lower, "visualize")) {
+		// Direct path — bare VISUALIZE statement.
+	} else if (StartsWithIdentifier(lower, "with")) {
+		// Could be ours (WITH … VISUALIZE …) or DuckDB's (WITH … SELECT …).
+		// Only claim it if a top-level VISUALIZE keyword exists in the
+		// input — case-insensitive, whole-word match, ignoring strings /
+		// quoted identifiers / parenthesised expressions. The cheap
+		// approach is a manual scan rather than a full tokenize: keep
+		// track of paren depth and skip over string/quoted-ident content,
+		// then look for `visualize` as a standalone token at depth 0.
+		bool has_visualize = false;
+		int depth = 0;
+		char quote = 0;
+		auto is_ident_part = [](char c) {
+			return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+			       (c >= '0' && c <= '9') || c == '_';
+		};
+		for (size_t i = 0; i < trimmed.size(); i++) {
+			char c = trimmed[i];
+			if (quote != 0) {
+				if (c == quote) {
+					if (i + 1 < trimmed.size() && trimmed[i + 1] == quote) {
+						i++; // SQL '' / "" escape
+					} else {
+						quote = 0;
+					}
+				}
+				continue;
+			}
+			if (c == '\'' || c == '"') {
+				quote = c;
+				continue;
+			}
+			if (c == '(') {
+				depth++;
+				continue;
+			}
+			if (c == ')') {
+				depth--;
+				continue;
+			}
+			if (depth > 0) {
+				continue;
+			}
+			// At depth 0: try to match the whole-word "visualize" case-insensitively.
+			if ((c == 'v' || c == 'V') && i + 9 <= trimmed.size()) {
+				static const char kKeyword[] = "visualize";
+				bool match = true;
+				for (size_t k = 0; k < 9; k++) {
+					char a = trimmed[i + k];
+					char b = kKeyword[k];
+					char a_lower = (a >= 'A' && a <= 'Z') ? (a - 'A' + 'a') : a;
+					if (a_lower != b) {
+						match = false;
+						break;
+					}
+				}
+				if (match) {
+					// Must be a standalone token — surrounded by non-identifier chars.
+					bool left_ok = (i == 0) || !is_ident_part(trimmed[i - 1]);
+					bool right_ok = (i + 9 == trimmed.size()) ||
+					                !is_ident_part(trimmed[i + 9]);
+					if (left_ok && right_ok) {
+						has_visualize = true;
+						break;
+					}
+				}
+			}
+		}
+		if (!has_visualize) {
+			return ParserExtensionParseResult(); // hand off to DuckDB
+		}
+	} else {
 		return ParserExtensionParseResult();
 	}
 	auto parsed = ParseGgsql(trimmed);

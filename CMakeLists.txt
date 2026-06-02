@@ -72,8 +72,12 @@ set(EXTENSION_SOURCES
     src/rank_correlation_function.cpp
     src/sign_test_function.cpp
     src/adjust_p_function.cpp
+    src/poibin_function.cpp
+    src/auto_bin_function.cpp
+    src/corr_matrix_function.cpp
     src/table_one_function.cpp
     src/normality_function.cpp
+    src/ks_test_function.cpp
     src/anova_function.cpp
     src/chisq_function.cpp
     src/read_stat_function.cpp
