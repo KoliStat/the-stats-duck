@@ -44,6 +44,7 @@ ggsql_mark_v1_regression
 ggsql_mark_v1_rule
 ggsql_mark_v1_text
 ggsql_mark_v1_tick
+ggsql_mark_v1_violin
 
 # Unknown mark — registry lookup fails cleanly.
 statement ok

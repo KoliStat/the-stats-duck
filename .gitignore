@@ -22,3 +22,6 @@ vcpkg_installed/
 
 # Claude
 .claude/
+
+# Sigillo
+.sigillo/

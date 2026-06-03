@@ -273,17 +273,19 @@ without a top-level `VISUALIZE` keyword fall through to DuckDB's normal SQL
 parser unchanged.
 
 **Marks:** `point`, `line`, `bar`, `histogram`, `text`, `area`, `rule`, `tick`,
-`errorbar`, `errorband`, `boxplot`, `heatmap`, `density`, `regression`. Custom
+`errorbar`, `errorband`, `boxplot`, `violin`, `heatmap`, `density`, `regression`. Custom
 marks register as `ggsql_mark_v1_<name>` scalar functions and are discovered
 via DuckDB's catalog, so other extensions can ship their own marks without
 modifying stats_duck.
 
 `heatmap` is a `rect` mark with ordinal x/y and quantitative color (correlation
 matrices, contingency tables). `density` runs Vega-Lite's KDE on the `x`
-aesthetic, grouped by `color` if mapped (one curve per category). `regression`
-fits a linear `y ~ x` model server-side via Vega-Lite's regression transform,
-also grouped by `color`. Use `DRAW point DRAW regression` for a scatter-with-
-fit overlay.
+aesthetic, grouped by `color` if mapped (one curve per category). `violin`
+renders one horizontal density per category of `x`, laid out via vega-lite's
+`column` facet (composes with `FACET BY ... ROWS` but conflicts with
+`FACET BY ... COLS`). `regression` fits a linear `y ~ x` model server-side
+via Vega-Lite's regression transform, also grouped by `color`. Use
+`DRAW point DRAW regression` for a scatter-with-fit overlay.
 
 **Aesthetic channels:** `x`, `y`, `color`, `fill`, `stroke`, `shape`, `size`,
 `opacity`, `tooltip`, `text`, `x2`, `y2`. Unknown channels are silently dropped.

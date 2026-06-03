@@ -1,0 +1,42 @@
+# name: test/sql/ggsql_visualize_violin.test
+# description: ggsql `violin` mark — per-category density via vega-lite column facet
+# group: [stats_duck]
+
+require stats_duck
+
+statement ok
+CREATE TABLE samples AS SELECT * FROM (VALUES
+    ('a', 1.0), ('a', 2.0), ('a', 3.0), ('a', 4.0), ('a', 5.0),
+    ('b', 2.0), ('b', 3.0), ('b', 4.0), ('b', 5.0), ('b', 6.0),
+    ('c', 3.0), ('c', 4.0), ('c', 5.0), ('c', 6.0), ('c', 7.0)
+) AS t(group_id, value);
+
+# Minimal violin: density groupby x, area mark, column-facet on x.
+query TT
+VISUALIZE group_id AS x, value AS y FROM samples DRAW violin
+----
+{"$schema":"https://vega.github.io/schema/vega-lite/v5.json","data":{"name":"layer_0"},"transform":[{"density":"y","groupby":["x"]}],"mark":"area","encoding":{"y":{"field":"value","type":"quantitative"},"x":{"field":"density","type":"quantitative","stack":"center","impute":null,"axis":null},"column":{"field":"x","type":"nominal"}}}	{layer_0='SELECT group_id AS x, value AS y FROM samples'}
+
+# Optional channels (color, opacity, ...) propagate through BuildOptionalChannels.
+query TT
+VISUALIZE group_id AS x, value AS y, group_id AS color FROM samples DRAW violin
+----
+{"$schema":"https://vega.github.io/schema/vega-lite/v5.json","data":{"name":"layer_0"},"transform":[{"density":"y","groupby":["x"]}],"mark":"area","encoding":{"y":{"field":"value","type":"quantitative"},"x":{"field":"density","type":"quantitative","stack":"center","impute":null,"axis":null},"column":{"field":"x","type":"nominal"},"color":{"field":"color","type":"nominal"}}}	{layer_0='SELECT group_id AS x, value AS y, group_id AS color FROM samples'}
+
+# Introspection: required_aesthetics = [x, y].
+query T
+SELECT ggsql_mark_v1_violin()
+----
+{"name":"violin","required_aesthetics":["x","y"]}
+
+# Composes with TITLE / SUBTITLE — the title block is appended after the encoding.
+query TT
+VISUALIZE group_id AS x, value AS y FROM samples DRAW violin TITLE 'Distribution by group'
+----
+{"$schema":"https://vega.github.io/schema/vega-lite/v5.json","data":{"name":"layer_0"},"transform":[{"density":"y","groupby":["x"]}],"mark":"area","encoding":{"y":{"field":"value","type":"quantitative"},"x":{"field":"density","type":"quantitative","stack":"center","impute":null,"axis":null},"column":{"field":"x","type":"nominal"}},"title":{"text":"Distribution by group"}}	{layer_0='SELECT group_id AS x, value AS y FROM samples'}
+
+# Composes with WITH ... VISUALIZE.
+query TT
+WITH s AS (SELECT group_id, value FROM samples WHERE value < 6) VISUALIZE group_id AS x, value AS y FROM s DRAW violin
+----
+{"$schema":"https://vega.github.io/schema/vega-lite/v5.json","data":{"name":"layer_0"},"transform":[{"density":"y","groupby":["x"]}],"mark":"area","encoding":{"y":{"field":"value","type":"quantitative"},"x":{"field":"density","type":"quantitative","stack":"center","impute":null,"axis":null},"column":{"field":"x","type":"nominal"}}}	{layer_0='WITH s AS (SELECT group_id, value FROM samples WHERE value < 6) SELECT group_id AS x, value AS y FROM s'}

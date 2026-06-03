@@ -251,6 +251,25 @@ MarkResult RenderDensity(const MarkContext &ctx) {
 	return r;
 }
 
+MarkResult RenderViolin(const MarkContext &ctx) {
+	// Canonical Vega-Lite violin: density transform grouped by the categorical x,
+	// each category rendered as a horizontal density column. `column` is a
+	// single-channel facet — it composes with `FACET BY ... ROWS` (uses `row`)
+	// but conflicts with `FACET BY ... COLS` (would request `column` twice).
+	string transform = "\"transform\":[{\"density\":\"y\",\"groupby\":[\"x\"]}]";
+	string encoding =
+	    "{\"y\":{\"field\":\"value\",\"type\":\"quantitative\"},"
+	    "\"x\":{\"field\":\"density\",\"type\":\"quantitative\",\"stack\":\"center\","
+	    "\"impute\":null,\"axis\":null},"
+	    "\"column\":{\"field\":\"x\",\"type\":\"nominal\"}";
+	encoding += BuildOptionalChannels(ctx);
+	encoding += "}";
+	MarkResult r;
+	r.layer_body = transform + ",\"mark\":\"area\",\"encoding\":" + encoding;
+	r.data_sql = ctx.projected_sql;
+	return r;
+}
+
 MarkResult RenderRegression(const MarkContext &ctx) {
 	// Vega-Lite regression transform fits y ~ x and emits the same field names
 	// back as the smoothed line. Grouped by color when mapped so each category
@@ -354,6 +373,7 @@ void RegisterBuiltinMarks(ExtensionLoader &loader) {
 	// directly. Color is the grouping aesthetic for both transforms.
 	RegisterMark(loader, "heatmap", {"x", "y", "color"}, RenderHeatmap);
 	RegisterMark(loader, "density", {"x"}, RenderDensity);
+	RegisterMark(loader, "violin", {"x", "y"}, RenderViolin);
 	RegisterMark(loader, "regression", {"x", "y"}, RenderRegression);
 }
 
