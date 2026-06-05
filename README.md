@@ -155,6 +155,15 @@ gives Q1=1.5 / Q3=3.5 (matching SAS PROC MEANS).
 | `dexp(x, [rate])`        | Exponential PDF (rate=1 default) |
 | `pexp(x, [rate])`        | Exponential CDF         |
 | `qexp(p, [rate])`        | Exponential quantile (closed form) |
+| `dweibull(x, shape, [scale])` | Weibull PDF (scale=1 default) |
+| `pweibull(x, shape, [scale])` | Weibull CDF |
+| `qweibull(p, shape, [scale])` | Weibull quantile (closed form) |
+| `dlnorm(x, [meanlog], [sdlog])` | Log-normal PDF (meanlog=0, sdlog=1 defaults) |
+| `plnorm(x, [meanlog], [sdlog])` | Log-normal CDF |
+| `qlnorm(p, [meanlog], [sdlog])` | Log-normal quantile |
+| `dpois(k, lambda)`       | Poisson PMF (discrete) |
+| `ppois(q, lambda)`       | Poisson CDF |
+| `qpois(p, lambda)`       | Poisson quantile (integer search) |
 | `poibin_cdf(probs LIST<DOUBLE>, k BIGINT)` | Poisson Binomial CDF — `P(X ≤ k)` for `X = Σᵢ Bᵢ`, `Bᵢ ∼ Bernoulli(pᵢ)` |
 | `bin_edges(x [, method])` *(aggregate)* | Auto bin-edge vector for `x` — `sturges` (default), `fd`, `scott`, `sqrt`, `rice`, `auto` |
 | `bin_label(x, edges)` | Label for the bin containing `x` given an edge vector (typically from `bin_edges`) |

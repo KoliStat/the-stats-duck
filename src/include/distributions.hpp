@@ -606,4 +606,164 @@ inline double ExponentialQuantile(double p, double rate = 1.0) {
 	return -std::log(1.0 - p) / rate;
 }
 
+// ── Weibull distribution ────────────────────────────────────────────────────
+// Shape k > 0, scale λ > 0. Support x ≥ 0. PDF = (k/λ)·(x/λ)^(k-1)·e^(-(x/λ)^k).
+// CDF and quantile are both closed-form via log/exp. Special case k=1 → Exp(1/λ).
+// R parameterisation: dweibull(x, shape, scale = 1).
+
+inline double WeibullPDF(double x, double shape, double scale = 1.0) {
+	if (shape <= 0.0 || scale <= 0.0) {
+		throw std::invalid_argument("shape and scale must be > 0");
+	}
+	if (x < 0.0) {
+		return 0.0;
+	}
+	if (x == 0.0) {
+		// Limit: shape > 1 → 0; shape = 1 → 1/scale; shape < 1 → +inf.
+		if (shape > 1.0) {
+			return 0.0;
+		}
+		if (shape == 1.0) {
+			return 1.0 / scale;
+		}
+		return std::numeric_limits<double>::infinity();
+	}
+	double ratio = x / scale;
+	return (shape / scale) * std::pow(ratio, shape - 1.0) * std::exp(-std::pow(ratio, shape));
+}
+
+inline double WeibullCDF(double x, double shape, double scale = 1.0) {
+	if (shape <= 0.0 || scale <= 0.0) {
+		throw std::invalid_argument("shape and scale must be > 0");
+	}
+	if (x <= 0.0) {
+		return 0.0;
+	}
+	return 1.0 - std::exp(-std::pow(x / scale, shape));
+}
+
+inline double WeibullQuantile(double p, double shape, double scale = 1.0) {
+	if (shape <= 0.0 || scale <= 0.0) {
+		throw std::invalid_argument("shape and scale must be > 0");
+	}
+	if (p < 0.0 || p > 1.0) {
+		throw std::invalid_argument("p must be in [0, 1]");
+	}
+	if (p == 0.0) {
+		return 0.0;
+	}
+	if (p == 1.0) {
+		return std::numeric_limits<double>::infinity();
+	}
+	return scale * std::pow(-std::log(1.0 - p), 1.0 / shape);
+}
+
+// ── Log-normal distribution ─────────────────────────────────────────────────
+// Parameters meanlog (μ) and sdlog (σ > 0); X = exp(μ + σZ) where Z ~ N(0,1).
+// Support x > 0. R parameterisation: dlnorm(x, meanlog = 0, sdlog = 1).
+
+inline double LogNormalPDF(double x, double meanlog = 0.0, double sdlog = 1.0) {
+	if (sdlog <= 0.0) {
+		throw std::invalid_argument("sdlog must be > 0");
+	}
+	if (x <= 0.0) {
+		return 0.0;
+	}
+	double z = (std::log(x) - meanlog) / sdlog;
+	return std::exp(-0.5 * z * z) / (x * sdlog * std::sqrt(2.0 * STATS_DUCK_PI));
+}
+
+inline double LogNormalCDF(double x, double meanlog = 0.0, double sdlog = 1.0) {
+	if (sdlog <= 0.0) {
+		throw std::invalid_argument("sdlog must be > 0");
+	}
+	if (x <= 0.0) {
+		return 0.0;
+	}
+	return NormalCDF(std::log(x), meanlog, sdlog);
+}
+
+inline double LogNormalQuantile(double p, double meanlog = 0.0, double sdlog = 1.0) {
+	if (sdlog <= 0.0) {
+		throw std::invalid_argument("sdlog must be > 0");
+	}
+	if (p < 0.0 || p > 1.0) {
+		throw std::invalid_argument("p must be in [0, 1]");
+	}
+	if (p == 0.0) {
+		return 0.0;
+	}
+	if (p == 1.0) {
+		return std::numeric_limits<double>::infinity();
+	}
+	return std::exp(NormalQuantile(p, meanlog, sdlog));
+}
+
+// ── Poisson distribution ────────────────────────────────────────────────────
+// Discrete; rate λ > 0. PMF on k = 0, 1, 2, …  CDF: P(X ≤ k) = Q(k+1, λ) via
+// the regularized upper incomplete gamma, exploiting the identity
+//   Σ_{i=0..k} e^-λ λ^i / i! = Q(k+1, λ)  (Numerical Recipes §6.2).
+// Quantile is monotone integer search seeded from the normal approximation
+// k ≈ λ + Φ^-1(p)·sqrt(λ).
+
+inline double PoissonPMF(double k, double lambda) {
+	if (lambda <= 0.0) {
+		throw std::invalid_argument("lambda must be > 0");
+	}
+	if (k < 0.0) {
+		return 0.0;
+	}
+	double k_int = std::floor(k);
+	if (k_int != k) {
+		// Non-integer k → PMF is 0 (matches R's dpois(non-int) → 0 with warning).
+		return 0.0;
+	}
+	// e^(-λ) · λ^k / k!  via logs to avoid overflow for moderate λ.
+	double log_pmf = -lambda + k_int * std::log(lambda) - std::lgamma(k_int + 1.0);
+	return std::exp(log_pmf);
+}
+
+inline double PoissonCDF(double k, double lambda) {
+	if (lambda <= 0.0) {
+		throw std::invalid_argument("lambda must be > 0");
+	}
+	if (k < 0.0) {
+		return 0.0;
+	}
+	double k_int = std::floor(k);
+	// P(X ≤ k) = Q(k+1, λ).
+	return GammaQ(k_int + 1.0, lambda);
+}
+
+inline double PoissonQuantile(double p, double lambda) {
+	if (lambda <= 0.0) {
+		throw std::invalid_argument("lambda must be > 0");
+	}
+	if (p < 0.0 || p > 1.0) {
+		throw std::invalid_argument("p must be in [0, 1]");
+	}
+	if (p == 0.0) {
+		return 0.0;
+	}
+	if (p == 1.0) {
+		return std::numeric_limits<double>::infinity();
+	}
+	// Normal approximation seed; clamp to ≥ 0.
+	double seed = lambda + NormalQuantile(p) * std::sqrt(lambda);
+	double k = std::floor(std::max(0.0, seed));
+	double cdf = PoissonCDF(k, lambda);
+	// March in the direction of p.
+	if (cdf < p) {
+		while (cdf < p) {
+			k += 1.0;
+			cdf = PoissonCDF(k, lambda);
+		}
+		return k;
+	}
+	while (k > 0.0 && PoissonCDF(k - 1.0, lambda) >= p) {
+		k -= 1.0;
+	}
+	return k;
+}
+
 } // namespace stats_duck

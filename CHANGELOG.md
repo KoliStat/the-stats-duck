@@ -12,6 +12,17 @@ that name is preserved across releases for backward compatibility.
 
 ### Added
 
+- **Weibull, log-normal, and Poisson distribution functions** — d/p/q
+  triples in the same R-style API as the existing distribution families.
+  `dweibull(x, shape, [scale])` / `pweibull` / `qweibull` (scale defaults
+  to 1; closed-form quantile). `dlnorm(x, [meanlog, [sdlog]])` / `plnorm`
+  / `qlnorm` (meanlog defaults to 0, sdlog to 1; reuses NormalCDF /
+  NormalQuantile). `dpois(k, lambda)` / `ppois` / `qpois` (discrete; CDF
+  uses the regularized upper incomplete gamma identity from Numerical
+  Recipes §6.2, quantile is integer search seeded from the normal
+  approximation). Non-integer `k` in `dpois` returns 0 (matches R's
+  warn-and-zero). Cross-verified against R to 6 decimal places.
+
 - ggsql: per-layer `STAT smooth | summary | identity` modifier — appended
   after a mark name as `DRAW <mark> STAT <name>`. `smooth` injects a
   Vega-Lite loess transform on `(x, y)` and groups by `color` when mapped
