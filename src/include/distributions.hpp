@@ -766,4 +766,161 @@ inline double PoissonQuantile(double p, double lambda) {
 	return k;
 }
 
+// ── Negative Binomial distribution ──────────────────────────────────────────
+// R parameterisation: dnbinom(x, size, prob). size > 0 is the target number of
+// successes (not required to be integer — Gamma-Poisson mixture admits any
+// positive real), prob ∈ (0, 1] is the per-trial success probability. Support
+// is k = 0, 1, 2, …  CDF closed-form identity:
+//   P(X ≤ k) = I_prob(size, k + 1)
+// where I_x(a, b) is the regularized incomplete beta function (see
+// BetaIncomplete). Quantile is monotone integer search seeded from the normal
+// approximation.
+
+inline double NegBinomPMF(double k, double size, double prob) {
+	if (size <= 0.0 || prob <= 0.0 || prob > 1.0) {
+		throw std::invalid_argument("size must be > 0 and prob in (0, 1]");
+	}
+	if (k < 0.0) {
+		return 0.0;
+	}
+	double k_int = std::floor(k);
+	if (k_int != k) {
+		// Non-integer k → 0 (matches R's warn-and-zero convention).
+		return 0.0;
+	}
+	// log PMF = lgamma(k + size) - lgamma(size) - lgamma(k + 1)
+	//          + size·log(prob) + k·log(1 - prob)
+	double log_pmf = std::lgamma(k_int + size) - std::lgamma(size) - std::lgamma(k_int + 1.0) +
+	                 size * std::log(prob) + k_int * std::log(1.0 - prob);
+	return std::exp(log_pmf);
+}
+
+inline double NegBinomCDF(double k, double size, double prob) {
+	if (size <= 0.0 || prob <= 0.0 || prob > 1.0) {
+		throw std::invalid_argument("size must be > 0 and prob in (0, 1]");
+	}
+	if (k < 0.0) {
+		return 0.0;
+	}
+	double k_int = std::floor(k);
+	return BetaIncomplete(size, k_int + 1.0, prob);
+}
+
+inline double NegBinomQuantile(double p, double size, double prob) {
+	if (size <= 0.0 || prob <= 0.0 || prob > 1.0) {
+		throw std::invalid_argument("size must be > 0 and prob in (0, 1]");
+	}
+	if (p < 0.0 || p > 1.0) {
+		throw std::invalid_argument("p must be in [0, 1]");
+	}
+	if (p == 0.0) {
+		return 0.0;
+	}
+	if (p == 1.0) {
+		return std::numeric_limits<double>::infinity();
+	}
+	// Normal approximation seed: mean = size·(1-prob)/prob, variance same / prob.
+	double mean = size * (1.0 - prob) / prob;
+	double var = mean / prob;
+	double seed = mean + NormalQuantile(p) * std::sqrt(var);
+	double k = std::floor(std::max(0.0, seed));
+	double cdf = NegBinomCDF(k, size, prob);
+	if (cdf < p) {
+		while (cdf < p) {
+			k += 1.0;
+			cdf = NegBinomCDF(k, size, prob);
+		}
+		return k;
+	}
+	while (k > 0.0 && NegBinomCDF(k - 1.0, size, prob) >= p) {
+		k -= 1.0;
+	}
+	return k;
+}
+
+// ── Hypergeometric distribution ─────────────────────────────────────────────
+// R parameterisation: dhyper(x, m, n, k). m = total successes in population,
+// n = total failures, k = number drawn without replacement. Population size is
+// N = m + n. PMF support: max(0, k - n) ≤ x ≤ min(m, k). No closed-form CDF;
+// we sum the PMF over the support up to floor(x). All three parameters are
+// taken as real-valued (matches R's permissive signature) but are interpreted
+// as floor()-truncated counts; non-integer x in the PMF / quantile yields 0
+// to match R's warn-and-zero.
+
+namespace detail {
+inline double LogChoose(double a, double b) {
+	// log C(a, b) = lgamma(a+1) - lgamma(b+1) - lgamma(a-b+1)
+	return std::lgamma(a + 1.0) - std::lgamma(b + 1.0) - std::lgamma(a - b + 1.0);
+}
+} // namespace detail
+
+inline double HyperGeomPMF(double x, double m, double n, double k) {
+	if (m < 0.0 || n < 0.0 || k < 0.0 || k > m + n) {
+		throw std::invalid_argument("hyper: m, n, k must be >= 0 and k <= m + n");
+	}
+	double x_int = std::floor(x);
+	if (x_int != x) {
+		return 0.0;
+	}
+	double lo = std::max(0.0, k - n);
+	double hi = std::min(m, k);
+	if (x_int < lo || x_int > hi) {
+		return 0.0;
+	}
+	double log_pmf =
+	    detail::LogChoose(m, x_int) + detail::LogChoose(n, k - x_int) - detail::LogChoose(m + n, k);
+	return std::exp(log_pmf);
+}
+
+inline double HyperGeomCDF(double q, double m, double n, double k) {
+	if (m < 0.0 || n < 0.0 || k < 0.0 || k > m + n) {
+		throw std::invalid_argument("hyper: m, n, k must be >= 0 and k <= m + n");
+	}
+	double q_int = std::floor(q);
+	double lo = std::max(0.0, k - n);
+	double hi = std::min(m, k);
+	if (q_int < lo) {
+		return 0.0;
+	}
+	if (q_int >= hi) {
+		return 1.0;
+	}
+	// Linear sum from lo. Support is bounded by min(m, k) so this is fine for
+	// the population sizes biostat / sampling-without-replacement workloads
+	// actually use. A normal-approximation fast path would help for huge m, k.
+	double cdf = 0.0;
+	for (double i = lo; i <= q_int; i += 1.0) {
+		cdf += HyperGeomPMF(i, m, n, k);
+	}
+	if (cdf > 1.0) {
+		cdf = 1.0; // clamp tiny rounding overshoots
+	}
+	return cdf;
+}
+
+inline double HyperGeomQuantile(double p, double m, double n, double k) {
+	if (m < 0.0 || n < 0.0 || k < 0.0 || k > m + n) {
+		throw std::invalid_argument("hyper: m, n, k must be >= 0 and k <= m + n");
+	}
+	if (p < 0.0 || p > 1.0) {
+		throw std::invalid_argument("p must be in [0, 1]");
+	}
+	double lo = std::max(0.0, k - n);
+	double hi = std::min(m, k);
+	if (p == 0.0) {
+		return lo;
+	}
+	if (p == 1.0) {
+		return hi;
+	}
+	double cdf = 0.0;
+	for (double x = lo; x <= hi; x += 1.0) {
+		cdf += HyperGeomPMF(x, m, n, k);
+		if (cdf >= p) {
+			return x;
+		}
+	}
+	return hi;
+}
+
 } // namespace stats_duck

@@ -146,6 +146,37 @@ static inline void RunPerRow2(DataChunk &args, Vector &result, Quantile &&q) {
 	}
 }
 
+template <typename Quantile>
+static inline void RunPerRow3(DataChunk &args, Vector &result, Quantile &&q) {
+	idx_t count = args.size();
+	UnifiedVectorFormat a0, a1, a2;
+	args.data[0].ToUnifiedFormat(count, a0);
+	args.data[1].ToUnifiedFormat(count, a1);
+	args.data[2].ToUnifiedFormat(count, a2);
+	auto v0 = UnifiedVectorFormat::GetData<double>(a0);
+	auto v1 = UnifiedVectorFormat::GetData<double>(a1);
+	auto v2 = UnifiedVectorFormat::GetData<double>(a2);
+	result.SetVectorType(VectorType::FLAT_VECTOR);
+	auto out = FlatVector::GetData<double>(result);
+	auto &mask = FlatVector::Validity(result);
+	for (idx_t i = 0; i < count; i++) {
+		auto i0 = a0.sel->get_index(i);
+		auto i1 = a1.sel->get_index(i);
+		auto i2 = a2.sel->get_index(i);
+		if (!a0.validity.RowIsValid(i0) || !a1.validity.RowIsValid(i1) ||
+		    !a2.validity.RowIsValid(i2)) {
+			mask.SetInvalid(i);
+			(void)NextUniform();
+			out[i] = 0.0;
+			continue;
+		}
+		double p0 = v0[i0];
+		double p1 = v1[i1];
+		double p2 = v2[i2];
+		out[i] = SafeSampleOne([&](double u) { return q(u, p0, p1, p2); }, mask, i);
+	}
+}
+
 //===--------------------------------------------------------------------===//
 // rnorm: 0 / 1 / 2 args (defaults mean=0, sd=1).
 //===--------------------------------------------------------------------===//
@@ -265,6 +296,28 @@ static void RPoisExec(DataChunk &args, ExpressionState &, Vector &result) {
 }
 
 //===--------------------------------------------------------------------===//
+// rnbinom(size, prob) — inverse-CDF; NegBinomQuantile is monotone integer
+// search seeded from the normal approximation, same shape as rpois.
+//===--------------------------------------------------------------------===//
+
+static void RNBinomExec(DataChunk &args, ExpressionState &, Vector &result) {
+	RunPerRow2(args, result, [](double u, double size, double prob) {
+		return stats_duck::NegBinomQuantile(u, size, prob);
+	});
+}
+
+//===--------------------------------------------------------------------===//
+// rhyper(m, n, k) — inverse-CDF; HyperGeomQuantile sums the PMF up to where
+// the cumulative crosses u, so the support is bounded by min(m, k).
+//===--------------------------------------------------------------------===//
+
+static void RHyperExec(DataChunk &args, ExpressionState &, Vector &result) {
+	RunPerRow3(args, result, [](double u, double m, double n, double k) {
+		return stats_duck::HyperGeomQuantile(u, m, n, k);
+	});
+}
+
+//===--------------------------------------------------------------------===//
 // Registration helpers.
 //===--------------------------------------------------------------------===//
 
@@ -334,6 +387,12 @@ void RegisterRandomSampling(ExtensionLoader &loader) {
 
 	// ── rpois ───────────────────────────────────────────────────────────────
 	loader.RegisterFunction(MakeVolatile("rpois", {DBL}, DBL, RPoisExec));
+
+	// ── rnbinom ─────────────────────────────────────────────────────────────
+	loader.RegisterFunction(MakeVolatile("rnbinom", {DBL, DBL}, DBL, RNBinomExec));
+
+	// ── rhyper ──────────────────────────────────────────────────────────────
+	loader.RegisterFunction(MakeVolatile("rhyper", {DBL, DBL, DBL}, DBL, RHyperExec));
 }
 
 } // namespace duckdb

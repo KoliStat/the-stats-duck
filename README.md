@@ -164,10 +164,17 @@ gives Q1=1.5 / Q3=3.5 (matching SAS PROC MEANS).
 | `dpois(k, lambda)`       | Poisson PMF (discrete) |
 | `ppois(q, lambda)`       | Poisson CDF |
 | `qpois(p, lambda)`       | Poisson quantile (integer search) |
+| `dnbinom(k, size, prob)` | Negative binomial PMF (count of failures before `size` successes; `prob` per-trial) |
+| `pnbinom(q, size, prob)` | Negative binomial CDF — closed form via regularized incomplete beta |
+| `qnbinom(p, size, prob)` | Negative binomial quantile (integer search) |
+| `dhyper(x, m, n, k)`     | Hypergeometric PMF (`m` successes / `n` failures / `k` draws without replacement) |
+| `phyper(q, m, n, k)`     | Hypergeometric CDF (direct PMF sum; tractable for typical population sizes) |
+| `qhyper(p, m, n, k)`     | Hypergeometric quantile |
 | `rnorm([mean], [sd])`    | Random sample from a normal — **volatile, per-row** |
 | `rt(df)` / `rchisq(df)` / `rf(df1, df2)` | Student-t / χ² / F samples |
 | `rgamma(shape, [rate])` / `rbeta(alpha, beta)` / `rexp([rate])` | Gamma / Beta / Exponential samples |
 | `rweibull(shape, [scale])` / `rlnorm([meanlog], [sdlog])` / `rpois(lambda)` | Weibull / Log-normal / Poisson samples |
+| `rnbinom(size, prob)` / `rhyper(m, n, k)` | Negative binomial / Hypergeometric samples |
 | `poibin_cdf(probs LIST<DOUBLE>, k BIGINT)` | Poisson Binomial CDF — `P(X ≤ k)` for `X = Σᵢ Bᵢ`, `Bᵢ ∼ Bernoulli(pᵢ)` |
 | `bin_edges(x [, method])` *(aggregate)* | Auto bin-edge vector for `x` — `sturges` (default), `fd`, `scott`, `sqrt`, `rice`, `auto` |
 | `bin_label(x, edges)` | Label for the bin containing `x` given an edge vector (typically from `bin_edges`) |

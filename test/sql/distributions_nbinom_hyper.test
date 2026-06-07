@@ -1,0 +1,193 @@
+# name: test/sql/distributions_nbinom_hyper.test
+# description: Negative binomial and hypergeometric d/p/q/r functions
+# group: [stats_duck]
+
+require stats_duck
+
+# ─── Negative Binomial ──────────────────────────────────────────────────────
+#
+# Parameterization (matches R's dnbinom(x, size, prob)):
+#   size = target number of successes, prob = per-trial success probability.
+#   PMF: P(X = k) = C(k+size-1, k) · prob^size · (1-prob)^k
+#   Cross-checks below derived by hand from the binomial coefficient form.
+
+# Hand check: P(X=0; size=5, prob=0.4) = 0.4^5 = 0.01024
+query R
+SELECT round(dnbinom(0.0, 5.0, 0.4), 5)
+----
+0.01024
+
+# Hand check: P(X=3; size=5, prob=0.4) = C(7,4) · 0.4^5 · 0.6^3
+#                                      = 35 · 0.01024 · 0.216 = 0.077414
+query R
+SELECT round(dnbinom(3.0, 5.0, 0.4), 6)
+----
+0.077414
+
+# CDF via the regularized incomplete beta identity. Verified by direct
+# summation: ΣP(X=k; k=0..3) = 0.01024 + 0.03072 + 0.055296 + 0.077414 = 0.17367
+query R
+SELECT round(pnbinom(3.0, 5.0, 0.4), 5)
+----
+0.17367
+
+# PMF sums to 1 over a sufficiently large support.
+query R
+SELECT round((SELECT sum(dnbinom(k::DOUBLE, 5.0, 0.4)) FROM range(0, 100) t(k)), 6)
+----
+1
+
+# CDF is monotone and approaches 1.
+query R
+SELECT round(pnbinom(200.0, 5.0, 0.4), 6)
+----
+1
+
+# Quantile: smallest k with P(X ≤ k) ≥ p. Median for NB(5, 0.4).
+# Cumulative grid: k=6 → 0.467, k=7 → 0.562. So qnbinom(0.5, 5, 0.4) = 7.
+query R
+SELECT qnbinom(0.5, 5.0, 0.4)
+----
+7
+
+# Quantile / CDF round-trip — first k where cdf >= p.
+query I
+SELECT pnbinom(qnbinom(0.7, 8.0, 0.3), 8.0, 0.3) >= 0.7
+----
+true
+
+# Boundaries.
+query RR
+SELECT qnbinom(0.0, 5.0, 0.4), qnbinom(1.0, 5.0, 0.4)
+----
+0	inf
+
+# Non-integer k → PMF returns 0 (matches R's warn-and-zero).
+query R
+SELECT dnbinom(1.5, 5.0, 0.4)
+----
+0
+
+# Invalid params → NULL.
+query R
+SELECT dnbinom(3.0, 0.0, 0.4)
+----
+NULL
+
+query R
+SELECT dnbinom(3.0, 5.0, 0.0)
+----
+NULL
+
+query R
+SELECT dnbinom(3.0, 5.0, 1.5)
+----
+NULL
+
+# ─── Hypergeometric ─────────────────────────────────────────────────────────
+#
+# Parameterization (matches R's dhyper(x, m, n, k)):
+#   m = total "successes" in population, n = total "failures",
+#   k = number drawn (without replacement), x = observed successes.
+#   PMF: P(X = x) = C(m, x) · C(n, k - x) / C(m + n, k)
+#   on support max(0, k-n) ≤ x ≤ min(m, k).
+#   Cross-checks below from direct computation.
+
+# Hand check: P(X=3; m=10, n=15, k=8) = C(10,3) · C(15,5) / C(25,8)
+#                                     = 120 · 3003 / 1081575 = 0.333181
+query R
+SELECT round(dhyper(3.0, 10.0, 15.0, 8.0), 6)
+----
+0.333181
+
+# Boundary: P(X=0; m=10, n=15, k=8) = C(15,8) / C(25,8)
+#                                   = 6435 / 1081575 = 0.005949
+query R
+SELECT round(dhyper(0.0, 10.0, 15.0, 8.0), 6)
+----
+0.005949
+
+# Outside the support — PMF is 0. Cannot draw 9 successes when only 8 drawn.
+query R
+SELECT dhyper(9.0, 10.0, 15.0, 8.0)
+----
+0
+
+# Cannot draw more failures than exist either — at min support floor.
+query R
+SELECT dhyper(-1.0, 10.0, 15.0, 8.0)
+----
+0
+
+# CDF — direct summation of PMF on [0, 3].
+query R
+SELECT round(phyper(3.0, 10.0, 15.0, 8.0), 6)
+----
+0.606865
+
+# PMF sums to 1 over support [max(0, k-n), min(m, k)] = [0, 8] for this case.
+query R
+SELECT round((SELECT sum(dhyper(x::DOUBLE, 10.0, 15.0, 8.0)) FROM range(0, 9) t(x)), 6)
+----
+1
+
+# CDF saturates at 1 above the support max.
+query R
+SELECT phyper(10.0, 10.0, 15.0, 8.0)
+----
+1
+
+# Quantile: median draws ≈ k·m/(m+n) = 8·10/25 = 3.2. Median is the smallest
+# integer with CDF ≥ 0.5, which is 3 (cdf at 3 = 0.607 ≥ 0.5).
+query R
+SELECT qhyper(0.5, 10.0, 15.0, 8.0)
+----
+3
+
+# Quantile / CDF round-trip.
+query I
+SELECT phyper(qhyper(0.9, 10.0, 15.0, 8.0), 10.0, 15.0, 8.0) >= 0.9
+----
+true
+
+# k larger than the population is rejected.
+query R
+SELECT dhyper(0.0, 10.0, 15.0, 30.0)
+----
+NULL
+
+# Negative parameters rejected.
+query R
+SELECT dhyper(0.0, -1.0, 15.0, 5.0)
+----
+NULL
+
+# ─── Random sampling (r* coverage check) ───────────────────────────────────
+
+# rnbinom mean converges to size·(1-prob)/prob = 5·0.6/0.4 = 7.5.
+query R
+SELECT round(avg(rnbinom(5.0, 0.4)), 1) FROM range(50000)
+----
+7.5
+
+# rnbinom is integer-valued.
+query I
+SELECT sum(CASE WHEN v <> floor(v) THEN 1 ELSE 0 END)
+FROM (SELECT rnbinom(5.0, 0.4) AS v FROM range(50000))
+----
+0
+
+# rhyper mean converges to k·m/(m+n) = 8·10/25 = 3.2.
+query R
+SELECT round(avg(rhyper(10.0, 15.0, 8.0)), 1) FROM range(50000)
+----
+3.2
+
+# rhyper output lies in the support [max(0, k-n), min(m, k)] = [0, 8].
+query II
+SELECT
+    sum(CASE WHEN v < 0 OR v > 8 THEN 1 ELSE 0 END) AS out_of_support,
+    count(*) AS total
+FROM (SELECT rhyper(10.0, 15.0, 8.0) AS v FROM range(50000))
+----
+0	50000

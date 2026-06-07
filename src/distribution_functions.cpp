@@ -1,6 +1,7 @@
 #include "distribution_functions.hpp"
 #include "distributions.hpp"
 
+#include "duckdb/common/types/vector.hpp"
 #include "duckdb/common/vector_operations/unary_executor.hpp"
 #include "duckdb/common/vector_operations/binary_executor.hpp"
 #include "duckdb/common/vector_operations/ternary_executor.hpp"
@@ -467,6 +468,90 @@ static void QPoisExec(DataChunk &args, ExpressionState &, Vector &result) {
 	    });
 }
 
+// ── Negative Binomial ───────────────────────────────────────────────────────
+// dnbinom(x, size, prob) / pnbinom(q, size, prob) / qnbinom(p, size, prob).
+
+static void DNBinomExec(DataChunk &args, ExpressionState &, Vector &result) {
+	TernaryExecutor::ExecuteWithNulls<double, double, double, double>(
+	    args.data[0], args.data[1], args.data[2], result, args.size(),
+	    [](double k, double size, double prob, ValidityMask &mask, idx_t idx) {
+		    return SafeCall([&] { return stats_duck::NegBinomPMF(k, size, prob); }, mask, idx);
+	    });
+}
+
+static void PNBinomExec(DataChunk &args, ExpressionState &, Vector &result) {
+	TernaryExecutor::ExecuteWithNulls<double, double, double, double>(
+	    args.data[0], args.data[1], args.data[2], result, args.size(),
+	    [](double k, double size, double prob, ValidityMask &mask, idx_t idx) {
+		    return SafeCall([&] { return stats_duck::NegBinomCDF(k, size, prob); }, mask, idx);
+	    });
+}
+
+static void QNBinomExec(DataChunk &args, ExpressionState &, Vector &result) {
+	TernaryExecutor::ExecuteWithNulls<double, double, double, double>(
+	    args.data[0], args.data[1], args.data[2], result, args.size(),
+	    [](double p, double size, double prob, ValidityMask &mask, idx_t idx) {
+		    return SafeCall([&] { return stats_duck::NegBinomQuantile(p, size, prob); }, mask, idx);
+	    });
+}
+
+// ── Hypergeometric ──────────────────────────────────────────────────────────
+// dhyper(x, m, n, k) / phyper(q, m, n, k) / qhyper(p, m, n, k) — four
+// arguments. DuckDB doesn't ship a 4-ary helper, so we drive the loop directly
+// via UnifiedVectorFormat (which still handles constant / flat / dictionary
+// input encodings correctly).
+
+template <typename Fn>
+static void RunQuaternaryWithNulls(DataChunk &args, Vector &result, Fn &&fn) {
+	idx_t count = args.size();
+	UnifiedVectorFormat a0, a1, a2, a3;
+	args.data[0].ToUnifiedFormat(count, a0);
+	args.data[1].ToUnifiedFormat(count, a1);
+	args.data[2].ToUnifiedFormat(count, a2);
+	args.data[3].ToUnifiedFormat(count, a3);
+	auto v0 = UnifiedVectorFormat::GetData<double>(a0);
+	auto v1 = UnifiedVectorFormat::GetData<double>(a1);
+	auto v2 = UnifiedVectorFormat::GetData<double>(a2);
+	auto v3 = UnifiedVectorFormat::GetData<double>(a3);
+	result.SetVectorType(VectorType::FLAT_VECTOR);
+	auto out = FlatVector::GetData<double>(result);
+	auto &mask = FlatVector::Validity(result);
+	for (idx_t i = 0; i < count; i++) {
+		auto i0 = a0.sel->get_index(i);
+		auto i1 = a1.sel->get_index(i);
+		auto i2 = a2.sel->get_index(i);
+		auto i3 = a3.sel->get_index(i);
+		if (!a0.validity.RowIsValid(i0) || !a1.validity.RowIsValid(i1) ||
+		    !a2.validity.RowIsValid(i2) || !a3.validity.RowIsValid(i3)) {
+			mask.SetInvalid(i);
+			out[i] = 0.0;
+			continue;
+		}
+		out[i] = SafeCall([&] { return fn(v0[i0], v1[i1], v2[i2], v3[i3]); }, mask, i);
+	}
+}
+
+static void DHyperExec(DataChunk &args, ExpressionState &, Vector &result) {
+	RunQuaternaryWithNulls(args, result,
+	                        [](double x, double m, double n, double k) {
+		                        return stats_duck::HyperGeomPMF(x, m, n, k);
+	                        });
+}
+
+static void PHyperExec(DataChunk &args, ExpressionState &, Vector &result) {
+	RunQuaternaryWithNulls(args, result,
+	                        [](double q, double m, double n, double k) {
+		                        return stats_duck::HyperGeomCDF(q, m, n, k);
+	                        });
+}
+
+static void QHyperExec(DataChunk &args, ExpressionState &, Vector &result) {
+	RunQuaternaryWithNulls(args, result,
+	                        [](double p, double m, double n, double k) {
+		                        return stats_duck::HyperGeomQuantile(p, m, n, k);
+	                        });
+}
+
 } // namespace
 
 void RegisterDistributionFunctions(ExtensionLoader &loader) {
@@ -609,6 +694,18 @@ void RegisterDistributionFunctions(ExtensionLoader &loader) {
 	loader.RegisterFunction(ScalarFunction("dpois", {DBL, DBL}, DBL, DPoisExec));
 	loader.RegisterFunction(ScalarFunction("ppois", {DBL, DBL}, DBL, PPoisExec));
 	loader.RegisterFunction(ScalarFunction("qpois", {DBL, DBL}, DBL, QPoisExec));
+
+	// ── Negative Binomial ───────────────────────────────────────────────────
+	// Discrete: dnbinom(k, size, prob) / pnbinom(q, size, prob) / qnbinom(p, size, prob).
+	loader.RegisterFunction(ScalarFunction("dnbinom", {DBL, DBL, DBL}, DBL, DNBinomExec));
+	loader.RegisterFunction(ScalarFunction("pnbinom", {DBL, DBL, DBL}, DBL, PNBinomExec));
+	loader.RegisterFunction(ScalarFunction("qnbinom", {DBL, DBL, DBL}, DBL, QNBinomExec));
+
+	// ── Hypergeometric ──────────────────────────────────────────────────────
+	// Discrete: dhyper(x, m, n, k) / phyper(q, m, n, k) / qhyper(p, m, n, k).
+	loader.RegisterFunction(ScalarFunction("dhyper", {DBL, DBL, DBL, DBL}, DBL, DHyperExec));
+	loader.RegisterFunction(ScalarFunction("phyper", {DBL, DBL, DBL, DBL}, DBL, PHyperExec));
+	loader.RegisterFunction(ScalarFunction("qhyper", {DBL, DBL, DBL, DBL}, DBL, QHyperExec));
 }
 
 } // namespace duckdb

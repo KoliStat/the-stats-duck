@@ -12,6 +12,19 @@ that name is preserved across releases for backward compatibility.
 
 ### Added
 
+- **Negative binomial and hypergeometric distributions** — d/p/q/r quartets
+  matching R's signatures. `dnbinom(k, size, prob)` / `pnbinom` / `qnbinom` /
+  `rnbinom`: PMF via lgamma + closed-form CDF identity
+  `P(X ≤ k) = I_prob(size, k+1)` (regularized incomplete beta from
+  `distributions.hpp`); quantile is monotone integer search seeded from the
+  normal approximation. `dhyper(x, m, n, k)` / `phyper` / `qhyper` /
+  `rhyper`: PMF via three log-binomial-coefficients; CDF is direct PMF
+  summation (no closed form), bounded by `min(m, k)` so it's tractable for
+  the population sizes sampling-without-replacement workloads actually use.
+  Cross-verified to 6 decimals against hand-computed PMFs and direct CDF
+  summation; rnbinom mean matches `size·(1-prob)/prob` and rhyper mean
+  matches `k·m/(m+n)` within sampling noise on 50k draws.
+
 - **`lm` / `lm_summary`: R-style formula DSL** — both functions now accept a
   `formula := '<lhs> ~ <rhs>'` named parameter as an alternative to the
   explicit `y := ...` / `x := [...]` form (they are mutually exclusive).
