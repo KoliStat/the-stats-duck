@@ -125,11 +125,12 @@ static void CholeskySolve(const std::vector<double> &L, const std::vector<double
 struct LmFit {
 	idx_t n;                          // number of complete-case rows
 	idx_t p;                          // number of predictors (excluding intercept)
-	std::vector<std::string> terms;   // length p + 1 — "(Intercept)" then each x
-	std::vector<double> beta;         // length p + 1
-	std::vector<double> std_error;    // length p + 1
-	std::vector<double> t_statistic;  // length p + 1
-	std::vector<double> p_value;      // length p + 1
+	bool has_intercept;               // intercept term present in the design
+	std::vector<std::string> terms;   // length k — "(Intercept)" iff has_intercept, then each x
+	std::vector<double> beta;         // length k
+	std::vector<double> std_error;    // length k
+	std::vector<double> t_statistic;  // length k
+	std::vector<double> p_value;      // length k
 	double r_squared;
 	double adj_r_squared;
 	double f_statistic;
@@ -190,49 +191,58 @@ static YXBuffers MaterializeYX(Connection &conn, const std::string &table, const
 
 //===--------------------------------------------------------------------===//
 // FitOls — OLS fit via Cholesky on X'X. Populates every field of LmFit.
+// When has_intercept is false, the design has no constant column. R²/F use
+// the "uncentered" formulation (TSS = Σ y², not Σ(y - ȳ)²) to match R's
+// summary.lm output for no-intercept models — interpret with care.
 //===--------------------------------------------------------------------===//
 
 static LmFit FitOls(Connection &conn, const std::string &table, const std::string &y_col,
-                    const std::vector<std::string> &x_cols) {
+                    const std::vector<std::string> &x_cols, bool has_intercept) {
 	LmFit fit;
 	fit.ok = false;
 	fit.p = x_cols.size();
-	fit.terms.reserve(fit.p + 1);
-	fit.terms.emplace_back("(Intercept)");
+	fit.has_intercept = has_intercept;
+	fit.terms.reserve(fit.p + (has_intercept ? 1 : 0));
+	if (has_intercept) {
+		fit.terms.emplace_back("(Intercept)");
+	}
 	for (auto &xc : x_cols) {
 		fit.terms.push_back(xc);
 	}
 
 	auto buf = MaterializeYX(conn, table, y_col, x_cols);
 	fit.n = buf.y.size();
-	idx_t k = fit.p + 1; // number of parameters
+	idx_t k = fit.terms.size(); // number of parameters
 
 	if (fit.n <= k) {
 		fit.error = StringUtil::Format(
-		    "lm: need n > p + 1 (got n=%llu, p=%llu); not enough complete-case rows",
-		    static_cast<unsigned long long>(fit.n), static_cast<unsigned long long>(fit.p));
+		    "lm: need n > k (k=%llu params), got n=%llu — not enough complete-case rows",
+		    static_cast<unsigned long long>(k), static_cast<unsigned long long>(fit.n));
 		return fit;
 	}
 
-	// Build A = X'X and b = X'y. X has an implicit intercept column (all 1s)
-	// at index 0; predictor columns occupy indices 1..p. We use row-major
-	// storage: A[i*k + j] is the (i, j) entry.
+	// Column accessor: column j of X for row r. j=0 is the intercept (1)
+	// when has_intercept is true; otherwise it's the first predictor.
+	auto Xcol = [&](idx_t r, idx_t j) -> double {
+		if (has_intercept) {
+			if (j == 0) {
+				return 1.0;
+			}
+			return buf.x[j - 1][r];
+		}
+		return buf.x[j][r];
+	};
+
+	// Build A = X'X (upper triangle only) and b = X'y. Row-major.
 	std::vector<double> A(k * k, 0.0);
 	std::vector<double> b(k, 0.0);
 	for (idx_t row = 0; row < fit.n; row++) {
-		// row vector x_row of length k: [1, x_1[row], x_2[row], ...]
-		// Update upper triangle (then symmetrize below).
 		double y_v = buf.y[row];
-		// First: A[0][*] and b[0]
-		A[0 * k + 0] += 1.0;
-		b[0] += y_v;
-		for (idx_t j = 1; j < k; j++) {
-			double xj = buf.x[j - 1][row];
-			A[0 * k + j] += xj;
-			A[j * k + j] += xj * xj;
-			b[j] += xj * y_v;
-			for (idx_t i = 1; i < j; i++) {
-				double xi = buf.x[i - 1][row];
+		for (idx_t i = 0; i < k; i++) {
+			double xi = Xcol(row, i);
+			b[i] += xi * y_v;
+			for (idx_t j = i; j < k; j++) {
+				double xj = Xcol(row, j);
 				A[i * k + j] += xi * xj;
 			}
 		}
@@ -257,24 +267,29 @@ static LmFit FitOls(Connection &conn, const std::string &table, const std::strin
 	// Solve LL'·β = b
 	CholeskySolve(L, b, fit.beta, k);
 
-	// Compute residuals e = y - X·β and RSS.
+	// Compute residuals e = y - X·β and RSS, plus a few sums we'll reuse for
+	// the model summary.
 	double rss = 0.0;
 	double y_sum = 0.0;
+	double y_sq_sum = 0.0;
 	for (idx_t row = 0; row < fit.n; row++) {
-		double yhat = fit.beta[0];
-		for (idx_t j = 1; j < k; j++) {
-			yhat += fit.beta[j] * buf.x[j - 1][row];
+		double yhat = 0.0;
+		for (idx_t j = 0; j < k; j++) {
+			yhat += fit.beta[j] * Xcol(row, j);
 		}
 		double e = buf.y[row] - yhat;
 		rss += e * e;
 		y_sum += buf.y[row];
+		y_sq_sum += buf.y[row] * buf.y[row];
 	}
 	double y_mean = y_sum / static_cast<double>(fit.n);
-	double tss = 0.0;
+	double tss_centered = 0.0;
 	for (idx_t row = 0; row < fit.n; row++) {
 		double dy = buf.y[row] - y_mean;
-		tss += dy * dy;
+		tss_centered += dy * dy;
 	}
+	// "Uncentered" TSS used by R when there's no intercept.
+	double tss = has_intercept ? tss_centered : y_sq_sum;
 
 	fit.df_model = fit.p;
 	fit.df_residual = fit.n - k;
@@ -306,12 +321,18 @@ static LmFit FitOls(Connection &conn, const std::string &table, const std::strin
 		}
 	}
 
-	// Model-level statistics.
+	// Model-level statistics. R² is centered when an intercept is present
+	// (TSS = Σ(y - ȳ)²); R reports the *uncentered* version when there's no
+	// intercept (TSS = Σ y²), which we mirror — that's what `tss` holds above.
+	// For adj-R², the divisor n - p uses the full parameter count k matching
+	// R: with intercept k = p + 1 and divisor n - p - 1 = df_residual; without
+	// intercept k = p and divisor n - p = df_residual.
 	if (tss > 0.0) {
 		fit.r_squared = 1.0 - rss / tss;
 		double n_d = static_cast<double>(fit.n);
+		double r_n = has_intercept ? n_d - 1.0 : n_d;
 		fit.adj_r_squared =
-		    1.0 - (1.0 - fit.r_squared) * (n_d - 1.0) / static_cast<double>(fit.df_residual);
+		    1.0 - (1.0 - fit.r_squared) * r_n / static_cast<double>(fit.df_residual);
 	} else {
 		fit.r_squared = std::numeric_limits<double>::quiet_NaN();
 		fit.adj_r_squared = std::numeric_limits<double>::quiet_NaN();
@@ -334,13 +355,221 @@ static LmFit FitOls(Connection &conn, const std::string &table, const std::strin
 }
 
 //===--------------------------------------------------------------------===//
-// Shared bind data — both lm and lm_summary need the same trio (table, y, x).
+// Formula DSL — a small subset of R's formula syntax.
+//
+// Grammar (v0.6):
+//   formula    := IDENT  '~'  rhs
+//   rhs        := term  (('+' | '-')  term)*
+//   term       := IDENT          (predictor column)
+//                | '0'            (alias for '- 1' — drop intercept)
+//                | '1'            (no-op when '+' / drops intercept when '-')
+//
+// Identifiers are bare `[A-Za-z_][A-Za-z0-9_.]*` or `"..."` (SQL-quoted, with
+// '""' escape). Whitespace between tokens is ignored. The intercept is
+// included by default and can be removed with `- 1` or `+ 0` (matches R's
+// convention; both spellings appear in the wild).
+//
+// Not supported in v0.6: interactions (`x1:x2`), wildcards (`*`, `^`,
+// `.`), inline expressions (`I(x^2)`, `log(x)`), or transformations. Quote
+// computed columns into a CTE if you need them today.
+//===--------------------------------------------------------------------===//
+
+struct FormulaParse {
+	bool ok = false;
+	std::string error;
+	std::string y;
+	std::vector<std::string> x;
+	bool intercept = true;
+};
+
+namespace fml {
+
+enum TokKind { IDENT, TILDE, PLUS, MINUS, ZERO, ONE, END_TOK };
+
+struct Tok {
+	TokKind kind;
+	std::string text;
+	idx_t pos;
+};
+
+static bool IsIdentStart(char c) {
+	return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || c == '_';
+}
+static bool IsIdentCont(char c) {
+	return IsIdentStart(c) || (c >= '0' && c <= '9') || c == '.';
+}
+
+static std::vector<Tok> Tokenize(const std::string &s, std::string &error) {
+	std::vector<Tok> tokens;
+	idx_t i = 0;
+	while (i < s.size()) {
+		char c = s[i];
+		if (c == ' ' || c == '\t' || c == '\n' || c == '\r') {
+			i++;
+			continue;
+		}
+		idx_t start = i;
+		if (c == '~') { tokens.push_back({TILDE, "", start}); i++; continue; }
+		if (c == '+') { tokens.push_back({PLUS, "", start}); i++; continue; }
+		if (c == '-') { tokens.push_back({MINUS, "", start}); i++; continue; }
+		if (c >= '0' && c <= '9') {
+			std::string num;
+			while (i < s.size() && s[i] >= '0' && s[i] <= '9') {
+				num += s[i];
+				i++;
+			}
+			if (num == "0") {
+				tokens.push_back({ZERO, "", start});
+			} else if (num == "1") {
+				tokens.push_back({ONE, "", start});
+			} else {
+				error = StringUtil::Format(
+				    "formula: unexpected number '%s' at position %llu — only '0' / '1' are valid",
+				    num, static_cast<unsigned long long>(start));
+				return tokens;
+			}
+			continue;
+		}
+		if (c == '"') {
+			std::string id;
+			i++;
+			while (i < s.size()) {
+				if (s[i] == '"') {
+					if (i + 1 < s.size() && s[i + 1] == '"') {
+						id += '"';
+						i += 2;
+						continue;
+					}
+					break;
+				}
+				id += s[i];
+				i++;
+			}
+			if (i >= s.size()) {
+				error = "formula: unterminated quoted identifier";
+				return tokens;
+			}
+			i++; // closing "
+			tokens.push_back({IDENT, id, start});
+			continue;
+		}
+		if (IsIdentStart(c)) {
+			std::string id;
+			while (i < s.size() && IsIdentCont(s[i])) {
+				id += s[i];
+				i++;
+			}
+			tokens.push_back({IDENT, id, start});
+			continue;
+		}
+		error = StringUtil::Format("formula: unexpected character '%c' at position %llu",
+		                            c, static_cast<unsigned long long>(start));
+		return tokens;
+	}
+	tokens.push_back({END_TOK, "", i});
+	return tokens;
+}
+
+} // namespace fml
+
+static FormulaParse ParseFormula(const std::string &formula) {
+	FormulaParse out;
+	std::string err;
+	auto tokens = fml::Tokenize(formula, err);
+	if (!err.empty()) {
+		out.error = err;
+		return out;
+	}
+	if (tokens.empty() || tokens[0].kind != fml::IDENT) {
+		out.error = "formula: expected response column name on LHS of '~'";
+		return out;
+	}
+	out.y = tokens[0].text;
+	if (tokens.size() < 2 || tokens[1].kind != fml::TILDE) {
+		out.error = "formula: expected '~' after response column";
+		return out;
+	}
+	idx_t i = 2;
+	if (i >= tokens.size() || tokens[i].kind == fml::END_TOK) {
+		out.error = "formula: expected at least one term after '~'";
+		return out;
+	}
+	bool first = true;
+	while (i < tokens.size() && tokens[i].kind != fml::END_TOK) {
+		bool subtract = false;
+		if (!first) {
+			if (tokens[i].kind == fml::PLUS) {
+				subtract = false;
+				i++;
+			} else if (tokens[i].kind == fml::MINUS) {
+				subtract = true;
+				i++;
+			} else {
+				out.error = "formula: expected '+' or '-' between terms";
+				return out;
+			}
+			if (i >= tokens.size() || tokens[i].kind == fml::END_TOK) {
+				out.error = "formula: expected term after operator";
+				return out;
+			}
+		}
+		first = false;
+		auto &t = tokens[i];
+		if (t.kind == fml::ZERO) {
+			// `+ 0` drops the intercept; `- 0` is a no-op.
+			if (!subtract) {
+				out.intercept = false;
+			}
+			i++;
+			continue;
+		}
+		if (t.kind == fml::ONE) {
+			// `+ 1` is the default (intercept on); `- 1` drops the intercept.
+			if (subtract) {
+				out.intercept = false;
+			}
+			i++;
+			continue;
+		}
+		if (t.kind == fml::IDENT) {
+			if (subtract) {
+				out.error =
+				    "formula: subtracting a predictor (other than '- 1' / '- 0' to drop the "
+				    "intercept) is not supported — wrap into a CTE if you need to omit a column";
+				return out;
+			}
+			for (auto &x : out.x) {
+				if (x == t.text) {
+					out.error = "formula: duplicate predictor '" + t.text + "'";
+					return out;
+				}
+			}
+			out.x.push_back(t.text);
+			i++;
+			continue;
+		}
+		out.error = "formula: unexpected token in RHS";
+		return out;
+	}
+	if (out.x.empty()) {
+		out.error =
+		    "formula: at least one predictor is required (intercept-only models are not supported)";
+		return out;
+	}
+	out.ok = true;
+	return out;
+}
+
+//===--------------------------------------------------------------------===//
+// Shared bind data — both lm and lm_summary need the same trio (table, y, x)
+// plus a flag for whether the design has an intercept column.
 //===--------------------------------------------------------------------===//
 
 struct LmBindData : public TableFunctionData {
 	std::string data_table;
 	std::string y_col;
 	std::vector<std::string> x_cols;
+	bool has_intercept = true;
 	bool is_summary;
 };
 
@@ -355,25 +584,50 @@ static unique_ptr<FunctionData> LmBindCommon(ClientContext &context, TableFuncti
 	}
 	bd->data_table = input.inputs[0].GetValue<string>();
 
+	// Two ways to specify the model:
+	//   formula := 'y ~ x1 + x2'             (R-style DSL, ergonomic)
+	//   y := 'y_col', x := ['x1', 'x2']      (explicit lists, easy to generate)
+	// They are mutually exclusive — passing both is a bind error.
+	auto it_formula = input.named_parameters.find("formula");
 	auto it_y = input.named_parameters.find("y");
-	if (it_y == input.named_parameters.end() || it_y->second.IsNull()) {
-		throw BinderException("%s: 'y' (response column name) is required", fname);
-	}
-	bd->y_col = it_y->second.GetValue<string>();
-
 	auto it_x = input.named_parameters.find("x");
-	if (it_x == input.named_parameters.end() || it_x->second.IsNull()) {
-		throw BinderException("%s: 'x' (predictor list) is required", fname);
+	bool has_formula = it_formula != input.named_parameters.end() && !it_formula->second.IsNull();
+	bool has_y = it_y != input.named_parameters.end() && !it_y->second.IsNull();
+	bool has_x = it_x != input.named_parameters.end() && !it_x->second.IsNull();
+
+	if (has_formula && (has_y || has_x)) {
+		throw BinderException(
+		    "%s: cannot specify 'formula' together with 'y' or 'x' — choose one form", fname);
 	}
-	auto &x_children = ListValue::GetChildren(it_x->second);
-	for (auto &v : x_children) {
-		if (v.IsNull()) {
-			throw BinderException("%s: 'x' list entries must not be NULL", fname);
+
+	if (has_formula) {
+		auto parsed = ParseFormula(it_formula->second.GetValue<string>());
+		if (!parsed.ok) {
+			throw BinderException("%s: %s", fname, parsed.error);
 		}
-		bd->x_cols.push_back(v.GetValue<string>());
-	}
-	if (bd->x_cols.empty()) {
-		throw BinderException("%s: 'x' must contain at least one predictor column", fname);
+		bd->y_col = std::move(parsed.y);
+		bd->x_cols = std::move(parsed.x);
+		bd->has_intercept = parsed.intercept;
+	} else {
+		if (!has_y) {
+			throw BinderException("%s: either 'formula' or ('y' + 'x') is required", fname);
+		}
+		bd->y_col = it_y->second.GetValue<string>();
+		if (!has_x) {
+			throw BinderException("%s: 'x' (predictor list) is required when not using formula",
+			                      fname);
+		}
+		auto &x_children = ListValue::GetChildren(it_x->second);
+		for (auto &v : x_children) {
+			if (v.IsNull()) {
+				throw BinderException("%s: 'x' list entries must not be NULL", fname);
+			}
+			bd->x_cols.push_back(v.GetValue<string>());
+		}
+		if (bd->x_cols.empty()) {
+			throw BinderException("%s: 'x' must contain at least one predictor column", fname);
+		}
+		bd->has_intercept = true;
 	}
 
 	// Catalog lookup — y and every x must exist and be numeric.
@@ -437,7 +691,7 @@ static unique_ptr<GlobalTableFunctionState> LmInitGlobal(ClientContext &context,
 	auto &bd = input.bind_data->Cast<LmBindData>();
 	auto state = make_uniq<LmGlobalState>();
 	Connection conn(*context.db);
-	state->fit = FitOls(conn, bd.data_table, bd.y_col, bd.x_cols);
+	state->fit = FitOls(conn, bd.data_table, bd.y_col, bd.x_cols, bd.has_intercept);
 	if (!state->fit.ok) {
 		throw InvalidInputException(state->fit.error);
 	}
@@ -496,6 +750,7 @@ void RegisterLm(ExtensionLoader &loader) {
 		TableFunction fn("lm", {LogicalType::VARCHAR}, LmExecute, LmBind, LmInitGlobal);
 		fn.named_parameters["y"] = LogicalType::VARCHAR;
 		fn.named_parameters["x"] = LogicalType::LIST(LogicalType::VARCHAR);
+		fn.named_parameters["formula"] = LogicalType::VARCHAR;
 		loader.RegisterFunction(fn);
 	}
 	{
@@ -503,6 +758,7 @@ void RegisterLm(ExtensionLoader &loader) {
 		                 LmInitGlobal);
 		fn.named_parameters["y"] = LogicalType::VARCHAR;
 		fn.named_parameters["x"] = LogicalType::LIST(LogicalType::VARCHAR);
+		fn.named_parameters["formula"] = LogicalType::VARCHAR;
 		loader.RegisterFunction(fn);
 	}
 }

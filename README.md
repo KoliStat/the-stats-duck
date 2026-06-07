@@ -245,12 +245,28 @@ SELECT * FROM lm_summary('mtcars', y := 'mpg', x := ['wt', 'hp']);
 --   0.8268     0.8148         69.21        9.11e-12   2         29           2.593  32
 ```
 
+A `formula` named parameter accepts an R-style spec as an alternative to the
+explicit `y` / `x` form:
+
+```sql
+SELECT * FROM lm('mtcars', formula := 'mpg ~ wt + hp');
+SELECT * FROM lm('mtcars', formula := 'mpg ~ wt + hp - 1');  -- no intercept
+SELECT * FROM lm('weird_names', formula := '"My Y" ~ "x.with.dots"');
+```
+
+The formula grammar supports additive predictors, `- 1` or `+ 0` to drop the
+intercept, bare and `"..."`-quoted identifiers, and free whitespace.
+Interactions (`x1:x2`), wildcards (`*`, `^`, `.`) and inline expressions
+(`I(x^2)`, `log(x)`) are not supported in v0.6 — wrap into a CTE if you need
+transformed columns. `formula` and `y` / `x` are mutually exclusive.
+
 OLS via Cholesky decomposition of `X'X`. Rows with NULL in `y` or any `x` are
-dropped (complete-case). Term order follows the user-supplied `x` list, after
-the intercept. Calling `lm` and `lm_summary` with the same arguments fits the
-model twice — use a CTE if you need both shapes from a single fit. Errors on
-singular `X'X` (perfectly collinear predictors) or insufficient rows
-(`n ≤ p + 1`).
+dropped (complete-case). Term order follows the user-supplied predictor order,
+after the intercept. Calling `lm` and `lm_summary` with the same arguments
+fits the model twice — use a CTE if you need both shapes from a single fit.
+Errors on singular `X'X` (perfectly collinear predictors) or insufficient rows
+(`n ≤ k` parameters). When the intercept is removed, R²/adj-R² use the
+uncentered TSS = Σ y² to match R's `summary.lm` — interpret with care.
 
 ### Multiple-testing correction (scalar)
 

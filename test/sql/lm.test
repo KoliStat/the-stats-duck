@@ -196,3 +196,163 @@ statement error
 SELECT * FROM lm('too_small', y := 'y', x := ['x1'])
 ----
 not enough complete-case rows
+
+# ── R-style formula DSL ───────────────────────────────────────────────────
+#
+# `formula := '<lhs> ~ <rhs>'` is an alternative to `y := ...` / `x := [...]`.
+# Supports `+` to add predictors and `- 1` / `+ 0` to drop the intercept.
+# Whitespace is ignored; column names accept the SQL `"..."` quoted form.
+
+# Formula and explicit form fit the same model — coefficients must match.
+query RR
+SELECT round((SELECT estimate FROM lm('mtcars', formula := 'mpg ~ wt + hp')
+              WHERE term = 'wt'), 5),
+       round((SELECT estimate FROM lm('mtcars', y := 'mpg', x := ['wt', 'hp'])
+              WHERE term = 'wt'), 5)
+----
+-3.87783	-3.87783
+
+# Term order follows the formula left-to-right.
+query T
+SELECT term FROM lm('mtcars', formula := 'mpg ~ hp + wt')
+----
+(Intercept)
+hp
+wt
+
+# Whitespace tolerance — these all parse to the same model.
+query I
+SELECT count(*) = 3 FROM lm('mtcars', formula := 'mpg~wt+hp')
+----
+true
+
+query I
+SELECT count(*) = 3 FROM lm('mtcars', formula := '   mpg   ~   wt   +   hp   ')
+----
+true
+
+# Quoted identifiers (matters for column names with reserved/uncommon chars).
+statement ok
+CREATE TABLE "weird names"("My Y" DOUBLE, "x.with.dots" DOUBLE);
+
+statement ok
+INSERT INTO "weird names" VALUES (1, 1), (2, 2.1), (3, 2.9), (4, 4.1), (5, 5.0);
+
+query T
+SELECT term FROM lm('weird names', formula := '"My Y" ~ "x.with.dots"')
+----
+(Intercept)
+x.with.dots
+
+# Intercept removal: `mpg ~ wt + hp - 1` and `mpg ~ wt + hp + 0` produce
+# identical fits, both without an intercept term.
+query I
+SELECT count(*) FROM lm('mtcars', formula := 'mpg ~ wt + hp - 1')
+----
+2
+
+query I
+SELECT count(*) FROM lm('mtcars', formula := 'mpg ~ wt + hp + 0')
+----
+2
+
+# No "(Intercept)" row in the output when the intercept is dropped.
+query I
+SELECT count(*) FROM lm('mtcars', formula := 'mpg ~ wt + hp - 1')
+WHERE term = '(Intercept)'
+----
+0
+
+# Synthetic noiseless case: y = 2·x. With intercept the fit is β₀=0, β₁=2;
+# without intercept the slope is still exactly 2.
+statement ok
+CREATE TABLE noiseless AS SELECT i::DOUBLE AS x, 2.0 * i::DOUBLE AS y
+FROM range(1, 21) t(i);
+
+query R
+SELECT round(estimate, 6) FROM lm('noiseless', formula := 'y ~ x - 1')
+WHERE term = 'x'
+----
+2
+
+query R
+SELECT round(estimate, 6) FROM lm('noiseless', formula := 'y ~ x')
+WHERE term = 'x'
+----
+2
+
+query R
+SELECT round(estimate, 6) FROM lm('noiseless', formula := 'y ~ x')
+WHERE term = '(Intercept)'
+----
+0
+
+# df_residual is n - p when there's no intercept (vs. n - p - 1 with).
+query I
+SELECT df_residual FROM lm_summary('noiseless', formula := 'y ~ x')
+----
+18
+
+query I
+SELECT df_residual FROM lm_summary('noiseless', formula := 'y ~ x - 1')
+----
+19
+
+# `+ 0` and `- 1` are interchangeable: same fit either way.
+query R
+SELECT round(
+    (SELECT estimate FROM lm('mtcars', formula := 'mpg ~ wt - 1') WHERE term = 'wt') -
+    (SELECT estimate FROM lm('mtcars', formula := 'mpg ~ wt + 0') WHERE term = 'wt'),
+    10)
+----
+0
+
+# ── Formula parse errors ──────────────────────────────────────────────────
+
+# Conflict: formula + (y or x).
+statement error
+SELECT * FROM lm('mtcars', formula := 'mpg ~ wt', y := 'mpg', x := ['wt'])
+----
+cannot specify 'formula' together with 'y' or 'x'
+
+# Missing `~`.
+statement error
+SELECT * FROM lm('mtcars', formula := 'mpg wt + hp')
+----
+expected '~' after response column
+
+# Missing predictors.
+statement error
+SELECT * FROM lm('mtcars', formula := 'mpg ~')
+----
+expected at least one term after '~'
+
+# Intercept-only model not supported in v0.6.
+statement error
+SELECT * FROM lm('mtcars', formula := 'mpg ~ 1')
+----
+at least one predictor is required
+
+# Duplicate predictor.
+statement error
+SELECT * FROM lm('mtcars', formula := 'mpg ~ wt + wt')
+----
+duplicate predictor 'wt'
+
+# Subtracting a non-intercept term is rejected.
+statement error
+SELECT * FROM lm('mtcars', formula := 'mpg ~ wt - hp')
+----
+subtracting a predictor
+
+# Non-integer constants on the RHS.
+statement error
+SELECT * FROM lm('mtcars', formula := 'mpg ~ wt + 42')
+----
+only '0' / '1' are valid
+
+# Unterminated quoted identifier.
+statement error
+SELECT * FROM lm('weird names', formula := '"My Y" ~ "x.with.dots')
+----
+unterminated quoted identifier

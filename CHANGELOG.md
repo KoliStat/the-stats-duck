@@ -12,6 +12,17 @@ that name is preserved across releases for backward compatibility.
 
 ### Added
 
+- **`lm` / `lm_summary`: R-style formula DSL** — both functions now accept a
+  `formula := '<lhs> ~ <rhs>'` named parameter as an alternative to the
+  explicit `y := ...` / `x := [...]` form (they are mutually exclusive).
+  The DSL supports additive predictors (`y ~ x1 + x2 + x3`), intercept
+  removal via `- 1` or `+ 0`, bare and quoted (`"my col"`) identifiers, and
+  free whitespace. Not supported in v0.6: interactions (`x1:x2`), wildcards
+  (`*`, `^`, `.`), inline expressions (`I(x^2)`, `log(x)`) — wrap into a
+  CTE if needed. When the intercept is removed the model summary uses R's
+  *uncentered* R² convention (`TSS = Σ y²`, not `Σ(y - ȳ)²`); interpret
+  with care.
+
 - **`lm(table, y := 'col', x := ['c1', 'c2', ...])` and `lm_summary(...)`
   table functions** — OLS linear regression via Cholesky decomposition of
   `X'X`. `lm` returns one row per term (`(Intercept)` followed by each
