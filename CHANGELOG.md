@@ -12,6 +12,21 @@ that name is preserved across releases for backward compatibility.
 
 ### Added
 
+- **`meta(table)` table function** — per-column dataset profile in one shot.
+  Returns one row per column with `(column_name, column_type, kind, n_rows,
+  n_missing, n_distinct, min, p25, median, p75, max, mean, stddev, top,
+  top_freq)`. `kind` is a semantic classification —
+  `numeric` / `categorical` / `temporal` / `boolean` / `other` — driving
+  which slots are populated: the distribution stats fill for numeric
+  columns (cast to DOUBLE; quantile_cont type 7, sample stddev), and `top`
+  / `top_freq` (the mode and its frequency, ties broken by smaller value)
+  fill for categorical and boolean. Dataset-level summaries fall out via
+  aggregation, e.g.
+  `SELECT count(*) FILTER (WHERE kind='numeric'), sum(n_missing) FROM meta('t')`.
+  Complements DuckDB's built-in `SUMMARIZE` statement: ours is a table
+  function (joinable, filterable, composable in CTEs), adds the kind
+  classifier, and reports the mode for categorical / boolean columns.
+
 - **Negative binomial and hypergeometric distributions** — d/p/q/r quartets
   matching R's signatures. `dnbinom(k, size, prob)` / `pnbinom` / `qnbinom` /
   `rnbinom`: PMF via lgamma + closed-form CDF identity

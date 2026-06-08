@@ -79,6 +79,7 @@ set(EXTENSION_SOURCES
     src/corr_matrix_function.cpp
     src/lm_function.cpp
     src/table_one_function.cpp
+    src/meta_function.cpp
     src/normality_function.cpp
     src/ks_test_function.cpp
     src/anova_function.cpp

@@ -180,6 +180,45 @@ gives Q1=1.5 / Q3=3.5 (matching SAS PROC MEANS).
 | `bin_label(x, edges)` | Label for the bin containing `x` given an edge vector (typically from `bin_edges`) |
 | `bootstrap(x, statistic, n_iters [, seed])` *(aggregate)* | With-replacement resampling — emits `LIST<DOUBLE>` of length `n_iters`. `statistic` ∈ `{mean, median, sum, stddev, variance, min, max}` |
 
+### Dataset profile (table function)
+
+| Function       | Description                                              |
+| -------------- | -------------------------------------------------------- |
+| `meta(data)`   | One row per column with kind classification + light stats |
+
+```sql
+SELECT * FROM meta('penguins');
+```
+
+Output columns (fixed schema):
+`column_name`, `column_type`, `kind`, `n_rows`, `n_missing`, `n_distinct`,
+`min`, `p25`, `median`, `p75`, `max`, `mean`, `stddev`, `top`, `top_freq`.
+
+- `kind` is a semantic classification —
+  `numeric` / `categorical` / `temporal` / `boolean` / `other` — derived
+  from the catalog type. It controls which distribution columns are
+  populated: numeric kinds fill `min` / `p25` / `median` / `p75` / `max` /
+  `mean` / `stddev` (cast to DOUBLE; `quantile_cont` type 7, sample
+  stddev), and `categorical` / `boolean` fill `top` (the mode, ties broken
+  by smaller value) and `top_freq` (its count).
+- `n_rows` is the source table's row count, repeated on every row so any
+  single row is self-contained.
+- Dataset-level summaries fall out via aggregation:
+
+  ```sql
+  SELECT count(*) FILTER (WHERE kind = 'numeric')     AS n_numeric,
+         count(*) FILTER (WHERE kind = 'categorical') AS n_categorical,
+         sum(n_missing)                               AS total_missing,
+         count(*) FILTER (WHERE n_missing > 0)        AS cols_with_nulls
+  FROM meta('penguins');
+  ```
+
+- Overlaps DuckDB's built-in `SUMMARIZE` but is a table function
+  (joinable, filterable, composable in CTEs), adds the kind classifier,
+  and reports a mode for categorical / boolean columns. Per-column
+  detail (skewness, kurtosis, custom quantile types, bias-corrected
+  variants) lives in `summary_stats(column)`.
+
 ### Table 1 summary (table function)
 
 | Function                                          | Description                                                |

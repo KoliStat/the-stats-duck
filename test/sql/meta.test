@@ -1,0 +1,155 @@
+# name: test/sql/meta.test
+# description: meta() table function — per-column metadata + stats
+# group: [stats_duck]
+
+require stats_duck
+
+# A small mixed-type table covering numeric, categorical, boolean and
+# temporal kinds, with a handful of NULLs in different columns. The DECIMAL
+# cast forces VALUES literals like 10.5 (which DuckDB would otherwise infer
+# as DECIMAL(3,1)) into DOUBLE so column_type reads as 'DOUBLE'.
+statement ok
+CREATE TABLE m AS
+SELECT id::INTEGER AS id, label, flag, value::DOUBLE AS value, dt, tag
+FROM (VALUES
+    (1, 'A',  true,  10.5, DATE '2024-01-01', 'x'),
+    (2, 'B',  false, 20.5, DATE '2024-02-01', 'y'),
+    (3, 'A',  true,  30.5, DATE '2024-03-01', 'x'),
+    (4, NULL, true,  NULL, DATE '2024-04-01', 'x'),
+    (5, 'B',  false, 50.5, NULL,              'z')
+) AS t(id, label, flag, value, dt, tag);
+
+# Six rows out — one per column in the source.
+query I
+SELECT count(*) FROM meta('m')
+----
+6
+
+# Kind classification + base counts. Column iteration follows catalog order.
+query TTTIII
+SELECT column_name, column_type, kind, n_rows, n_missing, n_distinct
+FROM meta('m')
+ORDER BY column_name
+----
+dt	DATE	temporal	5	1	4
+flag	BOOLEAN	boolean	5	0	2
+id	INTEGER	numeric	5	0	5
+label	VARCHAR	categorical	5	1	2
+tag	VARCHAR	categorical	5	0	3
+value	DOUBLE	numeric	5	1	4
+
+# Numeric distribution for `value`. Non-NULL data is [10.5, 20.5, 30.5, 50.5].
+#   quantile_cont (type 7): p25=18.0, p50=25.5, p75=35.5
+#   mean = 112 / 4 = 28
+#   stddev_samp = sqrt(875/3) ≈ 17.078
+query RRRRRRR
+SELECT min, p25, median, p75, max, round(mean, 4), round(stddev, 4)
+FROM meta('m')
+WHERE column_name = 'value'
+----
+10.5	18	25.5	35.5	50.5	28	17.0783
+
+# Categorical mode — `tag` has 3 x / 1 y / 1 z.
+query TI
+SELECT top, top_freq
+FROM meta('m')
+WHERE column_name = 'tag'
+----
+x	3
+
+# Categorical mode with ties — `label` is 2 A / 2 B (one NULL excluded). Tie
+# broken by smaller value lexicographically, so 'A' wins.
+query TI
+SELECT top, top_freq
+FROM meta('m')
+WHERE column_name = 'label'
+----
+A	2
+
+# Boolean mode — flag is 3 true / 2 false; cast to VARCHAR for top.
+query TI
+SELECT top, top_freq
+FROM meta('m')
+WHERE column_name = 'flag'
+----
+true	3
+
+# Numeric columns leave top/top_freq NULL.
+query II
+SELECT
+    count(*) FILTER (WHERE top IS NULL),
+    count(*) FILTER (WHERE top_freq IS NULL)
+FROM meta('m')
+WHERE kind = 'numeric'
+----
+2	2
+
+# Temporal columns leave the numeric distribution columns NULL but still
+# emit n_rows / n_missing / n_distinct.
+query III
+SELECT n_rows, n_missing, n_distinct
+FROM meta('m')
+WHERE kind = 'temporal'
+----
+5	1	4
+
+query I
+SELECT count(*) FILTER (
+    WHERE min IS NULL AND p25 IS NULL AND median IS NULL AND p75 IS NULL
+      AND max IS NULL AND mean IS NULL AND stddev IS NULL
+)
+FROM meta('m')
+WHERE kind = 'temporal'
+----
+1
+
+# Dataset-level rollup — the canonical use case for meta().
+query IIII
+SELECT
+    count(*) FILTER (WHERE kind = 'numeric')     AS n_numeric,
+    count(*) FILTER (WHERE kind = 'categorical') AS n_categorical,
+    sum(n_missing)                               AS total_missing,
+    count(*) FILTER (WHERE n_missing > 0)        AS cols_with_nulls
+FROM meta('m')
+----
+2	2	3	3
+
+# ─── Edge cases ─────────────────────────────────────────────────────────────
+
+# Empty table — counts are zero, all distributional stats NULL.
+statement ok
+CREATE TABLE empty_tbl (a INTEGER, b VARCHAR)
+
+query TIIIRR
+SELECT column_name, n_rows, n_missing, n_distinct, min, mean
+FROM meta('empty_tbl')
+ORDER BY column_name
+----
+a	0	0	0	NULL	NULL
+b	0	0	0	NULL	NULL
+
+# All-NULL column — n_missing equals n_rows and distributional stats are NULL.
+statement ok
+CREATE TABLE allnull AS SELECT NULL::DOUBLE AS x FROM range(10)
+
+query IIIRRR
+SELECT n_rows, n_missing, n_distinct, min, max, mean
+FROM meta('allnull')
+----
+10	10	0	NULL	NULL	NULL
+
+# Single non-NULL value — quantiles collapse to that value, stddev_samp is
+# NULL (DuckDB returns NULL for n < 2).
+statement ok
+CREATE TABLE one_row AS SELECT 7.0::DOUBLE AS x
+
+query RRRRRRR
+SELECT min, p25, median, p75, max, mean, stddev
+FROM meta('one_row')
+----
+7	7	7	7	7	7	NULL
+
+# Unknown source table — bind error.
+statement error
+SELECT * FROM meta('not_a_real_table')
+----
