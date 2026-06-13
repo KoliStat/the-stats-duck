@@ -6,6 +6,9 @@ cmake-build-*/
 # Test runtime
 duckdb_unittest_tempdir/
 
+# Benchmark generated data
+benchmark/.data/
+
 # IDE
 .idea/
 .vscode/
