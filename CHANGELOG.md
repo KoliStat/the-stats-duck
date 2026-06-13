@@ -150,6 +150,24 @@ that name is preserved across releases for backward compatibility.
   `column` channel. Pairs naturally with `boxplot` for distribution
   comparison overlays.
 
+### Changed
+
+- **`read_stat()` now reads each file's data exactly once — XPT / SAS / SPSS /
+  Stata imports are no longer O(N²).** The reader previously re-invoked the
+  ReadStat parser for every 2048-row output chunk with an increasing row offset;
+  because ReadStat's row offset reads and decodes skipped rows rather than
+  seeking (and each chunk re-opened the file from byte 0), a full scan cost
+  ≈ N²/4096 row reads — a 200k-row, 7 MB XPT took ~67 s. The file is now parsed
+  a single time into a buffered, spillable column collection that `Execute`
+  streams from, so scans are linear in row count: that 200k file now reads in
+  ~1.3 s (52×), the real-world CDISC pilot `qs.xpt` (122k rows) drops from ~39 s
+  to ~1.1 s (36×), and 1.6M rows read in ~15 s (was ~70 min by extrapolation).
+  `bind` also stops after the header instead of reading the entire data section
+  just to discover the schema, so a query reads the data once, not twice.
+  Trade-off: the parse is now eager (the whole file is read at init, before the
+  first row is returned), so a tiny `LIMIT` on a very large file reads the whole
+  file rather than a single chunk.
+
 ## [0.5.0-dead-person] - 2026-05-31
 
 ### Added

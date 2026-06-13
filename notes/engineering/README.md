@@ -16,3 +16,9 @@ that has been written down than to re-derive it.
   `VOLATILE` flag does not disable this), and MSVC's
   `std::uniform_real_distribution<double>` clips the upper tail. Fixes and
   diagnostic checklist.
+
+- [`2026-06-xpt-reader-quadratic.md`](2026-06-xpt-reader-quadratic.md) — the
+  `read_stat()` XPT/SAS/SPSS reader was O(N²) because it re-parsed the file per
+  output chunk and ReadStat's `row_offset` reads-and-decodes skipped rows instead
+  of seeking (and `bind` read the whole data section for the schema). Fix:
+  parse-once buffering + header-only bind; why not a producer thread (WASM).
