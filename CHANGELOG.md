@@ -8,6 +8,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 The extension installs and loads in DuckDB under the technical name `stats_duck` —
 that name is preserved across releases for backward compatibility.
 
+## [Unreleased]
+
+### Changed
+
+- **`bootstrap()` is now reproducible across platforms.** Resample indices were
+  drawn with `std::uniform_int_distribution`, whose algorithm the C++ standard
+  leaves implementation-defined — so the same `seed` produced different resample
+  streams on libstdc++ (Linux / MinGW), libc++, and MSVC. Indices are now drawn
+  from the `mt19937_64` engine directly (the engine *is* standard-specified) with
+  an unbiased rejection bound, so a seeded `bootstrap` returns identical output on
+  every platform. Per-platform results are unchanged in distribution; only the
+  exact resample stream moves, and the `seed`'s reproducibility promise now holds
+  across machines. See `notes/engineering/2026-06-bootstrap-rng-portability.md`.
+
 ## [0.6.0-i-m-not-dead] - 2026-06-15
 
 ### Added

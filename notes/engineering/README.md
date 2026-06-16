@@ -22,3 +22,9 @@ that has been written down than to re-derive it.
   output chunk and ReadStat's `row_offset` reads-and-decodes skipped rows instead
   of seeking (and `bind` read the whole data section for the schema). Fix:
   parse-once buffering + header-only bind; why not a producer thread (WASM).
+
+- [`2026-06-bootstrap-rng-portability.md`](2026-06-bootstrap-rng-portability.md) —
+  `bootstrap`'s `seed` promised reproducibility, but `std::uniform_int_distribution`
+  is implementation-defined, so the same seed produced different resample streams
+  on libstdc++ / libc++ / MSVC. Fix: draw indices from `mt19937_64` directly with
+  an unbiased rejection bound. General rule: consume the engine, not the distribution.
