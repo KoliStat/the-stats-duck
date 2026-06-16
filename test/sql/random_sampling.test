@@ -33,37 +33,39 @@ true
 
 # ─── Distribution moments converge to theory ────────────────────────────────
 #
-# Sample size 50000 chosen so the simple mean/sd checks pass deterministically.
-# These probes target moments that are robust to the seed used by the
-# thread-local std::mt19937_64.
+# The RNG is seeded non-deterministically (std::random_device), so an empirical
+# mean / sd over 50k draws is itself a random quantity. We assert
+# |estimate - theory| < tol, tol several sampling SEs wide — tight enough to
+# catch a misspecified sampler, wide enough never to flake. (Round-to-1-decimal
+# equality flakes near rounding boundaries; CI caught rnbinom and rweibull.)
 
-query R
-SELECT round(stddev(rnorm(0, 2)), 1) FROM range(50000)
+query I
+SELECT abs(stddev(rnorm(0, 2)) - 2) < 0.1 FROM range(50000)
 ----
-2
+true
 
-query R
-SELECT round(stddev(rnorm(10, 0.5)), 1) FROM range(50000)
+query I
+SELECT abs(stddev(rnorm(10, 0.5)) - 0.5) < 0.1 FROM range(50000)
 ----
-0.5
+true
 
 # Exponential mean = 1/rate. rate=2 → 0.5.
-query R
-SELECT round(avg(rexp(2.0)), 1) FROM range(50000)
+query I
+SELECT abs(avg(rexp(2.0)) - 0.5) < 0.1 FROM range(50000)
 ----
-0.5
+true
 
 # Gamma(shape, rate) mean = shape/rate. shape=4, rate=2 → 2.0.
-query R
-SELECT round(avg(rgamma(4.0, 2.0)), 1) FROM range(50000)
+query I
+SELECT abs(avg(rgamma(4.0, 2.0)) - 2) < 0.1 FROM range(50000)
 ----
-2
+true
 
 # Beta(α, β) mean = α/(α+β). Beta(2, 3) → 0.4.
-query R
-SELECT round(avg(rbeta(2.0, 3.0)), 1) FROM range(50000)
+query I
+SELECT abs(avg(rbeta(2.0, 3.0)) - 0.4) < 0.1 FROM range(50000)
 ----
-0.4
+true
 
 # Beta support is [0, 1].
 query II
@@ -75,23 +77,23 @@ FROM (SELECT rbeta(2.0, 3.0) AS v FROM range(50000))
 0	50000
 
 # Weibull(shape=1, scale=s) = Exponential(1/s); mean = s.
-query R
-SELECT round(avg(rweibull(1.0, 5.0)), 1) FROM range(50000)
+query I
+SELECT abs(avg(rweibull(1.0, 5.0)) - 5) < 0.2 FROM range(50000)
 ----
-5
+true
 
 # Log-normal: log(X) is N(meanlog, sdlog). We check the body via the log
 # moments rather than the raw lnorm mean because the latter has heavy right
 # tails that make 50k-sample rounding seed-dependent.
-query R
-SELECT round(avg(ln(rlnorm(0, 1))), 1) FROM range(50000)
+query I
+SELECT abs(avg(ln(rlnorm(0, 1)))) < 0.1 FROM range(50000)
 ----
-0
+true
 
-query R
-SELECT round(stddev(ln(rlnorm(2.5, 0.5))), 1) FROM range(50000)
+query I
+SELECT abs(stddev(ln(rlnorm(2.5, 0.5))) - 0.5) < 0.1 FROM range(50000)
 ----
-0.5
+true
 
 # Log-normal support is x > 0.
 query I
@@ -100,10 +102,10 @@ SELECT sum(CASE WHEN v <= 0 THEN 1 ELSE 0 END) FROM (SELECT rlnorm() AS v FROM r
 0
 
 # Poisson mean = lambda. Integer-valued.
-query R
-SELECT round(avg(rpois(4.0)), 1) FROM range(50000)
+query I
+SELECT abs(avg(rpois(4.0)) - 4) < 0.1 FROM range(50000)
 ----
-4
+true
 
 query I
 SELECT sum(CASE WHEN v <> floor(v) THEN 1 ELSE 0 END) FROM (SELECT rpois(3.0) AS v FROM range(50000))
@@ -113,22 +115,22 @@ SELECT sum(CASE WHEN v <> floor(v) THEN 1 ELSE 0 END) FROM (SELECT rpois(3.0) AS
 # ─── df / df1, df2 thread through correctly ─────────────────────────────────
 
 # Chi-square(df) mean = df. df=8 → 8.
-query R
-SELECT round(avg(rchisq(8.0)), 0) FROM range(50000)
+query I
+SELECT abs(avg(rchisq(8.0)) - 8) < 0.2 FROM range(50000)
 ----
-8
+true
 
 # Student's t(df) mean = 0 for df > 1.
-query R
-SELECT round(avg(rt(5.0)), 1) FROM range(50000)
+query I
+SELECT abs(avg(rt(5.0))) < 0.1 FROM range(50000)
 ----
-0
+true
 
 # F(df1, df2) mean = df2/(df2-2) for df2 > 2. F(10, 8) → 1.333.
-query R
-SELECT round(avg(rf(10.0, 8.0)), 1) FROM range(50000)
+query I
+SELECT abs(avg(rf(10.0, 8.0)) - 8.0/6.0) < 0.15 FROM range(50000)
 ----
-1.3
+true
 
 # ─── Per-row variation under a non-constant parameter column ───────────────
 

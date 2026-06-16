@@ -165,10 +165,10 @@ NULL
 # ─── Random sampling (r* coverage check) ───────────────────────────────────
 
 # rnbinom mean converges to size·(1-prob)/prob = 5·0.6/0.4 = 7.5.
-query R
-SELECT round(avg(rnbinom(5.0, 0.4)), 1) FROM range(50000)
+query I
+SELECT abs(avg(rnbinom(5.0, 0.4)) - 7.5) < 0.2 FROM range(50000)
 ----
-7.5
+true
 
 # rnbinom is integer-valued.
 query I
@@ -178,10 +178,10 @@ FROM (SELECT rnbinom(5.0, 0.4) AS v FROM range(50000))
 0
 
 # rhyper mean converges to k·m/(m+n) = 8·10/25 = 3.2.
-query R
-SELECT round(avg(rhyper(10.0, 15.0, 8.0)), 1) FROM range(50000)
+query I
+SELECT abs(avg(rhyper(10.0, 15.0, 8.0)) - 3.2) < 0.15 FROM range(50000)
 ----
-3.2
+true
 
 # rhyper output lies in the support [max(0, k-n), min(m, k)] = [0, 8].
 query II
