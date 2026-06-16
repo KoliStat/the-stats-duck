@@ -3,6 +3,8 @@
 
 #include "duckdb/function/table_function.hpp"
 #include "duckdb/common/types/vector.hpp"
+#include "duckdb/common/types/column/column_data_collection.hpp"
+#include "duckdb/common/types/column/column_data_scan_states.hpp"
 #include "duckdb/common/file_system.hpp"
 #include "duckdb/main/extension/extension_loader.hpp"
 #include "duckdb/main/config.hpp"
@@ -191,6 +193,14 @@ static void BindErrorHandler(const char *error_message, void *ctx) {
 	bind_data.error_message = error_message ? error_message : "Unknown ReadStat error";
 }
 
+// The full schema is known from the header (every variable handler fires before
+// any row data), so we abort as soon as the first value arrives — otherwise
+// ReadStat streams and decodes the entire data section just to discard it, adding
+// a full O(N) file read to every bind.
+static int BindAbortValueHandler(int, readstat_variable_t *, readstat_value_t, void *) {
+	return READSTAT_HANDLER_ABORT;
+}
+
 // ─── Bind function ──────────────────────────────────────────────────────────────
 
 static unique_ptr<FunctionData> ReadStatBind(ClientContext &context, TableFunctionBindInput &input,
@@ -215,12 +225,13 @@ static unique_ptr<FunctionData> ReadStatBind(ClientContext &context, TableFuncti
 		throw InvalidInputException("Cannot detect file format. Specify it with: read_stat('file', format := 'sas7bdat')");
 	}
 
-	// Parse metadata only
+	// Parse the header only: metadata + variables give us the schema, then
+	// BindAbortValueHandler stops the parse before the data section is read.
 	readstat_parser_t *parser = readstat_parser_init();
 	readstat_set_metadata_handler(parser, BindMetadataHandler);
 	readstat_set_variable_handler(parser, BindVariableHandler);
+	readstat_set_value_handler(parser, BindAbortValueHandler);
 	readstat_set_error_handler(parser, BindErrorHandler);
-	readstat_set_row_limit(parser, 0);
 
 	DuckDBIOContext io_ctx;
 	io_ctx.fs = &FileSystem::GetFileSystem(context);
@@ -234,7 +245,9 @@ static unique_ptr<FunctionData> ReadStatBind(ClientContext &context, TableFuncti
 	readstat_set_io_ctx(parser, nullptr); // detach stack ctx before free
 	readstat_parser_free(parser);
 
-	if (error != READSTAT_OK) {
+	// READSTAT_ERROR_USER_ABORT is expected: it's how BindAbortValueHandler stops
+	// after the header. An empty file finishes with READSTAT_OK (no value seen).
+	if (error != READSTAT_OK && error != READSTAT_ERROR_USER_ABORT) {
 		string msg = bind_data->error_message.empty() ? readstat_error_message(error) : bind_data->error_message;
 		throw IOException("Failed to read '%s': %s", bind_data->path, msg);
 	}
@@ -250,90 +263,100 @@ static unique_ptr<FunctionData> ReadStatBind(ClientContext &context, TableFuncti
 
 // ─── Global state ───────────────────────────────────────────────────────────────
 
+// Option A (parse-once). The previous design re-invoked the ReadStat parser for
+// every 2048-row output chunk with an increasing row_offset, which is O(N^2):
+// ReadStat's row_offset reads and decodes every skipped row instead of seeking,
+// and each chunk re-opened and re-read the file from byte 0. Now the file is
+// parsed a single time at InitGlobal into a (spillable) ColumnDataCollection, and
+// Execute streams chunks out of it.
+// See notes/engineering/2026-06-xpt-reader-quadratic.md.
 struct ReadStatGlobalState : public GlobalTableFunctionState {
-	idx_t offset = 0;
-	bool done = false; // true once ReadStat produces 0 rows (EOF)
+	unique_ptr<ColumnDataCollection> buffer;
+	ColumnDataScanState scan_state;
+	bool scan_initialized = false;
 };
 
-static unique_ptr<GlobalTableFunctionState> ReadStatInitGlobal(ClientContext &context,
-                                                                TableFunctionInitInput &input) {
-	return make_uniq<ReadStatGlobalState>();
-}
+// ─── Load-phase ReadStat callbacks ───────────────────────────────────────────────
+// ReadStat hands values in row-major order (every variable of row r, then row
+// r+1), with obs_index = absolute row index. We stage rows into a DataChunk and
+// append it to the buffer whenever it fills.
 
-// ─── Execute-phase ReadStat callbacks ───────────────────────────────────────────
-
-struct ReadStatExecContext {
-	DataChunk *output;
+struct ReadStatLoadContext {
 	const ReadStatBindData *bind_data;
-	idx_t rows_read;
+	ColumnDataCollection *buffer;
+	ColumnDataAppendState *append_state;
+	DataChunk *staging;
+	idx_t flushed = 0; // rows already appended to the buffer
+	idx_t staged = 0;  // rows currently held in the staging chunk
 	string error_message;
 };
 
-static int ExecValueHandler(int obs_index, readstat_variable_t *variable, readstat_value_t value, void *ctx) {
-	auto &exec = *static_cast<ReadStatExecContext *>(ctx);
+static int LoadValueHandler(int obs_index, readstat_variable_t *variable, readstat_value_t value, void *ctx) {
+	auto &lc = *static_cast<ReadStatLoadContext *>(ctx);
+	auto oi = static_cast<idx_t>(obs_index);
+
+	// Crossing a vector boundary means the staging chunk is full: append and reset.
+	while (oi - lc.flushed >= STANDARD_VECTOR_SIZE) {
+		lc.staging->SetCardinality(STANDARD_VECTOR_SIZE);
+		lc.buffer->Append(*lc.append_state, *lc.staging);
+		lc.staging->Reset();
+		lc.flushed += STANDARD_VECTOR_SIZE;
+		lc.staged = 0;
+	}
+	idx_t row = oi - lc.flushed;
 	int col = readstat_variable_get_index(variable);
-	auto &vec = exec.output->data[col];
+	auto &vec = lc.staging->data[col];
 
 	if (readstat_value_is_system_missing(value) || readstat_value_is_tagged_missing(value) ||
 	    readstat_value_is_defined_missing(value, variable)) {
-		FlatVector::SetNull(vec, static_cast<idx_t>(obs_index), true);
+		FlatVector::SetNull(vec, row, true);
 	} else {
-		WriteReadStatValue(value, variable, exec.bind_data->column_types[col],
-		                   exec.bind_data->column_formats[col], vec, static_cast<idx_t>(obs_index));
+		WriteReadStatValue(value, variable, lc.bind_data->column_types[col],
+		                   lc.bind_data->column_formats[col], vec, row);
 	}
-
-	auto row = static_cast<idx_t>(obs_index + 1);
-	if (row > exec.rows_read) {
-		exec.rows_read = row;
+	if (row + 1 > lc.staged) {
+		lc.staged = row + 1;
 	}
 	return READSTAT_HANDLER_OK;
 }
 
-static int ExecMetadataHandler(readstat_metadata_t *metadata, void *ctx) {
+static int LoadNoopMetadataHandler(readstat_metadata_t *, void *) {
 	return READSTAT_HANDLER_OK;
 }
 
-static int ExecVariableHandler(int index, readstat_variable_t *variable, const char *val_labels, void *ctx) {
+static int LoadNoopVariableHandler(int, readstat_variable_t *, const char *, void *) {
 	return READSTAT_HANDLER_OK;
 }
 
-static void ExecErrorHandler(const char *error_message, void *ctx) {
-	auto &exec = *static_cast<ReadStatExecContext *>(ctx);
-	exec.error_message = error_message ? error_message : "Unknown ReadStat error";
+static void LoadErrorHandler(const char *error_message, void *ctx) {
+	auto &lc = *static_cast<ReadStatLoadContext *>(ctx);
+	lc.error_message = error_message ? error_message : "Unknown ReadStat error";
 }
 
-// ─── Execute function ───────────────────────────────────────────────────────────
+// ─── InitGlobal: parse the whole file into the buffer ────────────────────────────
 
-static void ReadStatExecute(ClientContext &context, TableFunctionInput &input, DataChunk &output) {
+static unique_ptr<GlobalTableFunctionState> ReadStatInitGlobal(ClientContext &context,
+                                                                TableFunctionInitInput &input) {
 	auto &bind_data = input.bind_data->Cast<ReadStatBindData>();
-	auto &state = input.global_state->Cast<ReadStatGlobalState>();
+	auto state = make_uniq<ReadStatGlobalState>();
+	state->buffer = make_uniq<ColumnDataCollection>(context, bind_data.column_types);
 
-	// If the format reported a known row count, check the bound.
-	// If row_count is -1 (unknown, e.g. XPT), we rely on ReadStat
-	// returning 0 rows to signal EOF (handled below via SetCardinality(0)).
-	if (bind_data.row_count >= 0 && state.offset >= static_cast<idx_t>(bind_data.row_count)) {
-		return; // Done — empty output signals EOF
-	}
+	ColumnDataAppendState append_state;
+	state->buffer->InitializeAppend(append_state);
+	DataChunk staging;
+	state->buffer->InitializeScanChunk(staging);
 
-	// Guard against re-reading after ReadStat already signaled EOF in a
-	// previous call (rows_read was 0). Without this, unknown-row-count
-	// formats would loop forever.
-	if (state.done) {
-		return;
-	}
-
-	ReadStatExecContext exec;
-	exec.output = &output;
-	exec.bind_data = &bind_data;
-	exec.rows_read = 0;
+	ReadStatLoadContext lc;
+	lc.bind_data = &bind_data;
+	lc.buffer = state->buffer.get();
+	lc.append_state = &append_state;
+	lc.staging = &staging;
 
 	readstat_parser_t *parser = readstat_parser_init();
-	readstat_set_metadata_handler(parser, ExecMetadataHandler);
-	readstat_set_variable_handler(parser, ExecVariableHandler);
-	readstat_set_value_handler(parser, ExecValueHandler);
-	readstat_set_error_handler(parser, ExecErrorHandler);
-	readstat_set_row_offset(parser, static_cast<long>(state.offset));
-	readstat_set_row_limit(parser, static_cast<long>(STANDARD_VECTOR_SIZE));
+	readstat_set_metadata_handler(parser, LoadNoopMetadataHandler);
+	readstat_set_variable_handler(parser, LoadNoopVariableHandler);
+	readstat_set_value_handler(parser, LoadValueHandler);
+	readstat_set_error_handler(parser, LoadErrorHandler);
 
 	DuckDBIOContext io_ctx;
 	io_ctx.fs = &FileSystem::GetFileSystem(context);
@@ -343,22 +366,35 @@ static void ReadStatExecute(ClientContext &context, TableFunctionInput &input, D
 		readstat_set_file_character_encoding(parser, bind_data.encoding.c_str());
 	}
 
-	auto error = ParseWithFormat(parser, bind_data.path, bind_data.format, &exec);
+	auto error = ParseWithFormat(parser, bind_data.path, bind_data.format, &lc);
 	readstat_set_io_ctx(parser, nullptr); // detach stack ctx before free
 	readstat_parser_free(parser);
 
-	if (error != READSTAT_OK && exec.rows_read == 0) {
-		string msg = exec.error_message.empty() ? readstat_error_message(error) : exec.error_message;
-		throw IOException("Failed to read '%s' at offset %llu: %s", bind_data.path, state.offset, msg);
+	// Append the final partial chunk.
+	if (lc.staged > 0) {
+		staging.SetCardinality(lc.staged);
+		state->buffer->Append(append_state, staging);
 	}
 
-	output.SetCardinality(exec.rows_read);
-	state.offset += exec.rows_read;
-
-	// If ReadStat produced no rows in this call, the file is exhausted.
-	if (exec.rows_read == 0) {
-		state.done = true;
+	// Tolerate a late error once rows have been read (matches the previous reader,
+	// which kept whatever rows it had already produced); fail hard otherwise.
+	if (error != READSTAT_OK && lc.flushed + lc.staged == 0) {
+		string msg = lc.error_message.empty() ? readstat_error_message(error) : lc.error_message;
+		throw IOException("Failed to read '%s': %s", bind_data.path, msg);
 	}
+
+	return std::move(state);
+}
+
+// ─── Execute: stream chunks from the buffer ──────────────────────────────────────
+
+static void ReadStatExecute(ClientContext &, TableFunctionInput &input, DataChunk &output) {
+	auto &state = input.global_state->Cast<ReadStatGlobalState>();
+	if (!state.scan_initialized) {
+		state.buffer->InitializeScan(state.scan_state);
+		state.scan_initialized = true;
+	}
+	state.buffer->Scan(state.scan_state, output);
 }
 
 // ─── Replacement scan ───────────────────────────────────────────────────────────

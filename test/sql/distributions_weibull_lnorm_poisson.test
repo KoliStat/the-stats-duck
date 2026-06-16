@@ -1,0 +1,184 @@
+# name: test/sql/distributions_weibull_lnorm_poisson.test
+# description: Weibull, log-normal, and Poisson d/p/q functions
+# group: [stats_duck]
+
+require stats_duck
+
+# ─── Weibull ────────────────────────────────────────────────────────────────
+
+# R: dweibull(1.5, shape=2, scale=1) = 2 * 1.5 * exp(-2.25) ≈ 0.31620
+query R
+SELECT round(dweibull(1.5, 2.0, 1.0), 5)
+----
+0.3162
+
+# Default scale = 1 — single-arg shape form matches the 2-arg form.
+query R
+SELECT round(dweibull(1.5, 2.0) - dweibull(1.5, 2.0, 1.0), 10)
+----
+0
+
+# CDF at the scale parameter equals 1 - 1/e regardless of shape.
+query R
+SELECT round(pweibull(1.0, 2.5, 1.0), 6)
+----
+0.632121
+
+# R: pweibull(0.5, shape=3, scale=2) = 0.01550385
+query R
+SELECT round(pweibull(0.5, 3.0, 2.0), 6)
+----
+0.015504
+
+# Quantile/CDF round-trip.
+query R
+SELECT round(qweibull(pweibull(2.5, 1.5, 3.0), 1.5, 3.0), 6)
+----
+2.5
+
+# Boundary: p = 0 → 0; p = 1 → +inf.
+query RR
+SELECT qweibull(0.0, 2.0, 1.0), qweibull(1.0, 2.0, 1.0)
+----
+0	inf
+
+# Shape = 1 reduces to Exponential(1/scale).
+query R
+SELECT round(pweibull(2.0, 1.0, 3.0) - pexp(2.0, 1.0 / 3.0), 10)
+----
+0
+
+# x < 0 → PDF/CDF return 0.
+query RR
+SELECT dweibull(-1.0, 2.0, 1.0), pweibull(-1.0, 2.0, 1.0)
+----
+0	0
+
+# Invalid shape / scale → NULL.
+query R
+SELECT dweibull(1.0, 0.0, 1.0)
+----
+NULL
+
+query R
+SELECT pweibull(1.0, 2.0, -1.0)
+----
+NULL
+
+# ─── Log-normal ─────────────────────────────────────────────────────────────
+
+# R: dlnorm(1) = 0.3989423 (= standard normal at log(1)=0, divided by 1).
+query R
+SELECT round(dlnorm(1.0), 6)
+----
+0.398942
+
+# R: dlnorm(2, meanlog=0, sdlog=1) = 0.156874
+query R
+SELECT round(dlnorm(2.0, 0.0, 1.0), 6)
+----
+0.156874
+
+# Default meanlog=0, sdlog=1 form matches the 3-arg form.
+query R
+SELECT round(dlnorm(2.0) - dlnorm(2.0, 0.0, 1.0), 10)
+----
+0
+
+# R: plnorm(2) = 0.7558914
+query R
+SELECT round(plnorm(2.0), 6)
+----
+0.755891
+
+# Median of log-normal(meanlog, sdlog) = exp(meanlog), so plnorm(exp(μ), μ, σ) = 0.5.
+query R
+SELECT round(plnorm(exp(0.7), 0.7, 1.3), 6)
+----
+0.5
+
+# Quantile/CDF round-trip.
+query R
+SELECT round(qlnorm(plnorm(3.5, 0.5, 0.8), 0.5, 0.8), 6)
+----
+3.5
+
+# x ≤ 0 → PDF/CDF return 0.
+query RR
+SELECT dlnorm(0.0), plnorm(-1.0)
+----
+0	0
+
+# Invalid sdlog → NULL.
+query R
+SELECT dlnorm(1.0, 0.0, 0.0)
+----
+NULL
+
+# ─── Poisson ────────────────────────────────────────────────────────────────
+
+# R: dpois(0, lambda=2) = 0.1353353
+query R
+SELECT round(dpois(0.0, 2.0), 6)
+----
+0.135335
+
+# R: dpois(3, lambda=2.5) = 0.2137504
+query R
+SELECT round(dpois(3.0, 2.5), 6)
+----
+0.21375
+
+# PMF sums to (≈) 1 over a large support.
+query R
+SELECT round((SELECT sum(dpois(k::DOUBLE, 4.0)) FROM range(0, 30) t(k)), 6)
+----
+1
+
+# R: ppois(2, lambda=2.5) = 0.5438131
+query R
+SELECT round(ppois(2.0, 2.5), 6)
+----
+0.543813
+
+# CDF is monotone increasing and bounded by 1.
+query R
+SELECT round(ppois(20.0, 4.0), 6)
+----
+1
+
+# Quantile: smallest k with ppois(k, λ) ≥ p. R: qpois(0.5, 4) = 4.
+query R
+SELECT qpois(0.5, 4.0)
+----
+4
+
+# R: qpois(0.95, 10) = 15
+query R
+SELECT qpois(0.95, 10.0)
+----
+15
+
+# Boundary: p = 0 → 0.
+query R
+SELECT qpois(0.0, 5.0)
+----
+0
+
+# k < 0 → 0 for both PMF and CDF.
+query RR
+SELECT dpois(-1.0, 2.0), ppois(-1.0, 2.0)
+----
+0	0
+
+# Non-integer k → PMF is 0 (matches R's warning-and-zero behaviour).
+query R
+SELECT dpois(1.5, 2.0)
+----
+0
+
+# Invalid lambda → NULL.
+query R
+SELECT dpois(0.0, 0.0)
+----
+NULL

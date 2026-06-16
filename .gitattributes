@@ -1,0 +1,3 @@
+# Shell scripts must stay LF — CRLF breaks the `#!/usr/bin/env bash` shebang
+# under Linux and Git Bash (and core.autocrlf=true would otherwise rewrite them).
+*.sh text eol=lf

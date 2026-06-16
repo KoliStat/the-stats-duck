@@ -606,4 +606,321 @@ inline double ExponentialQuantile(double p, double rate = 1.0) {
 	return -std::log(1.0 - p) / rate;
 }
 
+// ── Weibull distribution ────────────────────────────────────────────────────
+// Shape k > 0, scale λ > 0. Support x ≥ 0. PDF = (k/λ)·(x/λ)^(k-1)·e^(-(x/λ)^k).
+// CDF and quantile are both closed-form via log/exp. Special case k=1 → Exp(1/λ).
+// R parameterisation: dweibull(x, shape, scale = 1).
+
+inline double WeibullPDF(double x, double shape, double scale = 1.0) {
+	if (shape <= 0.0 || scale <= 0.0) {
+		throw std::invalid_argument("shape and scale must be > 0");
+	}
+	if (x < 0.0) {
+		return 0.0;
+	}
+	if (x == 0.0) {
+		// Limit: shape > 1 → 0; shape = 1 → 1/scale; shape < 1 → +inf.
+		if (shape > 1.0) {
+			return 0.0;
+		}
+		if (shape == 1.0) {
+			return 1.0 / scale;
+		}
+		return std::numeric_limits<double>::infinity();
+	}
+	double ratio = x / scale;
+	return (shape / scale) * std::pow(ratio, shape - 1.0) * std::exp(-std::pow(ratio, shape));
+}
+
+inline double WeibullCDF(double x, double shape, double scale = 1.0) {
+	if (shape <= 0.0 || scale <= 0.0) {
+		throw std::invalid_argument("shape and scale must be > 0");
+	}
+	if (x <= 0.0) {
+		return 0.0;
+	}
+	return 1.0 - std::exp(-std::pow(x / scale, shape));
+}
+
+inline double WeibullQuantile(double p, double shape, double scale = 1.0) {
+	if (shape <= 0.0 || scale <= 0.0) {
+		throw std::invalid_argument("shape and scale must be > 0");
+	}
+	if (p < 0.0 || p > 1.0) {
+		throw std::invalid_argument("p must be in [0, 1]");
+	}
+	if (p == 0.0) {
+		return 0.0;
+	}
+	if (p == 1.0) {
+		return std::numeric_limits<double>::infinity();
+	}
+	return scale * std::pow(-std::log(1.0 - p), 1.0 / shape);
+}
+
+// ── Log-normal distribution ─────────────────────────────────────────────────
+// Parameters meanlog (μ) and sdlog (σ > 0); X = exp(μ + σZ) where Z ~ N(0,1).
+// Support x > 0. R parameterisation: dlnorm(x, meanlog = 0, sdlog = 1).
+
+inline double LogNormalPDF(double x, double meanlog = 0.0, double sdlog = 1.0) {
+	if (sdlog <= 0.0) {
+		throw std::invalid_argument("sdlog must be > 0");
+	}
+	if (x <= 0.0) {
+		return 0.0;
+	}
+	double z = (std::log(x) - meanlog) / sdlog;
+	return std::exp(-0.5 * z * z) / (x * sdlog * std::sqrt(2.0 * STATS_DUCK_PI));
+}
+
+inline double LogNormalCDF(double x, double meanlog = 0.0, double sdlog = 1.0) {
+	if (sdlog <= 0.0) {
+		throw std::invalid_argument("sdlog must be > 0");
+	}
+	if (x <= 0.0) {
+		return 0.0;
+	}
+	return NormalCDF(std::log(x), meanlog, sdlog);
+}
+
+inline double LogNormalQuantile(double p, double meanlog = 0.0, double sdlog = 1.0) {
+	if (sdlog <= 0.0) {
+		throw std::invalid_argument("sdlog must be > 0");
+	}
+	if (p < 0.0 || p > 1.0) {
+		throw std::invalid_argument("p must be in [0, 1]");
+	}
+	if (p == 0.0) {
+		return 0.0;
+	}
+	if (p == 1.0) {
+		return std::numeric_limits<double>::infinity();
+	}
+	return std::exp(NormalQuantile(p, meanlog, sdlog));
+}
+
+// ── Poisson distribution ────────────────────────────────────────────────────
+// Discrete; rate λ > 0. PMF on k = 0, 1, 2, …  CDF: P(X ≤ k) = Q(k+1, λ) via
+// the regularized upper incomplete gamma, exploiting the identity
+//   Σ_{i=0..k} e^-λ λ^i / i! = Q(k+1, λ)  (Numerical Recipes §6.2).
+// Quantile is monotone integer search seeded from the normal approximation
+// k ≈ λ + Φ^-1(p)·sqrt(λ).
+
+inline double PoissonPMF(double k, double lambda) {
+	if (lambda <= 0.0) {
+		throw std::invalid_argument("lambda must be > 0");
+	}
+	if (k < 0.0) {
+		return 0.0;
+	}
+	double k_int = std::floor(k);
+	if (k_int != k) {
+		// Non-integer k → PMF is 0 (matches R's dpois(non-int) → 0 with warning).
+		return 0.0;
+	}
+	// e^(-λ) · λ^k / k!  via logs to avoid overflow for moderate λ.
+	double log_pmf = -lambda + k_int * std::log(lambda) - std::lgamma(k_int + 1.0);
+	return std::exp(log_pmf);
+}
+
+inline double PoissonCDF(double k, double lambda) {
+	if (lambda <= 0.0) {
+		throw std::invalid_argument("lambda must be > 0");
+	}
+	if (k < 0.0) {
+		return 0.0;
+	}
+	double k_int = std::floor(k);
+	// P(X ≤ k) = Q(k+1, λ).
+	return GammaQ(k_int + 1.0, lambda);
+}
+
+inline double PoissonQuantile(double p, double lambda) {
+	if (lambda <= 0.0) {
+		throw std::invalid_argument("lambda must be > 0");
+	}
+	if (p < 0.0 || p > 1.0) {
+		throw std::invalid_argument("p must be in [0, 1]");
+	}
+	if (p == 0.0) {
+		return 0.0;
+	}
+	if (p == 1.0) {
+		return std::numeric_limits<double>::infinity();
+	}
+	// Normal approximation seed; clamp to ≥ 0.
+	double seed = lambda + NormalQuantile(p) * std::sqrt(lambda);
+	double k = std::floor(std::max(0.0, seed));
+	double cdf = PoissonCDF(k, lambda);
+	// March in the direction of p.
+	if (cdf < p) {
+		while (cdf < p) {
+			k += 1.0;
+			cdf = PoissonCDF(k, lambda);
+		}
+		return k;
+	}
+	while (k > 0.0 && PoissonCDF(k - 1.0, lambda) >= p) {
+		k -= 1.0;
+	}
+	return k;
+}
+
+// ── Negative Binomial distribution ──────────────────────────────────────────
+// R parameterisation: dnbinom(x, size, prob). size > 0 is the target number of
+// successes (not required to be integer — Gamma-Poisson mixture admits any
+// positive real), prob ∈ (0, 1] is the per-trial success probability. Support
+// is k = 0, 1, 2, …  CDF closed-form identity:
+//   P(X ≤ k) = I_prob(size, k + 1)
+// where I_x(a, b) is the regularized incomplete beta function (see
+// BetaIncomplete). Quantile is monotone integer search seeded from the normal
+// approximation.
+
+inline double NegBinomPMF(double k, double size, double prob) {
+	if (size <= 0.0 || prob <= 0.0 || prob > 1.0) {
+		throw std::invalid_argument("size must be > 0 and prob in (0, 1]");
+	}
+	if (k < 0.0) {
+		return 0.0;
+	}
+	double k_int = std::floor(k);
+	if (k_int != k) {
+		// Non-integer k → 0 (matches R's warn-and-zero convention).
+		return 0.0;
+	}
+	// log PMF = lgamma(k + size) - lgamma(size) - lgamma(k + 1)
+	//          + size·log(prob) + k·log(1 - prob)
+	double log_pmf = std::lgamma(k_int + size) - std::lgamma(size) - std::lgamma(k_int + 1.0) +
+	                 size * std::log(prob) + k_int * std::log(1.0 - prob);
+	return std::exp(log_pmf);
+}
+
+inline double NegBinomCDF(double k, double size, double prob) {
+	if (size <= 0.0 || prob <= 0.0 || prob > 1.0) {
+		throw std::invalid_argument("size must be > 0 and prob in (0, 1]");
+	}
+	if (k < 0.0) {
+		return 0.0;
+	}
+	double k_int = std::floor(k);
+	return BetaIncomplete(size, k_int + 1.0, prob);
+}
+
+inline double NegBinomQuantile(double p, double size, double prob) {
+	if (size <= 0.0 || prob <= 0.0 || prob > 1.0) {
+		throw std::invalid_argument("size must be > 0 and prob in (0, 1]");
+	}
+	if (p < 0.0 || p > 1.0) {
+		throw std::invalid_argument("p must be in [0, 1]");
+	}
+	if (p == 0.0) {
+		return 0.0;
+	}
+	if (p == 1.0) {
+		return std::numeric_limits<double>::infinity();
+	}
+	// Normal approximation seed: mean = size·(1-prob)/prob, variance same / prob.
+	double mean = size * (1.0 - prob) / prob;
+	double var = mean / prob;
+	double seed = mean + NormalQuantile(p) * std::sqrt(var);
+	double k = std::floor(std::max(0.0, seed));
+	double cdf = NegBinomCDF(k, size, prob);
+	if (cdf < p) {
+		while (cdf < p) {
+			k += 1.0;
+			cdf = NegBinomCDF(k, size, prob);
+		}
+		return k;
+	}
+	while (k > 0.0 && NegBinomCDF(k - 1.0, size, prob) >= p) {
+		k -= 1.0;
+	}
+	return k;
+}
+
+// ── Hypergeometric distribution ─────────────────────────────────────────────
+// R parameterisation: dhyper(x, m, n, k). m = total successes in population,
+// n = total failures, k = number drawn without replacement. Population size is
+// N = m + n. PMF support: max(0, k - n) ≤ x ≤ min(m, k). No closed-form CDF;
+// we sum the PMF over the support up to floor(x). All three parameters are
+// taken as real-valued (matches R's permissive signature) but are interpreted
+// as floor()-truncated counts; non-integer x in the PMF / quantile yields 0
+// to match R's warn-and-zero.
+
+namespace detail {
+inline double LogChoose(double a, double b) {
+	// log C(a, b) = lgamma(a+1) - lgamma(b+1) - lgamma(a-b+1)
+	return std::lgamma(a + 1.0) - std::lgamma(b + 1.0) - std::lgamma(a - b + 1.0);
+}
+} // namespace detail
+
+inline double HyperGeomPMF(double x, double m, double n, double k) {
+	if (m < 0.0 || n < 0.0 || k < 0.0 || k > m + n) {
+		throw std::invalid_argument("hyper: m, n, k must be >= 0 and k <= m + n");
+	}
+	double x_int = std::floor(x);
+	if (x_int != x) {
+		return 0.0;
+	}
+	double lo = std::max(0.0, k - n);
+	double hi = std::min(m, k);
+	if (x_int < lo || x_int > hi) {
+		return 0.0;
+	}
+	double log_pmf =
+	    detail::LogChoose(m, x_int) + detail::LogChoose(n, k - x_int) - detail::LogChoose(m + n, k);
+	return std::exp(log_pmf);
+}
+
+inline double HyperGeomCDF(double q, double m, double n, double k) {
+	if (m < 0.0 || n < 0.0 || k < 0.0 || k > m + n) {
+		throw std::invalid_argument("hyper: m, n, k must be >= 0 and k <= m + n");
+	}
+	double q_int = std::floor(q);
+	double lo = std::max(0.0, k - n);
+	double hi = std::min(m, k);
+	if (q_int < lo) {
+		return 0.0;
+	}
+	if (q_int >= hi) {
+		return 1.0;
+	}
+	// Linear sum from lo. Support is bounded by min(m, k) so this is fine for
+	// the population sizes biostat / sampling-without-replacement workloads
+	// actually use. A normal-approximation fast path would help for huge m, k.
+	double cdf = 0.0;
+	for (double i = lo; i <= q_int; i += 1.0) {
+		cdf += HyperGeomPMF(i, m, n, k);
+	}
+	if (cdf > 1.0) {
+		cdf = 1.0; // clamp tiny rounding overshoots
+	}
+	return cdf;
+}
+
+inline double HyperGeomQuantile(double p, double m, double n, double k) {
+	if (m < 0.0 || n < 0.0 || k < 0.0 || k > m + n) {
+		throw std::invalid_argument("hyper: m, n, k must be >= 0 and k <= m + n");
+	}
+	if (p < 0.0 || p > 1.0) {
+		throw std::invalid_argument("p must be in [0, 1]");
+	}
+	double lo = std::max(0.0, k - n);
+	double hi = std::min(m, k);
+	if (p == 0.0) {
+		return lo;
+	}
+	if (p == 1.0) {
+		return hi;
+	}
+	double cdf = 0.0;
+	for (double x = lo; x <= hi; x += 1.0) {
+		cdf += HyperGeomPMF(x, m, n, k);
+		if (cdf >= p) {
+			return x;
+		}
+	}
+	return hi;
+}
+
 } // namespace stats_duck

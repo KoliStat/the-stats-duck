@@ -67,15 +67,19 @@ set(EXTENSION_SOURCES
     src/ttest_agg_function.cpp
     src/nonparametric_function.cpp
     src/distribution_functions.cpp
+    src/random_sampling_function.cpp
     src/summary_stats_function.cpp
     src/correlation_function.cpp
     src/rank_correlation_function.cpp
     src/sign_test_function.cpp
     src/adjust_p_function.cpp
     src/poibin_function.cpp
+    src/bootstrap_function.cpp
     src/auto_bin_function.cpp
     src/corr_matrix_function.cpp
+    src/lm_function.cpp
     src/table_one_function.cpp
+    src/meta_function.cpp
     src/normality_function.cpp
     src/ks_test_function.cpp
     src/anova_function.cpp

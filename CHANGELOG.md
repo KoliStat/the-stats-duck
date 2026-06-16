@@ -8,6 +8,166 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 The extension installs and loads in DuckDB under the technical name `stats_duck` —
 that name is preserved across releases for backward compatibility.
 
+## [0.6.0-i-m-not-dead] - 2026-06-15
+
+### Added
+
+- **`meta(table)` table function** — per-column dataset profile in one shot.
+  Returns one row per column with `(column_name, column_type, kind, n_rows,
+  n_missing, n_distinct, min, p25, median, p75, max, mean, stddev, top,
+  top_freq)`. `kind` is a semantic classification —
+  `numeric` / `categorical` / `temporal` / `boolean` / `other` — driving
+  which slots are populated: the distribution stats fill for numeric
+  columns (cast to DOUBLE; quantile_cont type 7, sample stddev), and `top`
+  / `top_freq` (the mode and its frequency, ties broken by smaller value)
+  fill for categorical and boolean. Dataset-level summaries fall out via
+  aggregation, e.g.
+  `SELECT count(*) FILTER (WHERE kind='numeric'), sum(n_missing) FROM meta('t')`.
+  Complements DuckDB's built-in `SUMMARIZE` statement: ours is a table
+  function (joinable, filterable, composable in CTEs), adds the kind
+  classifier, and reports the mode for categorical / boolean columns.
+
+- **Negative binomial and hypergeometric distributions** — d/p/q/r quartets
+  matching R's signatures. `dnbinom(k, size, prob)` / `pnbinom` / `qnbinom` /
+  `rnbinom`: PMF via lgamma + closed-form CDF identity
+  `P(X ≤ k) = I_prob(size, k+1)` (regularized incomplete beta from
+  `distributions.hpp`); quantile is monotone integer search seeded from the
+  normal approximation. `dhyper(x, m, n, k)` / `phyper` / `qhyper` /
+  `rhyper`: PMF via three log-binomial-coefficients; CDF is direct PMF
+  summation (no closed form), bounded by `min(m, k)` so it's tractable for
+  the population sizes sampling-without-replacement workloads actually use.
+  Cross-verified to 6 decimals against hand-computed PMFs and direct CDF
+  summation; rnbinom mean matches `size·(1-prob)/prob` and rhyper mean
+  matches `k·m/(m+n)` within sampling noise on 50k draws.
+
+- **`lm` / `lm_summary`: R-style formula DSL** — both functions now accept a
+  `formula := '<lhs> ~ <rhs>'` named parameter as an alternative to the
+  explicit `y := ...` / `x := [...]` form (they are mutually exclusive).
+  The DSL supports additive predictors (`y ~ x1 + x2 + x3`), intercept
+  removal via `- 1` or `+ 0`, bare and quoted (`"my col"`) identifiers, and
+  free whitespace. Not supported in v0.6: interactions (`x1:x2`), wildcards
+  (`*`, `^`, `.`), inline expressions (`I(x^2)`, `log(x)`) — wrap into a
+  CTE if needed. When the intercept is removed the model summary uses R's
+  *uncentered* R² convention (`TSS = Σ y²`, not `Σ(y - ȳ)²`); interpret
+  with care.
+
+- **`lm(table, y := 'col', x := ['c1', 'c2', ...])` and `lm_summary(...)`
+  table functions** — OLS linear regression via Cholesky decomposition of
+  `X'X`. `lm` returns one row per term (`(Intercept)` followed by each
+  predictor in user-supplied order) with columns
+  `(term VARCHAR, estimate, std_error, t_statistic, p_value)`. `lm_summary`
+  returns a single-row model summary
+  `(r_squared, adj_r_squared, f_statistic, f_p_value, df_model BIGINT,
+  df_residual BIGINT, sigma, n BIGINT)`. Both share a bind path and a fit
+  routine — calling `lm` and `lm_summary` with the same arguments fits the
+  model twice; collapse with a CTE if you need both shapes from one fit.
+  Complete-case row filtering (any NULL in y or any x drops the row) at
+  the SQL level so the OLS solver always sees a complete design matrix.
+  Cross-verified against R on the built-in `cars` (simple) and `mtcars`
+  (multi-predictor) datasets to ≥4 decimals on coefficients / standard
+  errors / R² / F. Singular `X'X` (e.g. perfectly collinear predictors) or
+  insufficient data (`n ≤ p + 1`) raises a clear bind error rather than
+  silently NaN'ing.
+
+- **Random sampling functions** — completes the d/p/q/**r** quartet for every
+  distribution family currently in the extension: `rnorm([mean=0, sd=1])`,
+  `rt(df)`, `rchisq(df)`, `rf(df1, df2)`, `rgamma(shape, [rate=1])`,
+  `rbeta(alpha, beta)`, `rexp([rate=1])`, `rweibull(shape, [scale=1])`,
+  `rlnorm([meanlog=0, sdlog=1])`, `rpois(lambda)`. Per-row inverse-CDF on a
+  thread-local `std::mt19937_64` (seeded from `std::random_device` on first
+  use). The functions are marked VOLATILE and use explicit per-row loops
+  rather than `UnaryExecutor` / `BinaryExecutor` so that constant-vector
+  parameter inputs (`rnorm(0, 1)`) don't trip the per-chunk-cache fast path
+  that would otherwise produce only ~N/vector_size unique values across an
+  N-row scan. Uniform draws use the bit-shift method on the top 53 bits of a
+  single mt19937_64 draw (MSVC's `uniform_real_distribution` /
+  `generate_canonical` have biased tails on the platform we ship today).
+
+- **`bootstrap(value DOUBLE, statistic VARCHAR, n_iters BIGINT [, seed BIGINT])`
+  → LIST<DOUBLE>** — buffer-based aggregate that resamples the input with
+  replacement `n_iters` times and emits the chosen summary statistic for
+  each resample. `statistic` ∈ `{mean, median, sum, stddev (alias sd),
+  variance (alias var), min, max}`. When `seed` is provided the RNG
+  (std::mt19937_64) is seeded deterministically — mixed with the per-row
+  index so multi-group `GROUP BY` bootstraps produce stable but distinct
+  streams. Empty input → NULL list. Composes naturally with `list_quantile`
+  for percentile CIs:
+  ```
+  WITH b AS (SELECT bootstrap(price, 'mean', 1000, 42) AS samples FROM t)
+  SELECT list_quantile(samples, 0.025) AS lo,
+         list_quantile(samples, 0.975) AS hi
+  FROM b;
+  ```
+
+- `table_one`: new `effect_size` output column carrying the between-group
+  magnitude alongside `p_value`. Numeric variables get **η² (eta-squared)**
+  from `anova_oneway` (`ss_between / ss_total`); categorical variables
+  get **Cramér's V** computed inline as `√(χ²/(n · (min(rows, cols) - 1)))`
+  from `chisq_independence`. Both are in [0, 1] and larger means stronger
+  association, so a single uniform column name works across kinds — the
+  variable's `statistic` rows tell the consumer which is which. NULL under
+  the same conditions as `p_value` (no `by`, single stratum, test
+  infeasible). Repeated on every row of a variable so a downstream PIVOT
+  can grab it via `FIRST(effect_size)`.
+
+- **Weibull, log-normal, and Poisson distribution functions** — d/p/q
+  triples in the same R-style API as the existing distribution families.
+  `dweibull(x, shape, [scale])` / `pweibull` / `qweibull` (scale defaults
+  to 1; closed-form quantile). `dlnorm(x, [meanlog, [sdlog]])` / `plnorm`
+  / `qlnorm` (meanlog defaults to 0, sdlog to 1; reuses NormalCDF /
+  NormalQuantile). `dpois(k, lambda)` / `ppois` / `qpois` (discrete; CDF
+  uses the regularized upper incomplete gamma identity from Numerical
+  Recipes §6.2, quantile is integer search seeded from the normal
+  approximation). Non-integer `k` in `dpois` returns 0 (matches R's
+  warn-and-zero). Cross-verified against R to 6 decimal places.
+
+- ggsql: per-layer `STAT smooth | summary | identity` modifier — appended
+  after a mark name as `DRAW <mark> STAT <name>`. `smooth` injects a
+  Vega-Lite loess transform on `(x, y)` and groups by `color` when mapped
+  (rejected on marks that already emit their own transform — `regression`,
+  `density`, `violin`, `histogram`). `summary` rewrites the layer's data
+  SQL to `AVG(y) GROUP BY x [, color, facet, facet2] ORDER BY x` so each
+  cell collapses to its mean. `identity` is the explicit no-op. Multi-
+  layer composition like `DRAW point DRAW line STAT smooth` produces the
+  canonical scatter-with-LOESS overlay without a separate transform
+  function.
+
+- ggsql: 2D `FACET BY <row_expr>, <col_expr>` — two comma-separated
+  expressions produce a row × column grid via vega-lite's facet operator
+  with both `row` and `column` sub-channels. Composes with `SCALE`,
+  `TITLE`, multi-layer `DRAW`, and `WITH … VISUALIZE`. The 1D form
+  (`FACET BY <expr>` with optional `ROWS` / `COLS` layout) is unchanged.
+  `ROWS` / `COLS` is rejected in the 2D form since the layout is fixed.
+  The bar mark's GROUP BY extends to both facet columns so per-cell
+  ordinal bins compute correctly.
+
+- ggsql: `violin` mark — per-category density rendered as horizontal
+  Vega-Lite area marks via the canonical `density` transform + `column`
+  facet idiom. Required aesthetics `x` (categorical) and `y` (numeric);
+  optional channels (`color`, `opacity`, ...) propagate through the
+  encoding. Composes with `FACET BY ... ROWS` (vega `row` channel) but
+  conflicts with `FACET BY ... COLS` because both would request the
+  `column` channel. Pairs naturally with `boxplot` for distribution
+  comparison overlays.
+
+### Changed
+
+- **`read_stat()` now reads each file's data exactly once — XPT / SAS / SPSS /
+  Stata imports are no longer O(N²).** The reader previously re-invoked the
+  ReadStat parser for every 2048-row output chunk with an increasing row offset;
+  because ReadStat's row offset reads and decodes skipped rows rather than
+  seeking (and each chunk re-opened the file from byte 0), a full scan cost
+  ≈ N²/4096 row reads — a 200k-row, 7 MB XPT took ~67 s. The file is now parsed
+  a single time into a buffered, spillable column collection that `Execute`
+  streams from, so scans are linear in row count: that 200k file now reads in
+  ~1.3 s (52×), the real-world CDISC pilot `qs.xpt` (122k rows) drops from ~39 s
+  to ~1.1 s (36×), and 1.6M rows read in ~15 s (was ~70 min by extrapolation).
+  `bind` also stops after the header instead of reading the entire data section
+  just to discover the schema, so a query reads the data once, not twice.
+  Trade-off: the parse is now eager (the whole file is read at init, before the
+  first row is returned), so a tiny `LIMIT` on a very large file reads the whole
+  file rather than a single chunk.
+
 ## [0.5.0-dead-person] - 2026-05-31
 
 ### Added

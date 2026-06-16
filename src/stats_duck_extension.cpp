@@ -5,15 +5,19 @@
 #include "ttest_agg_function.hpp"
 #include "nonparametric_function.hpp"
 #include "distribution_functions.hpp"
+#include "random_sampling_function.hpp"
 #include "summary_stats_function.hpp"
 #include "correlation_function.hpp"
 #include "rank_correlation_function.hpp"
 #include "sign_test_function.hpp"
 #include "adjust_p_function.hpp"
 #include "poibin_function.hpp"
+#include "bootstrap_function.hpp"
 #include "auto_bin_function.hpp"
 #include "corr_matrix_function.hpp"
+#include "lm_function.hpp"
 #include "table_one_function.hpp"
+#include "meta_function.hpp"
 #include "normality_function.hpp"
 #include "ks_test_function.hpp"
 #include "anova_function.hpp"
@@ -52,11 +56,17 @@ static void LoadInternal(ExtensionLoader &loader) {
 	// Scalar distribution functions (dnorm/pnorm/qnorm/dt/pt/qt/dchisq/...)
 	RegisterDistributionFunctions(loader);
 
+	// Random sampling — per-row inverse-CDF on a thread-local RNG (rnorm/rt/...)
+	RegisterRandomSampling(loader);
+
 	// Multiple-testing corrections
 	RegisterAdjustP(loader);
 
 	// Poisson Binomial CDF
 	RegisterPoibinCdf(loader);
+
+	// Bootstrap (with-replacement resampling aggregate)
+	RegisterBootstrap(loader);
 
 	// Auto-binning helpers
 	RegisterBinEdges(loader);
@@ -65,8 +75,14 @@ static void LoadInternal(ExtensionLoader &loader) {
 	// Pairwise correlation matrix
 	RegisterCorrMatrix(loader);
 
+	// OLS linear regression
+	RegisterLm(loader);
+
 	// Table 1 helper
 	RegisterTableOne(loader);
+
+	// Dataset profile (per-column metadata + light stats)
+	RegisterMeta(loader);
 
 	// Data import
 	RegisterReadStat(loader);

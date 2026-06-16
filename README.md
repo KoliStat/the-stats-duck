@@ -155,9 +155,69 @@ gives Q1=1.5 / Q3=3.5 (matching SAS PROC MEANS).
 | `dexp(x, [rate])`        | Exponential PDF (rate=1 default) |
 | `pexp(x, [rate])`        | Exponential CDF         |
 | `qexp(p, [rate])`        | Exponential quantile (closed form) |
+| `dweibull(x, shape, [scale])` | Weibull PDF (scale=1 default) |
+| `pweibull(x, shape, [scale])` | Weibull CDF |
+| `qweibull(p, shape, [scale])` | Weibull quantile (closed form) |
+| `dlnorm(x, [meanlog], [sdlog])` | Log-normal PDF (meanlog=0, sdlog=1 defaults) |
+| `plnorm(x, [meanlog], [sdlog])` | Log-normal CDF |
+| `qlnorm(p, [meanlog], [sdlog])` | Log-normal quantile |
+| `dpois(k, lambda)`       | Poisson PMF (discrete) |
+| `ppois(q, lambda)`       | Poisson CDF |
+| `qpois(p, lambda)`       | Poisson quantile (integer search) |
+| `dnbinom(k, size, prob)` | Negative binomial PMF (count of failures before `size` successes; `prob` per-trial) |
+| `pnbinom(q, size, prob)` | Negative binomial CDF — closed form via regularized incomplete beta |
+| `qnbinom(p, size, prob)` | Negative binomial quantile (integer search) |
+| `dhyper(x, m, n, k)`     | Hypergeometric PMF (`m` successes / `n` failures / `k` draws without replacement) |
+| `phyper(q, m, n, k)`     | Hypergeometric CDF (direct PMF sum; tractable for typical population sizes) |
+| `qhyper(p, m, n, k)`     | Hypergeometric quantile |
+| `rnorm([mean], [sd])`    | Random sample from a normal — **volatile, per-row** |
+| `rt(df)` / `rchisq(df)` / `rf(df1, df2)` | Student-t / χ² / F samples |
+| `rgamma(shape, [rate])` / `rbeta(alpha, beta)` / `rexp([rate])` | Gamma / Beta / Exponential samples |
+| `rweibull(shape, [scale])` / `rlnorm([meanlog], [sdlog])` / `rpois(lambda)` | Weibull / Log-normal / Poisson samples |
+| `rnbinom(size, prob)` / `rhyper(m, n, k)` | Negative binomial / Hypergeometric samples |
 | `poibin_cdf(probs LIST<DOUBLE>, k BIGINT)` | Poisson Binomial CDF — `P(X ≤ k)` for `X = Σᵢ Bᵢ`, `Bᵢ ∼ Bernoulli(pᵢ)` |
 | `bin_edges(x [, method])` *(aggregate)* | Auto bin-edge vector for `x` — `sturges` (default), `fd`, `scott`, `sqrt`, `rice`, `auto` |
 | `bin_label(x, edges)` | Label for the bin containing `x` given an edge vector (typically from `bin_edges`) |
+| `bootstrap(x, statistic, n_iters [, seed])` *(aggregate)* | With-replacement resampling — emits `LIST<DOUBLE>` of length `n_iters`. `statistic` ∈ `{mean, median, sum, stddev, variance, min, max}` |
+
+### Dataset profile (table function)
+
+| Function       | Description                                              |
+| -------------- | -------------------------------------------------------- |
+| `meta(data)`   | One row per column with kind classification + light stats |
+
+```sql
+SELECT * FROM meta('penguins');
+```
+
+Output columns (fixed schema):
+`column_name`, `column_type`, `kind`, `n_rows`, `n_missing`, `n_distinct`,
+`min`, `p25`, `median`, `p75`, `max`, `mean`, `stddev`, `top`, `top_freq`.
+
+- `kind` is a semantic classification —
+  `numeric` / `categorical` / `temporal` / `boolean` / `other` — derived
+  from the catalog type. It controls which distribution columns are
+  populated: numeric kinds fill `min` / `p25` / `median` / `p75` / `max` /
+  `mean` / `stddev` (cast to DOUBLE; `quantile_cont` type 7, sample
+  stddev), and `categorical` / `boolean` fill `top` (the mode, ties broken
+  by smaller value) and `top_freq` (its count).
+- `n_rows` is the source table's row count, repeated on every row so any
+  single row is self-contained.
+- Dataset-level summaries fall out via aggregation:
+
+  ```sql
+  SELECT count(*) FILTER (WHERE kind = 'numeric')     AS n_numeric,
+         count(*) FILTER (WHERE kind = 'categorical') AS n_categorical,
+         sum(n_missing)                               AS total_missing,
+         count(*) FILTER (WHERE n_missing > 0)        AS cols_with_nulls
+  FROM meta('penguins');
+  ```
+
+- Overlaps DuckDB's built-in `SUMMARIZE` but is a table function
+  (joinable, filterable, composable in CTEs), adds the kind classifier,
+  and reports a mode for categorical / boolean columns. Per-column
+  detail (skewness, kurtosis, custom quantile types, bias-corrected
+  variants) lives in `summary_stats(column)`.
 
 ### Table 1 summary (table function)
 
@@ -165,6 +225,7 @@ gives Q1=1.5 / Q3=3.5 (matching SAS PROC MEANS).
 | ------------------------------------------------- | ---------------------------------------------------------- |
 | `table_one(data, variables [, by])`               | Long-format descriptives table for mixed variable types    |
 | `corr_matrix(data, variables [, method])`         | Long-format pairwise correlation matrix (`pearson` / `spearman` / `kendall`) |
+| `lm(data, y, x)` / `lm_summary(data, y, x)`       | OLS regression — `lm` returns per-term coefficients, `lm_summary` returns model R² / F / σ |
 
 ```sql
 SELECT * FROM table_one(
@@ -175,7 +236,7 @@ SELECT * FROM table_one(
 ```
 
 Output columns (long format, fixed schema):
-`variable`, `level`, `statistic`, `stratum`, `display`, `p_value`
+`variable`, `level`, `statistic`, `stratum`, `display`, `p_value`, `effect_size`
 
 - Each numeric variable yields rows for `n`, `missing`, `mean (sd)`,
   `median [q1, q3]`, `min, max` — `level` is NULL.
@@ -194,6 +255,12 @@ Output columns (long format, fixed schema):
   ANOVA (`anova_oneway`); categorical variables use chi-square independence
   (`chisq_independence`). NULL when the underlying test is infeasible (zero
   variance, too few samples).
+- `effect_size` is the matching magnitude — **η² (eta-squared)** for
+  numeric variables (from ANOVA's `ss_between / ss_total`), **Cramér's V**
+  for categorical (`√(χ² / (n · (min(rows, cols) - 1)))`). Both are in
+  [0, 1] and larger means stronger association, so a single uniform
+  column name works across kinds. Same repetition and NULL handling as
+  `p_value`.
 - Variable types are auto-classified from the catalog: integer / floating-
   point types are numeric, everything else (VARCHAR, BOOLEAN, ENUM,
   date/time) is categorical. Override per-variable with
@@ -209,6 +276,43 @@ PIVOT table_one('patients', variables := ['age', 'sex'], by := ['arm'])
     ON stratum USING first(display)
     GROUP BY variable, level, statistic;
 ```
+
+### Linear regression (table function)
+
+```sql
+SELECT * FROM lm('mtcars', y := 'mpg', x := ['wt', 'hp']);
+--   term        estimate  std_error  t_statistic  p_value
+--   (Intercept) 37.2273   1.5988     23.285       2.57e-20
+--   wt          -3.8778   0.6327     -6.129       1.12e-06
+--   hp          -0.0318   0.0090     -3.519       1.45e-03
+
+SELECT * FROM lm_summary('mtcars', y := 'mpg', x := ['wt', 'hp']);
+--   r_squared  adj_r_squared  f_statistic  f_p_value  df_model  df_residual  sigma  n
+--   0.8268     0.8148         69.21        9.11e-12   2         29           2.593  32
+```
+
+A `formula` named parameter accepts an R-style spec as an alternative to the
+explicit `y` / `x` form:
+
+```sql
+SELECT * FROM lm('mtcars', formula := 'mpg ~ wt + hp');
+SELECT * FROM lm('mtcars', formula := 'mpg ~ wt + hp - 1');  -- no intercept
+SELECT * FROM lm('weird_names', formula := '"My Y" ~ "x.with.dots"');
+```
+
+The formula grammar supports additive predictors, `- 1` or `+ 0` to drop the
+intercept, bare and `"..."`-quoted identifiers, and free whitespace.
+Interactions (`x1:x2`), wildcards (`*`, `^`, `.`) and inline expressions
+(`I(x^2)`, `log(x)`) are not supported in v0.6 — wrap into a CTE if you need
+transformed columns. `formula` and `y` / `x` are mutually exclusive.
+
+OLS via Cholesky decomposition of `X'X`. Rows with NULL in `y` or any `x` are
+dropped (complete-case). Term order follows the user-supplied predictor order,
+after the intercept. Calling `lm` and `lm_summary` with the same arguments
+fits the model twice — use a CTE if you need both shapes from a single fit.
+Errors on singular `X'X` (perfectly collinear predictors) or insufficient rows
+(`n ≤ k` parameters). When the intercept is removed, R²/adj-R² use the
+uncentered TSS = Σ y² to match R's `summary.lm` — interpret with care.
 
 ### Multiple-testing correction (scalar)
 
@@ -260,8 +364,8 @@ runs each layer's SQL and feeds the rows to vega-embed via the `datasets` API.
 [WITH [RECURSIVE] <cte> AS (...) [, <cte> AS (...)]*]
 VISUALIZE <expr> AS <aesthetic> [: <type>] (, <expr> AS <aesthetic> ...)
 FROM <table>
-DRAW <mark> (DRAW <mark>)*
-[FACET BY <expr> [ROWS | COLS]]
+DRAW <mark> [STAT <identity|smooth|summary>] (DRAW <mark> [STAT ...])*
+[FACET BY <expr> [ROWS | COLS] | FACET BY <row_expr>, <col_expr>]
 [SCALE <channel> {TO <scheme> | ZERO true|false | DOMAIN <lo> <hi> | LABEL '<text>'}]*
 [TITLE '<text>' [SUBTITLE '<text>']]
 ```
@@ -273,17 +377,19 @@ without a top-level `VISUALIZE` keyword fall through to DuckDB's normal SQL
 parser unchanged.
 
 **Marks:** `point`, `line`, `bar`, `histogram`, `text`, `area`, `rule`, `tick`,
-`errorbar`, `errorband`, `boxplot`, `heatmap`, `density`, `regression`. Custom
+`errorbar`, `errorband`, `boxplot`, `violin`, `heatmap`, `density`, `regression`. Custom
 marks register as `ggsql_mark_v1_<name>` scalar functions and are discovered
 via DuckDB's catalog, so other extensions can ship their own marks without
 modifying stats_duck.
 
 `heatmap` is a `rect` mark with ordinal x/y and quantitative color (correlation
 matrices, contingency tables). `density` runs Vega-Lite's KDE on the `x`
-aesthetic, grouped by `color` if mapped (one curve per category). `regression`
-fits a linear `y ~ x` model server-side via Vega-Lite's regression transform,
-also grouped by `color`. Use `DRAW point DRAW regression` for a scatter-with-
-fit overlay.
+aesthetic, grouped by `color` if mapped (one curve per category). `violin`
+renders one horizontal density per category of `x`, laid out via vega-lite's
+`column` facet (composes with `FACET BY ... ROWS` but conflicts with
+`FACET BY ... COLS`). `regression` fits a linear `y ~ x` model server-side
+via Vega-Lite's regression transform, also grouped by `color`. Use
+`DRAW point DRAW regression` for a scatter-with-fit overlay.
 
 **Aesthetic channels:** `x`, `y`, `color`, `fill`, `stroke`, `shape`, `size`,
 `opacity`, `tooltip`, `text`, `x2`, `y2`. Unknown channels are silently dropped.
@@ -506,6 +612,21 @@ VISUALIZE bill_len AS x, bill_dep AS y FROM penguins DRAW point DRAW line;
 ```sql
 VISUALIZE bill_len AS x, bill_dep AS y FROM penguins
 DRAW point FACET BY species ROWS;
+```
+
+#### 2D facet grid — species rows × sex columns
+
+```sql
+VISUALIZE bill_len AS x, bill_dep AS y FROM penguins
+DRAW point FACET BY species, sex;
+```
+
+#### Scatter with LOESS overlay via STAT smooth
+
+```sql
+VISUALIZE bill_len AS x, bill_dep AS y FROM penguins
+DRAW point
+DRAW line STAT smooth;
 ```
 
 #### SQL expressions in mappings
