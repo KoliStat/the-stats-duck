@@ -15,13 +15,13 @@ CREATE TABLE samples AS SELECT * FROM (VALUES
 query TT
 VISUALIZE group_id AS x, value AS y FROM samples DRAW violin
 ----
-{"$schema":"https://vega.github.io/schema/vega-lite/v5.json","data":{"name":"layer_0"},"transform":[{"density":"y","groupby":["x"]}],"mark":"area","encoding":{"y":{"field":"value","type":"quantitative"},"x":{"field":"density","type":"quantitative","stack":"center","impute":null,"axis":null},"column":{"field":"x","type":"nominal"}}}	{layer_0='SELECT group_id AS x, value AS y FROM samples'}
+{"$schema":"https://vega.github.io/schema/vega-lite/v5.json","data":{"name":"layer_0"},"transform":[{"density":"y","groupby":["x"]}],"mark":{"type":"area","orient":"horizontal"},"encoding":{"y":{"field":"value","type":"quantitative"},"x":{"field":"density","type":"quantitative","stack":"center","impute":null,"axis":null},"column":{"field":"x","type":"nominal"}}}	{layer_0='SELECT group_id AS x, value AS y FROM samples'}
 
 # Optional channels (color, opacity, ...) propagate through BuildOptionalChannels.
 query TT
 VISUALIZE group_id AS x, value AS y, group_id AS color FROM samples DRAW violin
 ----
-{"$schema":"https://vega.github.io/schema/vega-lite/v5.json","data":{"name":"layer_0"},"transform":[{"density":"y","groupby":["x"]}],"mark":"area","encoding":{"y":{"field":"value","type":"quantitative"},"x":{"field":"density","type":"quantitative","stack":"center","impute":null,"axis":null},"column":{"field":"x","type":"nominal"},"color":{"field":"color","type":"nominal"}}}	{layer_0='SELECT group_id AS x, value AS y, group_id AS color FROM samples'}
+{"$schema":"https://vega.github.io/schema/vega-lite/v5.json","data":{"name":"layer_0"},"transform":[{"density":"y","groupby":["x"]}],"mark":{"type":"area","orient":"horizontal"},"encoding":{"y":{"field":"value","type":"quantitative"},"x":{"field":"density","type":"quantitative","stack":"center","impute":null,"axis":null},"column":{"field":"x","type":"nominal"},"color":{"field":"color","type":"nominal"}}}	{layer_0='SELECT group_id AS x, value AS y, group_id AS color FROM samples'}
 
 # Introspection: required_aesthetics = [x, y].
 query T
@@ -33,10 +33,10 @@ SELECT ggsql_mark_v1_violin()
 query TT
 VISUALIZE group_id AS x, value AS y FROM samples DRAW violin TITLE 'Distribution by group'
 ----
-{"$schema":"https://vega.github.io/schema/vega-lite/v5.json","data":{"name":"layer_0"},"transform":[{"density":"y","groupby":["x"]}],"mark":"area","encoding":{"y":{"field":"value","type":"quantitative"},"x":{"field":"density","type":"quantitative","stack":"center","impute":null,"axis":null},"column":{"field":"x","type":"nominal"}},"title":{"text":"Distribution by group"}}	{layer_0='SELECT group_id AS x, value AS y FROM samples'}
+{"$schema":"https://vega.github.io/schema/vega-lite/v5.json","data":{"name":"layer_0"},"transform":[{"density":"y","groupby":["x"]}],"mark":{"type":"area","orient":"horizontal"},"encoding":{"y":{"field":"value","type":"quantitative"},"x":{"field":"density","type":"quantitative","stack":"center","impute":null,"axis":null},"column":{"field":"x","type":"nominal"}},"title":{"text":"Distribution by group"}}	{layer_0='SELECT group_id AS x, value AS y FROM samples'}
 
 # Composes with WITH ... VISUALIZE.
 query TT
 WITH s AS (SELECT group_id, value FROM samples WHERE value < 6) VISUALIZE group_id AS x, value AS y FROM s DRAW violin
 ----
-{"$schema":"https://vega.github.io/schema/vega-lite/v5.json","data":{"name":"layer_0"},"transform":[{"density":"y","groupby":["x"]}],"mark":"area","encoding":{"y":{"field":"value","type":"quantitative"},"x":{"field":"density","type":"quantitative","stack":"center","impute":null,"axis":null},"column":{"field":"x","type":"nominal"}}}	{layer_0='WITH s AS (SELECT group_id, value FROM samples WHERE value < 6) SELECT group_id AS x, value AS y FROM s'}
+{"$schema":"https://vega.github.io/schema/vega-lite/v5.json","data":{"name":"layer_0"},"transform":[{"density":"y","groupby":["x"]}],"mark":{"type":"area","orient":"horizontal"},"encoding":{"y":{"field":"value","type":"quantitative"},"x":{"field":"density","type":"quantitative","stack":"center","impute":null,"axis":null},"column":{"field":"x","type":"nominal"}}}	{layer_0='WITH s AS (SELECT group_id, value FROM samples WHERE value < 6) SELECT group_id AS x, value AS y FROM s'}

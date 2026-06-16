@@ -259,7 +259,7 @@ MarkResult RenderDensity(const MarkContext &ctx) {
 
 MarkResult RenderViolin(const MarkContext &ctx) {
 	// Canonical Vega-Lite violin: density transform grouped by the categorical x,
-	// each category rendered as a horizontal density column. `column` is a
+	// each category a vertical violin in its own `column` facet. `column` is a
 	// single-channel facet — it composes with `FACET BY ... ROWS` (uses `row`)
 	// but conflicts with `FACET BY ... COLS` (would request `column` twice).
 	string transform = "\"transform\":[{\"density\":\"y\",\"groupby\":[\"x\"]}]";
@@ -271,7 +271,11 @@ MarkResult RenderViolin(const MarkContext &ctx) {
 	encoding += BuildOptionalChannels(ctx);
 	encoding += "}";
 	MarkResult r;
-	r.layer_body = transform + ",\"mark\":\"area\",\"encoding\":" + encoding;
+	// orient:horizontal is load-bearing — it makes the area sweep along y (the
+	// value axis, monotonic after the density transform). The default vertical
+	// orientation sweeps along x = the stacked density, which is non-monotonic
+	// and renders as a jagged comb instead of a smooth violin.
+	r.layer_body = transform + ",\"mark\":{\"type\":\"area\",\"orient\":\"horizontal\"},\"encoding\":" + encoding;
 	r.data_sql = ctx.projected_sql;
 	return r;
 }
