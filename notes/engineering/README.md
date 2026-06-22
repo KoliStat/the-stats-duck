@@ -22,3 +22,10 @@ that has been written down than to re-derive it.
   output chunk and ReadStat's `row_offset` reads-and-decodes skipped rows instead
   of seeking (and `bind` read the whole data section for the schema). Fix:
   parse-once buffering + header-only bind; why not a producer thread (WASM).
+
+- [`2026-06-duckdb-version-must-match-duckdb-wasm.md`](2026-06-duckdb-version-must-match-duckdb-wasm.md)
+  — `table_one()` threw `r is not a function` in the browser because the
+  extension was built against DuckDB v1.5.1 while the stable `@duckdb/duckdb-wasm`
+  host bundles v1.4.3: a loadable extension is an Emscripten side module and the
+  version *is* the ABI. Why it bites the struct-returning aggregate path first,
+  the two v1.5→v1.4 internal-API deltas to port, and a version-move checklist.
