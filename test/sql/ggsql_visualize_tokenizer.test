@@ -66,3 +66,24 @@ statement error
 VISUALIZE "open AS x FROM penguins DRAW point
 ----
 Unterminated string literal or quoted identifier
+
+# SQL comments are skipped like delimiters (matching DuckDB) — but never inside a string.
+
+# `--` line comment in the middle of the statement is stripped.
+query TT
+VISUALIZE bill_len AS x, -- the x channel
+bill_dep AS y FROM penguins DRAW point
+----
+{"$schema":"https://vega.github.io/schema/vega-lite/v5.json","data":{"name":"layer_0"},"mark":"point","encoding":{"x":{"field":"x","type":"quantitative"},"y":{"field":"y","type":"quantitative"}}}	{layer_0='SELECT bill_len AS x, bill_dep AS y FROM penguins'}
+
+# `/* ... */` block comment is stripped.
+query TT
+VISUALIZE bill_len AS x, /* mid */ bill_dep AS y FROM penguins DRAW point
+----
+{"$schema":"https://vega.github.io/schema/vega-lite/v5.json","data":{"name":"layer_0"},"mark":"point","encoding":{"x":{"field":"x","type":"quantitative"},"y":{"field":"y","type":"quantitative"}}}	{layer_0='SELECT bill_len AS x, bill_dep AS y FROM penguins'}
+
+# `--` inside a string literal is NOT a comment — preserved verbatim in the axis title.
+query TT
+VISUALIZE bill_len AS x, bill_dep AS y FROM penguins DRAW point SCALE x LABEL 'a -- b'
+----
+{"$schema":"https://vega.github.io/schema/vega-lite/v5.json","data":{"name":"layer_0"},"mark":"point","encoding":{"x":{"field":"x","type":"quantitative","axis":{"title":"a -- b"}},"y":{"field":"y","type":"quantitative"}}}	{layer_0='SELECT bill_len AS x, bill_dep AS y FROM penguins'}

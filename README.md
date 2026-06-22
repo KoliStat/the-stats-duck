@@ -366,9 +366,16 @@ VISUALIZE <expr> AS <aesthetic> [: <type>] (, <expr> AS <aesthetic> ...)
 FROM <table>
 DRAW <mark> [STAT <identity|smooth|summary>] (DRAW <mark> [STAT ...])*
 [FACET BY <expr> [ROWS | COLS] | FACET BY <row_expr>, <col_expr>]
-[SCALE <channel> {TO <scheme> | ZERO true|false | DOMAIN <lo> <hi> | LABEL '<text>'}]*
+[SCALE <channel> {TO <scheme> | ZERO true|false | DOMAIN <lo> <hi> | LABEL '<text>'}+]*
 [TITLE '<text>' [SUBTITLE '<text>']]
 ```
+
+Multiple `SCALE` options may be **stacked** on one channel
+(`SCALE x LABEL 'Bill Depth' ZERO false`) or split across repeated `SCALE x`
+clauses — they merge into one scale/axis block either way. SQL comments
+(`-- …` to end of line, and `/* … */`) may appear anywhere in a `VISUALIZE`
+statement; they're skipped like whitespace (but never treated as comments
+inside a string literal).
 
 A leading `WITH` clause is supported; CTEs are scoped to each layer's
 projected SQL so they compose with wrapping marks (`line`, `bar`, `area`,
