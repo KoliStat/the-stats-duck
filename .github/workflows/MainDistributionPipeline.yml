@@ -14,13 +14,13 @@ concurrency:
 jobs:
   duckdb-stable-build:
     name: Build extension binaries
-    uses: duckdb/extension-ci-tools/.github/workflows/_extension_distribution.yml@v1.5.1
+    uses: duckdb/extension-ci-tools/.github/workflows/_extension_distribution.yml@v1.4.3
     with:
       extension_name: stats_duck
-      duckdb_version: v1.5.1
-      ci_tools_version: v1.5.1
+      duckdb_version: v1.4.3
+      ci_tools_version: v1.4.3
       # windows_amd64 (MSVC build) is excluded until duckdb/extension-ci-tools#371
-      # ships a fix. The hardcoded vcvars64.bat path in v1.5.1 of the reusable
+      # ships a fix. The hardcoded vcvars64.bat path in v1.4.3 of the reusable
       # workflow no longer exists on the current windows-latest image, so cmake
       # silently falls back to mingw and the link fails against the MSVC-built
       # x64-windows-static-release vcpkg libs. windows_amd64_mingw still builds
@@ -30,12 +30,12 @@ jobs:
   duckdb-stable-deploy:
     name: Deploy extension binaries
     needs: duckdb-stable-build
-    uses: duckdb/extension-ci-tools/.github/workflows/_extension_deploy.yml@v1.5.1
+    uses: duckdb/extension-ci-tools/.github/workflows/_extension_deploy.yml@v1.4.3
     secrets: inherit
     with:
       extension_name: stats_duck
-      duckdb_version: v1.5.1
-      ci_tools_version: v1.5.1
+      duckdb_version: v1.4.3
+      ci_tools_version: v1.4.3
       exclude_archs: 'windows_amd64'
       deploy_latest: ${{ startsWith(github.ref, 'refs/tags/v') || github.ref == 'refs/heads/main' }}
       deploy_versioned: ${{ startsWith(github.ref, 'refs/tags/v') || github.ref == 'refs/heads/main' }}

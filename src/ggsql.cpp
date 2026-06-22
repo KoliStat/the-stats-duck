@@ -563,7 +563,7 @@ public:
 void RegisterGgsql(ExtensionLoader &loader) {
 	auto &db = loader.GetDatabaseInstance();
 	auto &config = DBConfig::GetConfig(db);
-	ParserExtension::Register(config, ggsql::GgsqlParserExtension());
+	config.parser_extensions.push_back(ggsql::GgsqlParserExtension());
 }
 
 } // namespace duckdb
