@@ -360,6 +360,9 @@ columns — `spec` (a complete Vega-Lite v5 JSON spec) and `layer_sqls` (a
 `MAP(VARCHAR, VARCHAR)` of named SQL strings, one per layer). The client
 runs each layer's SQL and feeds the rows to vega-embed via the `datasets` API.
 
+**Tutorial:** [`docs/visualize.md`](docs/visualize.md) walks through a worked
+example of every mark and clause.
+
 ```
 [WITH [RECURSIVE] <cte> AS (...) [, <cte> AS (...)]*]
 VISUALIZE <expr> AS <aesthetic> [: <type>] (, <expr> AS <aesthetic> ...)
