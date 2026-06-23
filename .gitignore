@@ -28,3 +28,11 @@ vcpkg_installed/
 
 # Sigillo
 .sigillo/
+
+# Local build / run capture logs (root-level)
+/build_*.log
+/ci_watch_*.log
+
+# Local dev tooling — machine-specific paths / node_modules, kept out of the repo
+/scripts/em-shims/
+/scripts/wasm-verify/
