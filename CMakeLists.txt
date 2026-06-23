@@ -133,12 +133,17 @@ if(WIN32)
 endif()
 
 set(PARAMETERS "-warnings")
-# Force i64 → (i32,i32) legalization at the WASM ABI boundary. Emscripten ≥ 4.0
-# defaults to -sWASM_BIGINT=1 (native i64), but @duckdb/duckdb-wasm 1.33.x and
-# the deployed phase-2 extension speak the legalized ABI. Mismatched modules
-# fail to link with a TemplatedValidityMask::Copy LinkError on instantiation.
-# Read by build_loadable_extension_directory at duckdb/extension/extension_build_tools.cmake:186
-# and spliced into the post-build emcc command.
+# WASM i64 ABI: -sWASM_BIGINT=0 is REQUIRED. @duckdb/duckdb-wasm 1.32.0's dynamic
+# linker hands loadable extensions the *legalized* (i32,i32) form of duckdb's i64
+# exports, so a -sWASM_BIGINT=1 build LinkErrors at instantiation on the first
+# i64 import (verified: duckdb::InternalException(...,yy)). Keep =0.
+#
+# (Separately, and NOT a build-flag issue: anova_oneway / chisq_independence used
+# to crash in wasm with "t is not a function" because std::unordered_map<std::
+# string> hashing pulls in libc++ std::__hash_memory — the ONE symbol duckdb-wasm
+# does not export. Fixed by hashing string keys in-extension; see
+# src/include/portable_string_hash.hpp and the engineering note for the full
+# diagnosis + the reusable @duckdb/duckdb-wasm Node harness in scripts/wasm-verify/.)
 if(EMSCRIPTEN)
     string(TOUPPER ${TARGET_NAME} _STATS_DUCK_UPPER)
     set(DUCKDB_EXTENSION_${_STATS_DUCK_UPPER}_LINKED_LIBS "-sWASM_BIGINT=0")

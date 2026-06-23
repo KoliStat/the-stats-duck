@@ -30,8 +30,10 @@ that has been written down than to re-derive it.
   an unbiased rejection bound. General rule: consume the engine, not the distribution.
 
 - [`2026-06-duckdb-version-must-match-duckdb-wasm.md`](2026-06-duckdb-version-must-match-duckdb-wasm.md)
-  — `table_one()` threw `r is not a function` in the browser because the
-  extension was built against DuckDB v1.5.1 while the stable `@duckdb/duckdb-wasm`
-  host bundles v1.4.3: a loadable extension is an Emscripten side module and the
-  version *is* the ABI. Why it bites the struct-returning aggregate path first,
-  the two v1.5→v1.4 internal-API deltas to port, and a version-move checklist.
+  — `table_one()` crashed in `@duckdb/duckdb-wasm` with `r/t is not a function`.
+  Overturned two hypotheses (the DuckDB version retarget and the `-sWASM_BIGINT`
+  flag — `=1` actually LinkErrors, `=0` is required) before `wasm-dis` pinned the
+  cause to **one** unresolved import: libc++ `std::__hash_memory`, pulled in by
+  `std::unordered_map<std::string>` in anova/chisq and not exported by duckdb-wasm.
+  Fixed by an in-extension string hash (`portable_string_hash.hpp`). Includes a
+  reusable `@duckdb/duckdb-wasm` Node verification harness.

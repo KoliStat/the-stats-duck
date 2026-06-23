@@ -1,5 +1,6 @@
 #include "anova_function.hpp"
 #include "distributions.hpp"
+#include "portable_string_hash.hpp"
 
 #include "duckdb/function/aggregate_function.hpp"
 #include "duckdb/function/function_set.hpp"
@@ -32,6 +33,12 @@ namespace duckdb {
 
 namespace {
 
+// std::string-keyed map with a hash that stays inside the extension (the default
+// std::hash<std::string> → libc++ std::__hash_memory, which duckdb-wasm's main
+// module doesn't export → crashes the WASM build). See portable_string_hash.hpp.
+template <class V>
+using StrMap = std::unordered_map<std::string, V, stats_duck::PortableStringHash>;
+
 // ── Result STRUCT ──────────────────────────────────────────────────────────
 
 static LogicalType AnovaResultType() {
@@ -58,7 +65,7 @@ struct GroupMoments {
 };
 
 struct AnovaState {
-	std::unordered_map<std::string, GroupMoments> *groups;
+	StrMap<GroupMoments> *groups;
 };
 
 static void AnovaInit(const AggregateFunction &, data_ptr_t state_p) {
@@ -114,7 +121,7 @@ static void AnovaUpdate(Vector inputs[], AggregateInputData &, idx_t, Vector &st
 		}
 		auto &state = *states[i];
 		if (!state.groups) {
-			state.groups = new std::unordered_map<std::string, GroupMoments>();
+			state.groups = new StrMap<GroupMoments>();
 		}
 		// Copy the string out of the DuckDB string_t to use as a map key.
 		std::string key(groups[g_idx].GetData(), groups[g_idx].GetSize());
@@ -133,7 +140,7 @@ static void AnovaCombine(Vector &source, Vector &target, AggregateInputData &, i
 			continue;
 		}
 		if (!t.groups) {
-			t.groups = new std::unordered_map<std::string, GroupMoments>();
+			t.groups = new StrMap<GroupMoments>();
 		}
 		for (auto &kv : *s.groups) {
 			auto &target_g = (*t.groups)[kv.first];

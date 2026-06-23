@@ -1,4 +1,5 @@
 #include "read_stat_types.hpp"
+#include "portable_string_hash.hpp"
 
 #include "duckdb/common/types/date.hpp"
 #include "duckdb/common/types/timestamp.hpp"
@@ -11,9 +12,15 @@
 
 namespace duckdb {
 
+// std::string-keyed set with an in-extension hash — the default
+// std::hash<std::string> lowers to libc++ std::__hash_memory, which
+// duckdb-wasm's main module doesn't export (→ stubbed → WASM crash on lookup).
+// See portable_string_hash.hpp.
+using StrSet = std::unordered_set<string, stats_duck::PortableStringHash>;
+
 // ─── Format string tables ───────────────────────────────────────────────────────
 
-static const std::unordered_set<string> DATE_FORMATS = {
+static const StrSet DATE_FORMATS = {
     // SAS
     "WEEKDATE", "WEEKDATX", "MMDDYY", "DDMMYY", "YYMMDD", "DATE", "DATE7", "DATE9", "YYMMDD10",
     "DDMMYYB", "DDMMYYB10", "DDMMYYC", "DDMMYYC10", "DDMMYYD", "DDMMYYD10",
@@ -29,7 +36,7 @@ static const std::unordered_set<string> DATE_FORMATS = {
     "SDATE", "SDATE8", "SDATE10",
 };
 
-static const std::unordered_set<string> DATETIME_FORMATS = {
+static const StrSet DATETIME_FORMATS = {
     // SAS
     "DATETIME", "DATETIME17", "DATETIME18", "DATETIME19", "DATETIME20",
     "DATETIME21", "DATETIME22", "E8601DT", "DATEAMPM", "MDYAMPM",
@@ -39,7 +46,7 @@ static const std::unordered_set<string> DATETIME_FORMATS = {
     "YMDHMS16", "YMDHMS19", "YMDHMS19.2", "YMDHMS20",
 };
 
-static const std::unordered_set<string> TIME_FORMATS = {
+static const StrSet TIME_FORMATS = {
     // SAS
     "TIME", "HHMM", "HHMMSS", "TIME5", "TIME8", "TIME20", "TIME20.3",
     "TOD", "TIMEAMPM", "IS8601TM", "E8601TM", "B8601TM",
