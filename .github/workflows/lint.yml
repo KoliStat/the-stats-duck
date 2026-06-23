@@ -1,0 +1,16 @@
+name: Lint
+
+on:
+  push:
+    branches: [main, "v0.*"]
+  pull_request:
+
+jobs:
+  wasm-string-hash-guard:
+    name: WASM std::string-hash guard
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # No submodules needed — this only greps src/.
+      - name: No default-hash std::string-keyed unordered containers (WASM ABI guard)
+        run: bash scripts/check-wasm-string-hash.sh
