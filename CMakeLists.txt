@@ -8,6 +8,12 @@ project(${TARGET_NAME})
 
 include_directories(src/include)
 
+# Eigen (header-only) is used ONLY by src/linalg.cpp (the linalg kernel impl).
+# linalg.hpp itself stays Eigen-free + DuckDB-free so it can be shared, via git
+# submodule, with downstream extensions. Eigen 3.4 has its own QR/Cholesky/SVD
+# (no BLAS/LAPACK/threads) so it compiles to wasm_eh.
+include_directories(${CMAKE_CURRENT_SOURCE_DIR}/third_party/eigen)
+
 # ── ReadStat third-party library ─────────────────────────────────────────────
 
 set(READSTAT_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third_party/readstat/src)
@@ -78,6 +84,7 @@ set(EXTENSION_SOURCES
     src/auto_bin_function.cpp
     src/corr_matrix_function.cpp
     src/lm_function.cpp
+    src/linalg.cpp
     src/table_one_function.cpp
     src/meta_function.cpp
     src/normality_function.cpp
