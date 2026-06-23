@@ -33,6 +33,9 @@ vcpkg_installed/
 /build_*.log
 /ci_watch_*.log
 
-# Local dev tooling — machine-specific paths / node_modules, kept out of the repo
+# Local emscripten shim scripts (machine-specific emsdk paths)
 /scripts/em-shims/
-/scripts/wasm-verify/
+
+# duckdb-wasm verification harness: track the scripts, ignore deps + run logs
+/scripts/wasm-verify/node_modules/
+/scripts/wasm-verify/*.log
