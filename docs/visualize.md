@@ -1,10 +1,16 @@
 # `VISUALIZE` — grammar-of-graphics charts in SQL
 
-`VISUALIZE` is a SQL dialect (the **ggsql** parser extension shipped in
+`VISUALIZE` is a SQL dialect (a grammar-of-graphics parser extension shipped in
 `stats_duck`) that turns a query into a chart. It does **not** draw anything
 itself — it returns a complete [Vega-Lite v5](https://vega.github.io/vega-lite/)
 JSON spec plus the SQL needed to feed it. Your client runs the SQL and hands the
 rows to `vega-embed`.
+
+> **See also** [posit-dev/ggsql-duckdb](https://github.com/posit-dev/ggsql-duckdb),
+> the dedicated grammar-of-graphics DuckDB extension from the ggplot2 team — the two
+> converged independently on `VISUALIZE … DRAW` → Vega-Lite. `stats_duck`'s
+> `VISUALIZE` is a deliberately minimal, WebAssembly-friendly built-in for plotting
+> its own output inline; for full grammar-of-graphics work, reach for ggsql.
 
 ```
 VISUALIZE <expr> AS <aesthetic> [, …] FROM <table> DRAW <mark> [clauses…]
@@ -71,7 +77,7 @@ The full channel set: `x`, `y`, `color`, `fill`, `stroke`, `shape`, `size`,
 
 ### Type overrides
 
-ggsql infers each channel's Vega-Lite type (quantitative / nominal / temporal).
+VISUALIZE infers each channel's Vega-Lite type (quantitative / nominal / temporal).
 Force it by appending `:type` — handy when an integer should be treated as a
 category:
 
@@ -315,19 +321,19 @@ DRAW point;
 
 ## 12. Custom marks
 
-Each mark is a scalar function named `ggsql_mark_v1_<name>`, discovered through
+Each mark is a scalar function named `visualize_mark_v1_<name>`, discovered through
 DuckDB's catalog. Other extensions can register their own marks the same way —
 no change to `stats_duck` needed. Introspect a mark's contract:
 
 ```sql
-SELECT ggsql_mark_v1_violin();   -- {"name":"violin","required_aesthetics":["x","y"]}
+SELECT visualize_mark_v1_violin();   -- {"name":"violin","required_aesthetics":["x","y"]}
 ```
 
 List everything available:
 
 ```sql
 SELECT function_name FROM duckdb_functions()
-WHERE function_name LIKE 'ggsql_mark_v1_%' ORDER BY 1;
+WHERE function_name LIKE 'visualize_mark_v1_%' ORDER BY 1;
 ```
 
 ---

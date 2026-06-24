@@ -22,7 +22,7 @@ VISUALIZE x AS x, y AS y FROM labels DRAW text
 
 # Introspection lists all three required aesthetics.
 query T
-SELECT ggsql_mark_v1_text() AS info
+SELECT visualize_mark_v1_text() AS info
 ----
 {"name":"text","required_aesthetics":["x","y","text"]}
 

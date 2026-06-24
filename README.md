@@ -20,7 +20,7 @@ statistician without leaving SQL. The current release covers four areas:
 
 - **Hypothesis tests** — parametric and non-parametric, with effect sizes and
   confidence intervals returned alongside the test statistic.
-- **Visualizations (ggsql)** — `VISUALIZE … FROM <table> DRAW <mark>`, a
+- **Visualizations (VISUALIZE)** — `VISUALIZE … FROM <table> DRAW <mark>`, a
   Posit-published Grammar-of-Graphics SQL dialect compiled to Vega-Lite v5.
   No server-side rendering: the extension emits a spec + per-layer SQL, and
   the client (browser, notebook, …) runs the SQL and feeds the rows to vega.
@@ -353,7 +353,7 @@ position and are excluded from `n`.
 > pyreadstat, haven, R) but are **not opened by real SAS / SAS Universal
 > Viewer / SAS OnDemand**. Use XPT for SAS-native readability.
 
-### Visualizations (ggsql parser extension)
+### Visualizations (VISUALIZE parser extension)
 
 A Grammar-of-Graphics SQL dialect: `VISUALIZE` returns a single row with two
 columns — `spec` (a complete Vega-Lite v5 JSON spec) and `layer_sqls` (a
@@ -362,6 +362,12 @@ runs each layer's SQL and feeds the rows to vega-embed via the `datasets` API.
 
 **Tutorial:** [`docs/visualize.md`](docs/visualize.md) walks through a worked
 example of every mark and clause.
+
+**See also:** [posit-dev/ggsql-duckdb](https://github.com/posit-dev/ggsql-duckdb)
+— the dedicated grammar-of-graphics DuckDB extension from the ggplot2 team (the
+two converged independently on `VISUALIZE … DRAW` → Vega-Lite). `stats_duck`'s
+`VISUALIZE` is a deliberately minimal, WebAssembly-friendly built-in for plotting
+its own output inline; for full grammar-of-graphics work, use ggsql.
 
 ```
 [WITH [RECURSIVE] <cte> AS (...) [, <cte> AS (...)]*]
@@ -388,7 +394,7 @@ parser unchanged.
 
 **Marks:** `point`, `line`, `bar`, `histogram`, `text`, `area`, `rule`, `tick`,
 `errorbar`, `errorband`, `boxplot`, `violin`, `heatmap`, `density`, `regression`. Custom
-marks register as `ggsql_mark_v1_<name>` scalar functions and are discovered
+marks register as `visualize_mark_v1_<name>` scalar functions and are discovered
 via DuckDB's catalog, so other extensions can ship their own marks without
 modifying stats_duck.
 
@@ -586,7 +592,7 @@ NULL handling differs by storage format: numeric NULLs round-trip as
 SAS/SPSS system-missing, but VARCHAR NULLs collapse to empty strings (these
 formats have no NULL/empty distinction for character columns).
 
-### Visualizations (ggsql)
+### Visualizations (VISUALIZE)
 
 ```sql
 -- Set up — penguin morphology, classic ggplot2 demo data

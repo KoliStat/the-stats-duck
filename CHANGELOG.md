@@ -135,7 +135,7 @@ that name is preserved across releases for backward compatibility.
   approximation). Non-integer `k` in `dpois` returns 0 (matches R's
   warn-and-zero). Cross-verified against R to 6 decimal places.
 
-- ggsql: per-layer `STAT smooth | summary | identity` modifier — appended
+- VISUALIZE: per-layer `STAT smooth | summary | identity` modifier — appended
   after a mark name as `DRAW <mark> STAT <name>`. `smooth` injects a
   Vega-Lite loess transform on `(x, y)` and groups by `color` when mapped
   (rejected on marks that already emit their own transform — `regression`,
@@ -146,7 +146,7 @@ that name is preserved across releases for backward compatibility.
   canonical scatter-with-LOESS overlay without a separate transform
   function.
 
-- ggsql: 2D `FACET BY <row_expr>, <col_expr>` — two comma-separated
+- VISUALIZE: 2D `FACET BY <row_expr>, <col_expr>` — two comma-separated
   expressions produce a row × column grid via vega-lite's facet operator
   with both `row` and `column` sub-channels. Composes with `SCALE`,
   `TITLE`, multi-layer `DRAW`, and `WITH … VISUALIZE`. The 1D form
@@ -155,7 +155,7 @@ that name is preserved across releases for backward compatibility.
   The bar mark's GROUP BY extends to both facet columns so per-cell
   ordinal bins compute correctly.
 
-- ggsql: `violin` mark — per-category density rendered as horizontal
+- VISUALIZE: `violin` mark — per-category density rendered as horizontal
   Vega-Lite area marks via the canonical `density` transform + `column`
   facet idiom. Required aesthetics `x` (categorical) and `y` (numeric);
   optional channels (`color`, `opacity`, ...) propagate through the
@@ -198,7 +198,7 @@ that name is preserved across releases for backward compatibility.
   NULL handling per the underlying `pearson_test` / `spearman_test` /
   `kendall_test` aggregates. Non-numeric columns are rejected at bind time.
 
-- **ggsql: `WITH … VISUALIZE`** — a leading CTE clause is now accepted in
+- **VISUALIZE: `WITH … VISUALIZE`** — a leading CTE clause is now accepted in
   front of a `VISUALIZE` statement. The captured `WITH [RECURSIVE] <cte> AS
   (...) [, <cte> AS (...)]*` block is prepended to each layer's projected
   SQL, so the `FROM` clause and aesthetic expressions can reference
@@ -295,18 +295,18 @@ that name is preserved across releases for backward compatibility.
 
 ### Added
 
-- ggsql: three new marks — `heatmap`, `density`, `regression`. `heatmap` is a
+- VISUALIZE: three new marks — `heatmap`, `density`, `regression`. `heatmap` is a
   `rect` mark with ordinal x/y and quantitative color (correlation matrices,
   contingency tables). `density` is a KDE via Vega-Lite's `density` transform
   on the `x` aesthetic; groups by `color` if mapped (one curve per level).
   `regression` is a `line` mark via Vega-Lite's `regression` transform fitting
   `y ~ x`; groups by `color` if mapped. Pairs naturally with `DRAW point
   DRAW regression` for scatter-with-fit overlays.
-- ggsql: `TITLE '<text>' [SUBTITLE '<text>']` clause appended after any
+- VISUALIZE: `TITLE '<text>' [SUBTITLE '<text>']` clause appended after any
   `SCALE` clauses. Emitted as a Vega-Lite `TitleParams` object (always object
   form, even without subtitle) so consumers don't need to handle both string
   and object shapes. `SUBTITLE` without a preceding `TITLE` is a parse error.
-- ggsql: `SCALE <channel> LABEL '<text>'` operator injects an `axis.title`
+- VISUALIZE: `SCALE <channel> LABEL '<text>'` operator injects an `axis.title`
   block alongside the channel's existing `scale` block. Composes with
   `TO` / `ZERO` / `DOMAIN` on the same channel and with `FACET BY` and
   multi-layer specs. LABEL on an unmapped channel is a silent no-op, matching
@@ -508,7 +508,7 @@ label)`, without scanning the data. Useful for inspecting SAS / SPSS
 
 ### Added
 
-- **ggsql — Grammar of Graphics for SQL.** New `VISUALIZE … FROM <table> DRAW <mark>`
+- **VISUALIZE — Grammar of Graphics for SQL.** New `VISUALIZE … FROM <table> DRAW <mark>`
   parser extension that compiles at plan time into a Vega-Lite v5 spec plus one SQL
   string per layer, returned as `(spec VARCHAR, layer_sqls MAP(VARCHAR, VARCHAR))`.
   Clients (e.g. Bedevere Wise in DuckDB-WASM) execute each layer's SQL and feed Arrow
@@ -519,7 +519,7 @@ label)`, without scanning the data. Useful for inspecting SAS / SPSS
   (`TO <scheme>` for color schemes, `ZERO true|false`, `DOMAIN <lo> <hi>`),
   type-annotated aesthetics (`year AS color:ordinal`), and SQL expressions in
   mappings (`bill_len * 2 AS x`, `coalesce(a, b) AS x`). Marks are registered
-  through a catalog-mediated registry (`ggsql_mark_v1_<name>` scalar functions),
+  through a catalog-mediated registry (`visualize_mark_v1_<name>` scalar functions),
   so other extensions can ship custom marks without modifying stats_duck.
 - `COPY tbl TO 'file.xpt'` — write SAS Transport (XPT v5) files via ReadStat.
   Supports BOOLEAN, all integer/float/decimal types, VARCHAR, DATE, TIMESTAMP, and

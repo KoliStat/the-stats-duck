@@ -13,9 +13,9 @@ class ExtensionLoader;
 
 namespace ggsql {
 
-// Registers a no-arg scalar function `ggsql_mark_v1_<name>` whose
+// Registers a no-arg scalar function `visualize_mark_v1_<name>` whose
 // function_info carries a MarkInfo. The function's executable callback is
-// only a debug stub: invoking it via `SELECT ggsql_mark_v1_point()` returns a
+// only a debug stub: invoking it via `SELECT visualize_mark_v1_point()` returns a
 // (name, required_aesthetics) introspection struct.
 void RegisterMark(ExtensionLoader &loader, const string &name,
                   vector<string> required_aesthetics, mark_render_t render);

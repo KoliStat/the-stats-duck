@@ -1,50 +1,50 @@
 # name: test/sql/ggsql_mark_registry.test
-# description: Phase 3 — built-in marks are registered through the ggsql_mark_v1_* catalog registry
+# description: Phase 3 — built-in marks are registered through the visualize_mark_v1_* catalog registry
 # group: [stats_duck]
 
 require stats_duck
 
 # Each built-in mark is a no-arg scalar function returning an introspection JSON.
 query T
-SELECT ggsql_mark_v1_point()
+SELECT visualize_mark_v1_point()
 ----
 {"name":"point","required_aesthetics":["x","y"]}
 
 query T
-SELECT ggsql_mark_v1_line()
+SELECT visualize_mark_v1_line()
 ----
 {"name":"line","required_aesthetics":["x","y"]}
 
 query T
-SELECT ggsql_mark_v1_bar()
+SELECT visualize_mark_v1_bar()
 ----
 {"name":"bar","required_aesthetics":["x","y"]}
 
 query T
-SELECT ggsql_mark_v1_histogram()
+SELECT visualize_mark_v1_histogram()
 ----
 {"name":"histogram","required_aesthetics":["x"]}
 
 # All built-in marks are visible in the catalog under the v1 prefix.
 query T rowsort
 SELECT function_name FROM duckdb_functions()
-WHERE function_name LIKE 'ggsql_mark_v1_%'
+WHERE function_name LIKE 'visualize_mark_v1_%'
 ----
-ggsql_mark_v1_area
-ggsql_mark_v1_bar
-ggsql_mark_v1_boxplot
-ggsql_mark_v1_density
-ggsql_mark_v1_errorband
-ggsql_mark_v1_errorbar
-ggsql_mark_v1_heatmap
-ggsql_mark_v1_histogram
-ggsql_mark_v1_line
-ggsql_mark_v1_point
-ggsql_mark_v1_regression
-ggsql_mark_v1_rule
-ggsql_mark_v1_text
-ggsql_mark_v1_tick
-ggsql_mark_v1_violin
+visualize_mark_v1_area
+visualize_mark_v1_bar
+visualize_mark_v1_boxplot
+visualize_mark_v1_density
+visualize_mark_v1_errorband
+visualize_mark_v1_errorbar
+visualize_mark_v1_heatmap
+visualize_mark_v1_histogram
+visualize_mark_v1_line
+visualize_mark_v1_point
+visualize_mark_v1_regression
+visualize_mark_v1_rule
+visualize_mark_v1_text
+visualize_mark_v1_tick
+visualize_mark_v1_violin
 
 # Unknown mark — registry lookup fails cleanly.
 statement ok

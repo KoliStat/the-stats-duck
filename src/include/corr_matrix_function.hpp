@@ -10,7 +10,7 @@ namespace duckdb {
 // Long-format pairwise correlation matrix as a DuckDB table function.
 // Emits one row per ordered pair (row_var, col_var) — including self-pairs on
 // the diagonal and both (a, b) / (b, a) mirrors — so the result feeds the
-// ggsql `heatmap` mark directly without a CROSS JOIN.
+// VISUALIZE `heatmap` mark directly without a CROSS JOIN.
 //
 // Schema:  row_var VARCHAR, col_var VARCHAR, coef DOUBLE, p_value DOUBLE, n BIGINT
 //

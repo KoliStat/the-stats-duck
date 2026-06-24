@@ -340,20 +340,20 @@ const MarkInfo &LookupMark(ClientContext &context, const string &name) {
 	auto entry = catalog.GetEntry(context, CatalogType::SCALAR_FUNCTION_ENTRY, DEFAULT_SCHEMA,
 	                              CatalogName(name), OnEntryNotFound::RETURN_NULL);
 	if (!entry) {
-		throw InvalidInputException("ggsql: unknown mark '%s'", name);
+		throw InvalidInputException("visualize: unknown mark '%s'", name);
 	}
 	auto &func_entry = entry->Cast<ScalarFunctionCatalogEntry>();
 	if (func_entry.functions.Size() == 0) {
-		throw InvalidInputException("ggsql: unknown mark '%s'", name);
+		throw InvalidInputException("visualize: unknown mark '%s'", name);
 	}
 	auto &func = func_entry.functions.GetFunctionReferenceByOffset(0);
 	if (!func.function_info) {
-		throw InvalidInputException("ggsql: '%s' is not a registered mark", name);
+		throw InvalidInputException("visualize: '%s' is not a registered mark", name);
 	}
 	auto &info = func.function_info->Cast<MarkInfo>();
 	if (info.abi_version != GGSQL_MARK_ABI_VERSION) {
 		throw InvalidInputException(
-		    "ggsql: mark '%s' uses ABI version %u but this build expects %u", name,
+		    "visualize: mark '%s' uses ABI version %u but this build expects %u", name,
 		    info.abi_version, GGSQL_MARK_ABI_VERSION);
 	}
 	return info;
