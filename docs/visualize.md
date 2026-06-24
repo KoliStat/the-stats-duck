@@ -9,8 +9,10 @@ rows to `vega-embed`.
 > **See also** [posit-dev/ggsql-duckdb](https://github.com/posit-dev/ggsql-duckdb),
 > the dedicated grammar-of-graphics DuckDB extension from the ggplot2 team — the two
 > converged independently on `VISUALIZE … DRAW` → Vega-Lite. `stats_duck`'s
-> `VISUALIZE` is a deliberately minimal, WebAssembly-friendly built-in for plotting
-> its own output inline; for full grammar-of-graphics work, reach for ggsql.
+> `VISUALIZE` is **not** a reimplementation of ggsql and does not track its syntax —
+> it's a deliberately minimal, WebAssembly-friendly built-in that supports only the
+> fixed set of marks and clauses documented below, for plotting stats output inline.
+> For the full grammar of graphics, reach for ggsql.
 
 ```
 VISUALIZE <expr> AS <aesthetic> [, …] FROM <table> DRAW <mark> [clauses…]
