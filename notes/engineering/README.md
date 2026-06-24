@@ -29,6 +29,13 @@ that has been written down than to re-derive it.
   on libstdc++ / libc++ / MSVC. Fix: draw indices from `mt19937_64` directly with
   an unbiased rejection bound. General rule: consume the engine, not the distribution.
 
+- [`2026-06-lm-fit-robust-se-aggregate.md`](2026-06-lm-fit-robust-se-aggregate.md)
+  — why `lm_fit` (OLS aggregate with HC0–HC3 SEs) **can't stream**: HC2/HC3
+  leverages `hᵢᵢ = xᵢᵀ(X'X)⁻¹xᵢ` and cluster scores don't reduce to sufficient
+  statistics, so the state buffers raw rows. Also: building the first
+  `LIST<STRUCT>` aggregate output, and why aggregates take positional constants
+  (not `:=` named params) — which is what makes its coefficients by-position.
+
 - [`2026-06-duckdb-version-must-match-duckdb-wasm.md`](2026-06-duckdb-version-must-match-duckdb-wasm.md)
   — `table_one()` crashed in `@duckdb/duckdb-wasm` with `r/t is not a function`.
   Overturned two hypotheses (the DuckDB version retarget and the `-sWASM_BIGINT`

@@ -226,6 +226,7 @@ Output columns (fixed schema):
 | `table_one(data, variables [, by])`               | Long-format descriptives table for mixed variable types    |
 | `corr_matrix(data, variables [, method])`         | Long-format pairwise correlation matrix (`pearson` / `spearman` / `kendall`) |
 | `lm(data, y, x)` / `lm_summary(data, y, x)`       | OLS regression — `lm` returns per-term coefficients, `lm_summary` returns model R² / F / σ |
+| `lm_fit(y, x [, vcov [, add_intercept]])`         | OLS regression **aggregate** (one model per `GROUP BY`) with classical or HC0–HC3 robust standard errors |
 
 ```sql
 SELECT * FROM table_one(
@@ -313,6 +314,68 @@ fits the model twice — use a CTE if you need both shapes from a single fit.
 Errors on singular `X'X` (perfectly collinear predictors) or insufficient rows
 (`n ≤ k` parameters). When the intercept is removed, R²/adj-R² use the
 uncentered TSS = Σ y² to match R's `summary.lm` — interpret with care.
+
+### Linear regression aggregate with robust SEs (`lm_fit`)
+
+`lm_fit` is the **aggregate** companion to `lm`: it fits OLS over the rows of a
+group, so a single `GROUP BY` returns one regression per key. Where `lm` takes
+column *names* (and labels its terms), the aggregate takes the design-matrix row
+as a `LIST(DOUBLE)` of predictor *values* — so coefficients come back **by
+position**. The intercept is prepended automatically.
+
+```sql
+-- example data: y ~ x1 over 8 rows in a table `points(y, x1)`
+SELECT (u).term, (u).estimate, (u).std_error
+FROM (SELECT unnest((lm_fit(y, [x1])).coefficients) AS u FROM points);
+--   term         estimate  std_error
+--   (Intercept)  0.0357    0.1404
+--   x1           1.9976    0.0278
+```
+
+The headline is **heteroskedasticity-consistent standard errors**. A third,
+constant argument selects the covariance estimator — `'const'` (default,
+classical), `'HC0'` (Eicker–Huber–White), `'HC1'` (the Stata `,robust`
+default, `× n/(n−k)`), `'HC2'`, or `'HC3'` (the recommended small-sample
+default). Only the `std_error` / `t_statistic` / `p_value` change; the point
+estimates do not:
+
+```sql
+SELECT (u).term, (u).std_error
+FROM (SELECT unnest((lm_fit(y, [x1], 'HC3')).coefficients) AS u FROM points);
+--   term         std_error
+--   (Intercept)  0.1313
+--   x1           0.0282
+```
+
+The killer query is a regression *per group*, computed where the data lives:
+
+```sql
+-- a separate fit for every cylinder count, robust SEs, in one pass
+SELECT cyl, lm_fit(mpg, [wt, hp], 'HC1') AS model
+FROM mtcars GROUP BY cyl;
+```
+
+`lm_fit` returns a single `STRUCT`:
+
+| Field                                                       | Type                | Notes |
+| ----------------------------------------------------------- | ------------------- | ----- |
+| `coefficients`                                              | `LIST<STRUCT>`      | one element per term: `term`, `estimate`, `std_error`, `t_statistic`, `p_value` |
+| `n`, `k`, `df_residual`                                     | `BIGINT`            | rows used, parameters (incl. intercept), `n − k` |
+| `r_squared`, `adj_r_squared`, `sigma`                       | `DOUBLE`            | classical model fit |
+| `f_statistic`, `f_p_value`                                  | `DOUBLE`            | classical overall-significance F (not robustified) |
+| `has_intercept`                                             | `BOOLEAN`           | |
+| `vcov_type`                                                 | `VARCHAR`           | the estimator actually used |
+
+A fourth constant argument, `add_intercept := false` (positionally
+`lm_fit(y, x, 'const', false)`), drops the constant term — note aggregates take
+**positional** constants, not the `name := value` form `lm` uses. Rows with a
+NULL `y` or any NULL list element are dropped (complete-case). A group with too
+few rows (`n ≤ k`) or a singular/collinear design yields a **NULL** result for
+that group rather than aborting the query. `t`/`p` use the t(n−k) distribution
+(matching Stata / statsmodels `use_t`). All numerics run on the shared
+header-only linear-algebra kernel (`(X'X)⁻¹`, the HC sandwich), validated
+against statsmodels — see `test/cpp/test_lm_fit.cpp`. Cluster-robust SEs are a
+planned follow-up.
 
 ### Multiple-testing correction (scalar)
 

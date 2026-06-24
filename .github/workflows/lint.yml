@@ -15,14 +15,14 @@ jobs:
       - name: No default-hash std::string-keyed unordered containers (WASM ABI guard)
         run: bash scripts/check-wasm-string-hash.sh
 
-  linalg-cpp-tests:
-    name: linalg C++ unit tests (Epic 0.1)
+  cpp-tests:
+    name: C++ unit tests (linalg + lm_fit)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      # Only the Eigen submodule is needed (linalg is DuckDB-free); skip the
-      # huge duckdb submodule.
+      # Only the Eigen submodule is needed (these layers are DuckDB-free); skip
+      # the huge duckdb submodule.
       - name: Check out Eigen
         run: git submodule update --init --depth 1 third_party/eigen
-      - name: Build + run linalg tests
-        run: bash scripts/run-linalg-tests.sh
+      - name: Build + run C++ unit tests
+        run: bash scripts/run-cpp-tests.sh

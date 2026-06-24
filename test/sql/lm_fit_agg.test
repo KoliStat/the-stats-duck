@@ -1,0 +1,154 @@
+# name: test/sql/lm_fit_agg.test
+# description: lm_fit OLS regression aggregate with classical + HC0–HC3 robust SEs
+# group: [stats_duck]
+
+require stats_duck
+
+# Golden values match test/cpp/test_lm_fit.cpp (statsmodels oracle). Floats are
+# compared via printf('%.4f', …) for deterministic formatting.
+
+# ── DS3: intercept + 1 predictor, n=8 (simple sanity) ────────────────────────
+statement ok
+CREATE TABLE ds3 AS SELECT * FROM (VALUES
+    (2.1, 1.0), (3.9, 2.0), (6.2, 3.0), (7.8, 4.0),
+    (10.1, 5.0), (12.2, 6.0), (13.8, 7.0), (16.1, 8.0)
+) AS t(y, x1);
+
+# Coefficients by position + R²
+query TTTTT
+SELECT printf('%.4f', (m.coefficients[1]).estimate),
+       printf('%.4f', (m.coefficients[2]).estimate),
+       printf('%.4f', (m.coefficients[1]).std_error),
+       printf('%.4f', (m.coefficients[2]).std_error),
+       printf('%.4f', m.r_squared)
+FROM (SELECT lm_fit(y, [x1]) AS m FROM ds3)
+----
+0.0357	1.9976	0.1404	0.0278	0.9988
+
+# Model-level scalars + auto-generated term names + echoed vcov
+query TTTTTTT
+SELECT m.n, m.k, m.df_residual, m.has_intercept, printf('%.4f', m.sigma),
+       (m.coefficients[1]).term, m.vcov_type
+FROM (SELECT lm_fit(y, [x1]) AS m FROM ds3)
+----
+8	2	6	true	0.1802	(Intercept)	const
+
+# ── DS1: intercept + 2 predictors, n=12, high-leverage point (HC ladder) ─────
+statement ok
+CREATE TABLE ds1 AS SELECT * FROM (VALUES
+    (9.0, 1.0, 5.0), (8.0, 2.0, 3.0), (7.0, 3.0, 8.0), (14.0, 4.0, 2.0),
+    (12.0, 5.0, 7.0), (20.0, 6.0, 4.0), (15.0, 7.0, 9.0), (28.0, 8.0, 1.0),
+    (22.0, 9.0, 6.0), (31.0, 10.0, 3.0), (29.0, 11.0, 8.0), (55.0, 25.0, 4.0)
+) AS t(y, x1, x2);
+
+# Coefficients (3 terms) + R²
+query TTTT
+SELECT printf('%.4f', (m.coefficients[1]).estimate),
+       printf('%.4f', (m.coefficients[2]).estimate),
+       printf('%.4f', (m.coefficients[3]).estimate),
+       printf('%.4f', m.r_squared)
+FROM (SELECT lm_fit(y, [x1, x2]) AS m FROM ds1)
+----
+10.1206	2.0579	-0.9787	0.9672
+
+# The headline: x1's SE shifts with the covariance estimator (const/HC1/HC3),
+# driven by the high-leverage row. β is invariant across vcov.
+query TTTTTT
+SELECT printf('%.4f', (a.coefficients[2]).estimate),
+       printf('%.4f', (b.coefficients[2]).estimate),
+       printf('%.4f', (a.coefficients[2]).std_error),
+       printf('%.4f', (b.coefficients[2]).std_error),
+       printf('%.4f', (c.coefficients[2]).std_error),
+       printf('%.4f', (d.coefficients[2]).std_error)
+FROM (SELECT lm_fit(y, [x1, x2])        AS a,
+             lm_fit(y, [x1, x2], 'HC0')  AS b,
+             lm_fit(y, [x1, x2], 'HC1')  AS c,
+             lm_fit(y, [x1, x2], 'HC3')  AS d
+      FROM ds1)
+----
+2.0579	2.0579	0.1303	0.1255	0.1450	0.4749
+
+# Tidy consumption: UNNEST the coefficients list-of-structs (the documented path)
+query TTT
+SELECT (u).term, printf('%.4f', (u).estimate), printf('%.4f', (u).std_error)
+FROM (SELECT unnest((lm_fit(y, [x1, x2], 'HC3')).coefficients) AS u FROM ds1)
+ORDER BY (u).term
+----
+(Intercept)	10.1206	3.2802
+x1	2.0579	0.4749
+x2	-0.9787	0.3839
+
+# ── DS2: NO intercept, 2 predictors, n=10 (uncentered R², add_intercept=false)─
+statement ok
+CREATE TABLE ds2 AS SELECT * FROM (VALUES
+    (3.0, 1.0, 2.0), (5.0, 2.0, 1.0), (11.0, 3.0, 4.0), (10.0, 4.0, 3.0),
+    (19.0, 5.0, 6.0), (18.0, 6.0, 5.0), (27.0, 7.0, 8.0), (26.0, 8.0, 7.0),
+    (36.0, 9.0, 10.0), (34.0, 10.0, 9.0)
+) AS t(y, x1, x2);
+
+query TTTTT
+SELECT printf('%.4f', (m.coefficients[1]).estimate),
+       printf('%.4f', (m.coefficients[2]).estimate),
+       (m.coefficients[1]).term,
+       m.has_intercept,
+       m.k
+FROM (SELECT lm_fit(y, [x1, x2], 'const', false) AS m FROM ds2)
+----
+1.4667	2.0667	x1	false	2
+
+# ── GROUP BY: one regression per group ───────────────────────────────────────
+statement ok
+CREATE TABLE grouped AS SELECT * FROM (VALUES
+    ('A', 3.0, 1.0), ('A', 5.0, 2.0), ('A', 7.0, 3.0), ('A', 9.0, 4.0), ('A', 11.0, 5.0),
+    ('B', 3.0, 1.0), ('B', 6.0, 2.0), ('B', 9.0, 3.0), ('B', 12.0, 4.0), ('B', 15.0, 5.0)
+) AS t(grp, y, x);
+
+query TTT
+SELECT grp,
+       printf('%.4f', (m.coefficients[2]).estimate),
+       printf('%.4f', m.r_squared)
+FROM (SELECT grp, lm_fit(y, [x]) AS m FROM grouped GROUP BY grp)
+ORDER BY grp
+----
+A	2.0000	1.0000
+B	3.0000	1.0000
+
+# ── NULL handling (complete-case) ────────────────────────────────────────────
+# NULL response row is skipped — n unchanged.
+statement ok
+INSERT INTO ds3 VALUES (NULL, 9.0);
+
+query T
+SELECT m.n FROM (SELECT lm_fit(y, [x1]) AS m FROM ds3)
+----
+8
+
+# A NULL element inside the design list drops that row (here row 2 → n=5).
+query T
+SELECT m.n FROM (SELECT lm_fit(y, [x1, x2]) AS m FROM (VALUES
+    (1.0, 1.0, 2.0), (2.0, 2.0, NULL), (3.0, 3.0, 1.0),
+    (4.0, 4.0, 7.0), (5.0, 5.0, 3.0), (6.0, 6.0, 8.0)) t(y, x1, x2))
+----
+5
+
+# ── Degenerate groups → NULL result (never aborts the query) ─────────────────
+# Too few rows (n ≤ k).
+query T
+SELECT lm_fit(y, [x1]) FROM (SELECT 1.0 AS y, 2.0 AS x1)
+----
+NULL
+
+# Perfectly collinear predictors (x2 = 2·x1) → singular design.
+query T
+SELECT lm_fit(y, [x1, x2]) FROM (VALUES
+    (1.0, 1.0, 2.0), (2.0, 2.0, 4.0), (3.0, 3.0, 6.0), (4.0, 4.0, 8.0)) t(y, x1, x2)
+----
+NULL
+
+# ── Bad vcov → bind error ────────────────────────────────────────────────────
+statement error
+SELECT lm_fit(y, [x1]) FROM ds3 WHERE false
+UNION ALL
+SELECT lm_fit(y, [x1], 'HC9') FROM ds3
+----
+unknown vcov

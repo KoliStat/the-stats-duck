@@ -88,10 +88,11 @@ zig_mingw_release:
 	cmake --build build/zig_mingw_release --config Release --parallel $(MINGW_JOBS) \
 	      --target stats_duck_loadable_extension duckdb_local_extension_repo
 
-# ─── linalg C++ unit tests (Epic 0.1) ─────────────────────────────────────────
-# Standalone: the linalg kernel is DuckDB-free, so it's tested directly (no
-# duckdb, no extension build). Needs a C++17 compiler ($CXX, default g++) and the
-# third_party/eigen submodule. See scripts/run-linalg-tests.sh.
-.PHONY: test_linalg
-test_linalg:
-	bash scripts/run-linalg-tests.sh
+# ─── Standalone C++ unit tests (DuckDB-free numeric layers) ───────────────────
+# The linalg kernel (Epic 0.1) and the lm_fit regression core (Epic 1.1) are
+# DuckDB-free, so they're tested directly (no duckdb, no extension build). Needs
+# a C++17 compiler ($CXX, default g++) and the third_party/eigen submodule.
+# See scripts/run-cpp-tests.sh. `test_linalg` kept as an alias.
+.PHONY: test_cpp test_linalg
+test_cpp test_linalg:
+	bash scripts/run-cpp-tests.sh

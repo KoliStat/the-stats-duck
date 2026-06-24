@@ -84,6 +84,8 @@ set(EXTENSION_SOURCES
     src/auto_bin_function.cpp
     src/corr_matrix_function.cpp
     src/lm_function.cpp
+    src/lm_core.cpp
+    src/lm_fit_function.cpp
     src/linalg.cpp
     src/table_one_function.cpp
     src/meta_function.cpp

@@ -10,6 +10,28 @@ that name is preserved across releases for backward compatibility.
 
 ## [Unreleased]
 
+### Added
+
+- **`lm_fit(y, x [, vcov [, add_intercept]])` — OLS regression aggregate with
+  robust standard errors.** The aggregate companion to `lm`/`lm_summary`: it fits
+  one model per `GROUP BY` group, consuming the design-matrix row as a
+  `LIST(DOUBLE)` of predictor values (coefficients come back by position). A
+  constant `vcov` argument selects the covariance estimator — `'const'` (default),
+  or the heteroskedasticity-consistent `'HC0'`, `'HC1'` (Stata `,robust`),
+  `'HC2'`, `'HC3'` (small-sample default) — so only the standard errors / t / p
+  change, not the point estimates. Returns a `STRUCT` whose `coefficients` field
+  is a `LIST<STRUCT(term, estimate, std_error, t_statistic, p_value)>` alongside
+  `n`, `k`, `df_residual`, `r_squared`, `adj_r_squared`, `sigma`, `f_statistic`,
+  `f_p_value`, `has_intercept`, and `vcov_type`. Degenerate groups (`n ≤ k` or a
+  singular design) yield NULL for that group rather than aborting the query.
+  Validated against statsmodels `cov_type='HC*'`; see `test/cpp/test_lm_fit.cpp`.
+  Cluster-robust SEs are a planned follow-up.
+- **Header-only dense linear-algebra kernel** (`src/include/linalg.hpp`) backing
+  the modeling functions — Cholesky / QR / SVD solves, rank, Moore–Penrose
+  pseudo-inverse, SPD inverse, and the covariance sandwich, on Eigen but behind a
+  DuckDB-free / Eigen-free API. Not SQL-exposed; `lm_fit` is its first consumer
+  (and `lm`/`lm_summary` will be re-hosted on it). See `scripts/run-cpp-tests.sh`.
+
 ### Changed
 
 - **`bootstrap()` is now reproducible across platforms.** Resample indices were
