@@ -364,8 +364,8 @@ runs each layer's SQL and feeds the rows to vega-embed via the `datasets` API.
 example of every mark and clause.
 
 **See also:** [posit-dev/ggsql-duckdb](https://github.com/posit-dev/ggsql-duckdb)
-— the dedicated grammar-of-graphics DuckDB extension from the ggplot2 team (the
-two converged independently on `VISUALIZE … DRAW` → Vega-Lite). `stats_duck`'s
+— the dedicated grammar-of-graphics DuckDB extension from the ggplot2 team that
+inspired this syntax. `stats_duck`'s
 `VISUALIZE` is **not** a reimplementation of ggsql and doesn't track its syntax — it's
 a deliberately minimal, WebAssembly-friendly built-in supporting only a fixed set of
 marks and clauses, for plotting stats output inline. For the full grammar of graphics,

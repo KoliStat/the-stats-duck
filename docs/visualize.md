@@ -7,8 +7,8 @@ JSON spec plus the SQL needed to feed it. Your client runs the SQL and hands the
 rows to `vega-embed`.
 
 > **See also** [posit-dev/ggsql-duckdb](https://github.com/posit-dev/ggsql-duckdb),
-> the dedicated grammar-of-graphics DuckDB extension from the ggplot2 team — the two
-> converged independently on `VISUALIZE … DRAW` → Vega-Lite. `stats_duck`'s
+> the dedicated grammar-of-graphics DuckDB extension from the ggplot2 team that
+> inspired this syntax. `stats_duck`'s
 > `VISUALIZE` is **not** a reimplementation of ggsql and does not track its syntax —
 > it's a deliberately minimal, WebAssembly-friendly built-in that supports only the
 > fixed set of marks and clauses documented below, for plotting stats output inline.
