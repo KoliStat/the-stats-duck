@@ -41,6 +41,10 @@ bool parse_vcov(const std::string &name, Vcov &out) {
 		out = Vcov::kHC2;
 	} else if (n == "hc3") {
 		out = Vcov::kHC3;
+	} else if (n == "cr0") {
+		out = Vcov::kCR0;
+	} else if (n == "cr1" || n == "cluster") {
+		out = Vcov::kCR1;
 	} else {
 		return false;
 	}
@@ -59,11 +63,16 @@ const char *vcov_name(Vcov v) {
 		return "HC2";
 	case Vcov::kHC3:
 		return "HC3";
+	case Vcov::kCR0:
+		return "CR0";
+	case Vcov::kCR1:
+		return "CR1";
 	}
 	return "const";
 }
 
-LmResult fit_lm(const std::vector<double> &y, const linalg::Mat &X_pred, const LmOptions &opts) {
+LmResult fit_lm(const std::vector<double> &y, const linalg::Mat &X_pred, const LmOptions &opts,
+                const std::vector<int> *cluster_ids) {
 	const std::size_t n = y.size();
 	const std::size_t p = X_pred.cols; // predictors (excludes intercept)
 
@@ -77,6 +86,29 @@ LmResult fit_lm(const std::vector<double> &y, const linalg::Mat &X_pred, const L
 	if (n <= k) {
 		return Fail("lm_fit: need n > k (" + std::to_string(k) + " params), got n = " +
 		            std::to_string(n) + " — not enough complete-case rows");
+	}
+
+	// Cluster-robust setup: the ids are required, must cover every row, be dense
+	// 0-based labels, and resolve to at least two clusters (G−1 ≥ 1 df).
+	const bool clustered = (opts.vcov == Vcov::kCR0 || opts.vcov == Vcov::kCR1);
+	std::size_t G = 0;
+	if (clustered) {
+		if (!cluster_ids || cluster_ids->size() != n) {
+			return Fail("lm_fit: cluster-robust SE requires a cluster id for every row");
+		}
+		int max_id = -1;
+		for (const int id : *cluster_ids) {
+			if (id < 0) {
+				return Fail("lm_fit: cluster ids must be non-negative dense labels");
+			}
+			if (id > max_id) {
+				max_id = id;
+			}
+		}
+		G = static_cast<std::size_t>(max_id) + 1;
+		if (G < 2) {
+			return Fail("lm_fit: cluster-robust SE needs at least 2 clusters");
+		}
 	}
 
 	// Materialize the full design matrix X (n × k), intercept first when present.
@@ -151,6 +183,39 @@ LmResult fit_lm(const std::vector<double> &y, const linalg::Mat &X_pred, const L
 				V(i, j) = sigma2 * XtXinv(i, j);
 			}
 		}
+	} else if (clustered) {
+		// Cluster-robust (Liang-Zeger) sandwich: V = (XᵀX)⁻¹ · M · (XᵀX)⁻¹ with
+		// the "meat" M = Σ_g s_g s_gᵀ, s_g = Σ_{i∈g} xᵢêᵢ the cluster-g score sum.
+		// One pass fills the per-cluster score sums; CR1 then applies the
+		// Stata/statsmodels finite-sample factor [G/(G−1)]·[(N−1)/(N−k)].
+		std::vector<double> score(G * k, 0.0); // G×k row-major: per-cluster s_g
+		for (std::size_t r = 0; r < n; r++) {
+			double *sg = &score[static_cast<std::size_t>((*cluster_ids)[r]) * k];
+			const double e = resid[r];
+			for (std::size_t j = 0; j < k; j++) {
+				sg[j] += e * X(r, j);
+			}
+		}
+		linalg::Mat meat(k, k);
+		for (std::size_t gi = 0; gi < G; gi++) {
+			const double *sg = &score[gi * k];
+			for (std::size_t i = 0; i < k; i++) {
+				const double si = sg[i];
+				for (std::size_t j = 0; j < k; j++) {
+					meat(i, j) += si * sg[j];
+				}
+			}
+		}
+		V = linalg::sandwich(XtXinv, meat); // (XᵀX)⁻¹ · M · (XᵀX)⁻¹
+		if (opts.vcov == Vcov::kCR1) {
+			const double Gd = static_cast<double>(G);
+			const double nd = static_cast<double>(n);
+			const double kd = static_cast<double>(k);
+			const double c = (Gd / (Gd - 1.0)) * ((nd - 1.0) / (nd - kd));
+			for (auto &v : V.data) {
+				v *= c;
+			}
+		}
 	} else {
 		// Heteroskedasticity-consistent sandwich: V = (XᵀX)⁻¹ · M · (XᵀX)⁻¹,
 		// M = Σᵢ wᵢ xᵢxᵢᵀ with wᵢ the squared residual, leverage-adjusted for
@@ -197,6 +262,7 @@ LmResult fit_lm(const std::vector<double> &y, const linalg::Mat &X_pred, const L
 	res.n = n;
 	res.k = k;
 	res.df_residual = n - k;
+	res.n_clusters = clustered ? G : 0;
 	res.has_intercept = opts.intercept;
 	res.vcov = opts.vcov;
 	res.sigma = std::sqrt(sigma2);
@@ -213,6 +279,9 @@ LmResult fit_lm(const std::vector<double> &y, const linalg::Mat &X_pred, const L
 	res.std_error.assign(k, 0.0);
 	res.t_statistic.assign(k, 0.0);
 	res.p_value.assign(k, 0.0);
+	// Cluster-robust inference uses a t(G−1) reference (G = #clusters); classical
+	// and HC use t(n−k). df_residual itself is always reported as n−k.
+	const double df_infer = clustered ? static_cast<double>(G - 1) : df_resid;
 	for (std::size_t j = 0; j < k; j++) {
 		const double var = V(j, j);
 		const double se = var > 0.0 ? std::sqrt(var) : 0.0;
@@ -220,7 +289,7 @@ LmResult fit_lm(const std::vector<double> &y, const linalg::Mat &X_pred, const L
 		if (se > 0.0) {
 			const double t = beta[j] / se;
 			res.t_statistic[j] = t;
-			res.p_value[j] = 2.0 * (1.0 - stats_duck::StudentTCDF(std::fabs(t), df_resid));
+			res.p_value[j] = 2.0 * (1.0 - stats_duck::StudentTCDF(std::fabs(t), df_infer));
 		} else {
 			res.t_statistic[j] = kNaN;
 			res.p_value[j] = kNaN;

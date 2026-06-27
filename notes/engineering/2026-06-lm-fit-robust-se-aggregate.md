@@ -86,3 +86,39 @@ weighting fails loudly there instead of hiding behind near-identical numbers.
 The math lives in a DuckDB-free `lm_core` (built on `linalg.hpp`) so it is unit-
 tested directly (`test/cpp/test_lm_fit.cpp`) and can later back `lm`/`lm_summary`
 too — the aggregate is a thin vector-plumbing wrapper over it.
+
+## Addendum: cluster-robust SEs (CR0/CR1)
+
+The follow-up landed. Four things were non-obvious enough to record.
+
+**Group the buffered rows by SORTING, not a hash map.** Computing the
+cluster meat `M = Σ_g s_g s_gᵀ` (`s_g = Σ_{i∈g} xᵢêᵢ`) means partitioning the
+buffered rows by cluster key in Finalize. The obvious tool — a
+`std::unordered_map<std::string, …>` keyed by the cluster string — is exactly the
+construct that pulled the unexported libc++ `std::__hash_memory` symbol into the
+wasm build and broke `table_one` (see
+[the duckdb-wasm note](2026-06-duckdb-version-must-match-duckdb-wasm.md)).
+`DensifyClusters` instead sorts row indices by key and bumps a dense id at each
+change: `std::sort` uses `operator<`, never `std::hash`, so it is wasm-safe by
+construction (and exact — no collision risk a 64-bit hash would carry). The dense
+ids feed `fit_lm`; the label values are irrelevant, only the partition matters.
+
+**The cluster p-values use t(G−1), and statsmodels hides this.** Pinned
+empirically (the only safe way): statsmodels' `OLSResults` under
+`cov_type='cluster'` reports `.df_resid` as `n−k`, but its `tvalues`/`pvalues`
+use a `t(G−1)` reference (G = #clusters). We mirror exactly — `df_residual` stays
+`n−k`, and a local `df_infer = G−1` feeds *only* the p-value. The overall-F is
+left classical, as under HC.
+
+**The CR1 factor is `[G/(G−1)]·[(N−1)/(N−k)]`** — confirmed, not assumed, by a
+probe that reproduced statsmodels' default `bse` to machine precision (CR0 =
+`use_correction=False`, the raw sandwich; CR1 = the default). The generator
+(`gen_lm_fit_fixtures.py`) re-asserts both invariants every run, so a statsmodels
+upgrade that changed them would fail loudly.
+
+**DuckDB does not implicitly cast INTEGER → VARCHAR for the cluster argument.**
+The cluster key column is typed `VARCHAR`; `lm_fit(y, x, 'CR1', firm_id)` with an
+integer `firm_id` is a bind error ("no function matches"). Users cast explicitly
+(`firm_id::VARCHAR`). One VARCHAR key type still covers every realistic cluster
+(string ids, composite `year||state`, integers via cast) without doubling the
+overload surface.

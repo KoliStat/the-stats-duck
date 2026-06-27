@@ -1,16 +1,17 @@
 // Direct C++ unit tests for the statsduck::fit_lm regression core (Epic 1.1).
 //
-// Tests the DuckDB-free OLS + HC0/HC1/HC2/HC3 implementation in
+// Tests the DuckDB-free OLS + HC0/HC1/HC2/HC3 + CR0/CR1 implementation in
 // src/include/lm_core.hpp against golden values produced offline by statsmodels
 // 0.14.x (see test/cpp/gen_lm_fit_fixtures.py). statsmodels is the oracle:
-// matching its cov_type='HC*' output validates OUR formulas, not just a
-// re-derivation of them. Same golden-value + tolerance-band discipline as
+// matching its cov_type='HC*'/'cluster' output validates OUR formulas, not just
+// a re-derivation of them. Same golden-value + tolerance-band discipline as
 // test_linalg.cpp / the r*-distribution SQL tests. Builds standalone (no DuckDB)
-// via scripts/run-linalg-tests.sh.
+// via scripts/run-cpp-tests.sh.
 //
 // DS1 carries a high-leverage point (x1 = 25), so HC0→HC3 SEs diverge sharply
 // (x1's SE runs 0.126 → 0.145 → 0.234 → 0.475) — a bug in any single leverage
-// weighting fails loudly here.
+// weighting fails loudly here. DS4 carries a per-cluster random effect, so the
+// cluster-robust SEs (CR0/CR1) are far larger than HC ignoring the grouping.
 //
 // Exit 0 = all pass.
 
@@ -108,6 +109,14 @@ static LmResult fit(const std::vector<double> &y, const Mat &X, Vcov v, bool int
 	opt.vcov = v;
 	opt.intercept = intercept;
 	return fit_lm(y, X, opt);
+}
+
+static LmResult fit_cl(const std::vector<double> &y, const Mat &X, Vcov v, bool intercept,
+                       const std::vector<int> &clusters) {
+	LmOptions opt;
+	opt.vcov = v;
+	opt.intercept = intercept;
+	return fit_lm(y, X, opt, &clusters);
 }
 
 // ───────────────────────── DS1: intercept, 2 predictors, n=12 ────────────────
@@ -229,6 +238,96 @@ static void test_ds3_simple() {
 	}
 }
 
+// ───────────────────────── DS4: clustered, intercept, 2 predictors, n=25 ─────
+// G=5 uneven clusters with a per-cluster random effect. Golden source:
+// gen_lm_fit_fixtures.py (statsmodels cov_type='cluster'). CR0 = raw sandwich;
+// CR1 = CR0 × [G/(G−1)]·[(N−1)/(N−k)] (statsmodels default). p-values: t(G−1).
+static void test_ds4_cluster() {
+	std::printf("ds4_cluster (intercept, 2 predictors, n=25, G=5 clusters)\n");
+	const std::vector<double> y = {-0.297, 2.143, -1.086, 0.126,  8.36,   9.089, 3.768, 5.903, 7.854,
+	                               9.056,  5.972, -0.748, 4.735,  6.761,  9.777, 10.746, -1.561, 6.323,
+	                               14.583, 6.845, 4.295,  8.41,   20.68,  2.813, 4.244};
+	const Mat X = predictors({{-0.409, 1.058, -0.839, -0.811, 4.332, 3.287, 0.786, 1.263, 2.338,
+	                           3.393,  3.014, -1.492, 1.75,   1.758, 4.106, 3.273, -2.403, 0.956,
+	                           5.138,  1.023, 0.921,  3.054,  8.698, 0.258, 1.246},
+	                          {0.124,  0.303, 0.524,  0.001,  1.344, -0.714, -0.831, -2.37, -1.861,
+	                           -0.861, 0.56,  -1.266, 0.12,   -1.064, 0.333, -2.359, -0.2,  -1.542,
+	                           -0.971, -1.307, 0.286, 0.378,  -0.754, 0.331, 1.35}});
+	const std::vector<int> g = {0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 2, 3, 3, 3, 3, 3, 3, 4, 4, 4, 4, 4, 4, 4};
+	const std::vector<double> beta = {1.77805604849209, 2.04352854122001, -1.04867236368235};
+
+	// Unclustered classical fit on the same data → n_clusters == 0.
+	{
+		auto r = fit(y, X, Vcov::kConst, true);
+		CHECK(r.ok);
+		CHECK(r.n_clusters == 0);
+	}
+	// CR0 — raw cluster sandwich (no finite-sample correction).
+	{
+		auto r = fit_cl(y, X, Vcov::kCR0, true, g);
+		CHECK(r.ok);
+		CHECK(r.n == 25);
+		CHECK(r.k == 3);
+		CHECK(r.df_residual == 22); // reported df stays n−k …
+		CHECK(r.n_clusters == 5);   // … while inference uses t(G−1)
+		check_vec(r.beta, beta, TOL, "ds4.cr0.beta", __LINE__);
+		check_vec(r.std_error, {0.416769971097275, 0.0715707663240662, 0.165112976402852}, TOL,
+		          "ds4.cr0.se", __LINE__);
+		check_vec(r.t_statistic, {4.2662767756775, 28.5525591827128, -6.35124135321587}, TOL,
+		          "ds4.cr0.t", __LINE__);
+		check_vec_rel(r.p_value, {0.0129885429969767, 8.95422460575341e-06, 0.00314880404976347},
+		              RTOL_P, "ds4.cr0.p", __LINE__);
+		CHECK(std::string(statsduck::vcov_name(r.vcov)) == "CR0");
+	}
+	// CR1 — Stata / statsmodels default: CR0 × [G/(G−1)]·[(N−1)/(N−k)].
+	{
+		auto r = fit_cl(y, X, Vcov::kCR1, true, g);
+		CHECK(r.ok);
+		CHECK(r.n_clusters == 5);
+		CHECK(r.df_residual == 22);
+		check_vec(r.beta, beta, TOL, "ds4.cr1.beta", __LINE__);
+		check_vec(r.std_error, {0.486682473686185, 0.083576649024175, 0.19281041669548}, TOL,
+		          "ds4.cr1.se", __LINE__);
+		check_vec(r.t_statistic, {3.65342116190234, 24.4509508945364, -5.43887815635292}, TOL,
+		          "ds4.cr1.t", __LINE__);
+		check_vec_rel(r.p_value, {0.021705842695979, 1.66012518838537e-05, 0.00554715018524578},
+		              RTOL_P, "ds4.cr1.p", __LINE__);
+		CHECK(std::string(statsduck::vcov_name(r.vcov)) == "CR1");
+	}
+}
+
+// Cluster-robust requires a per-row cluster id and ≥ 2 clusters.
+static void test_cluster_errors() {
+	std::printf("cluster error paths\n");
+	const std::vector<double> y = {1, 2, 3, 4, 5, 6, 7, 8};
+	const Mat X = predictors({{1, 2, 1, 2, 1, 2, 1, 2}}); // k=2, n=8
+
+	// CR* with no cluster ids → fail.
+	{
+		LmOptions opt;
+		opt.vcov = Vcov::kCR1;
+		auto r = fit_lm(y, X, opt, nullptr);
+		CHECK(!r.ok);
+		CHECK(!r.error.empty());
+	}
+	// CR* with a wrong-length cluster vector → fail.
+	{
+		LmOptions opt;
+		opt.vcov = Vcov::kCR0;
+		std::vector<int> g = {0, 0, 1}; // length 3 != n
+		auto r = fit_lm(y, X, opt, &g);
+		CHECK(!r.ok);
+	}
+	// A single cluster (G=1) → fail (cluster-robust needs ≥ 2).
+	{
+		LmOptions opt;
+		opt.vcov = Vcov::kCR1;
+		std::vector<int> g(8, 0);
+		auto r = fit_lm(y, X, opt, &g);
+		CHECK(!r.ok);
+	}
+}
+
 // ───────────────────────── Error paths & helpers ────────────────────────────
 static void test_errors() {
 	std::printf("error paths\n");
@@ -266,11 +365,17 @@ static void test_vcov_parse() {
 	CHECK(statsduck::parse_vcov("HC1", v) && v == Vcov::kHC1);
 	CHECK(statsduck::parse_vcov("Hc2", v) && v == Vcov::kHC2);
 	CHECK(statsduck::parse_vcov("HC3", v) && v == Vcov::kHC3);
+	CHECK(statsduck::parse_vcov("cr0", v) && v == Vcov::kCR0);
+	CHECK(statsduck::parse_vcov("CR1", v) && v == Vcov::kCR1);
+	CHECK(statsduck::parse_vcov("cluster", v) && v == Vcov::kCR1); // alias → CR1
 	CHECK(!statsduck::parse_vcov("HC4", v));
+	CHECK(!statsduck::parse_vcov("CR2", v)); // not shipped yet
 	CHECK(!statsduck::parse_vcov("bogus", v));
 	CHECK(std::string(statsduck::vcov_name(Vcov::kConst)) == "const");
 	CHECK(std::string(statsduck::vcov_name(Vcov::kHC0)) == "HC0");
 	CHECK(std::string(statsduck::vcov_name(Vcov::kHC3)) == "HC3");
+	CHECK(std::string(statsduck::vcov_name(Vcov::kCR0)) == "CR0");
+	CHECK(std::string(statsduck::vcov_name(Vcov::kCR1)) == "CR1");
 }
 
 int main() {
@@ -278,6 +383,8 @@ int main() {
 	test_ds1_hetero();
 	test_ds2_noint();
 	test_ds3_simple();
+	test_ds4_cluster();
+	test_cluster_errors();
 	test_errors();
 	test_vcov_parse();
 	std::printf("\n%d checks, %d failures\n", g_checks, g_fail);

@@ -226,7 +226,7 @@ Output columns (fixed schema):
 | `table_one(data, variables [, by])`               | Long-format descriptives table for mixed variable types    |
 | `corr_matrix(data, variables [, method])`         | Long-format pairwise correlation matrix (`pearson` / `spearman` / `kendall`) |
 | `lm(data, y, x)` / `lm_summary(data, y, x)`       | OLS regression — `lm` returns per-term coefficients, `lm_summary` returns model R² / F / σ |
-| `lm_fit(y, x [, vcov [, add_intercept]])`         | OLS regression **aggregate** (one model per `GROUP BY`) with classical or HC0–HC3 robust standard errors |
+| `lm_fit(y, x [, vcov [, cluster] [, add_intercept]])` | OLS regression **aggregate** (one model per `GROUP BY`) with classical, HC0–HC3, or CR0/CR1 cluster-robust standard errors |
 
 ```sql
 SELECT * FROM table_one(
@@ -355,6 +355,23 @@ SELECT cyl, lm_fit(mpg, [wt, hp], 'HC1') AS model
 FROM mtcars GROUP BY cyl;
 ```
 
+**Cluster-robust standard errors** (`'CR0'`, or `'CR1'` — the Stata
+`vce(cluster)` / statsmodels `cov_type='cluster'` default) account for
+within-cluster correlation. Unlike `vcov`, the cluster key is a real **per-row
+column** (not a constant); pass it as `VARCHAR` and cast a non-text key with
+`::VARCHAR`:
+
+```sql
+-- SEs clustered by firm; 'CR1' applies the [G/(G−1)]·[(N−1)/(N−k)] correction
+SELECT (u).term, (u).estimate, (u).std_error
+FROM (SELECT unnest((lm_fit(ret, [mktrf, smb], 'CR1', firm_id::VARCHAR)).coefficients) AS u
+      FROM panel);
+```
+
+Cluster-robust inference uses a `t(G − 1)` reference (G = number of clusters,
+surfaced as `n_clusters`), so it differs from the `t(n − k)` used by classical /
+HC. `'cluster'` is accepted as an alias for `'CR1'`.
+
 `lm_fit` returns a single `STRUCT`:
 
 | Field                                                       | Type                | Notes |
@@ -365,17 +382,20 @@ FROM mtcars GROUP BY cyl;
 | `f_statistic`, `f_p_value`                                  | `DOUBLE`            | classical overall-significance F (not robustified) |
 | `has_intercept`                                             | `BOOLEAN`           | |
 | `vcov_type`                                                 | `VARCHAR`           | the estimator actually used |
+| `n_clusters`                                                | `BIGINT`            | number of clusters G (CR0/CR1 only; NULL otherwise) |
 
-A fourth constant argument, `add_intercept := false` (positionally
-`lm_fit(y, x, 'const', false)`), drops the constant term — note aggregates take
-**positional** constants, not the `name := value` form `lm` uses. Rows with a
-NULL `y` or any NULL list element are dropped (complete-case). A group with too
-few rows (`n ≤ k`) or a singular/collinear design yields a **NULL** result for
-that group rather than aborting the query. `t`/`p` use the t(n−k) distribution
-(matching Stata / statsmodels `use_t`). All numerics run on the shared
-header-only linear-algebra kernel (`(X'X)⁻¹`, the HC sandwich), validated
-against statsmodels — see `test/cpp/test_lm_fit.cpp`. Cluster-robust SEs are a
-planned follow-up.
+A trailing constant `add_intercept := false` (positionally
+`lm_fit(y, x, 'const', false)`, or `lm_fit(y, x, 'CR1', cluster, false)` when
+clustered) drops the constant term — note aggregates take **positional**
+constants, not the `name := value` form `lm` uses. Rows with a NULL `y`, any NULL
+list element, or (when clustered) a NULL cluster key are dropped (complete-case).
+A group with too few rows (`n ≤ k`), a singular/collinear design, or — for CR0/CR1
+— fewer than two clusters yields a **NULL** result for that group rather than
+aborting the query. `t`/`p` use the t(n−k) distribution for classical/HC and
+t(G−1) for CR0/CR1 (matching Stata / statsmodels `use_t`). All numerics run on the
+shared header-only linear-algebra kernel (`(X'X)⁻¹`, the robust sandwich),
+validated against statsmodels — see `test/cpp/test_lm_fit.cpp`. The bias-reduced
+CR2/CR3 cluster estimators are a planned follow-up.
 
 ### Multiple-testing correction (scalar)
 
