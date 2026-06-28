@@ -8,7 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 The extension installs and loads in DuckDB under the technical name `stats_duck` —
 that name is preserved across releases for backward compatibility.
 
-## [Unreleased]
+## [0.7.0-what] - 2026-06-28
 
 ### Added
 
@@ -32,11 +32,14 @@ that name is preserved across releases for backward compatibility.
   Validated against statsmodels `cov_type='HC*'` / `'cluster'`; see
   `test/cpp/test_lm_fit.cpp`. The bias-reduced CR2/CR3 cluster estimators are a
   planned follow-up.
-- **Header-only dense linear-algebra kernel** (`src/include/linalg.hpp`) backing
-  the modeling functions — Cholesky / QR / SVD solves, rank, Moore–Penrose
-  pseudo-inverse, SPD inverse, and the covariance sandwich, on Eigen but behind a
-  DuckDB-free / Eigen-free API. Not SQL-exposed; `lm_fit` is its first consumer
-  (and `lm`/`lm_summary` will be re-hosted on it). See `scripts/run-cpp-tests.sh`.
+- **Dense linear-algebra kernel** (`src/include/linalg.hpp` + `src/linalg.cpp`)
+  backing the modeling functions — Cholesky / QR / SVD solves, rank, Moore–Penrose
+  pseudo-inverse, SPD inverse, and the covariance sandwich, implemented on Eigen
+  but behind a header-only, DuckDB-free / Eigen-free API so it can be shared with
+  downstream extensions without pulling in DuckDB. Not SQL-exposed; `lm_fit` is
+  its first consumer (and `lm`/`lm_summary` will be re-hosted on it). The C++ API
+  is documented in `docs/kernel_api.md`; build and validate it standalone with
+  `scripts/run-cpp-tests.sh`.
 
 ### Changed
 
