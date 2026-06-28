@@ -340,9 +340,10 @@ static inline void SetD(Vector &v, idx_t row, double x) {
 
 // Dense 0-based cluster ids from arbitrary string keys, in sorted-key order.
 // Deliberately sort-based, NOT a hash map: std::sort uses operator<, so it
-// avoids the libc++ std::__hash_memory symbol that std::unordered_map<string>
-// pulls into the wasm build (the table_one landmine). The label values are
-// irrelevant — fit_lm only needs the partition they induce.
+// avoids the libc++ std::__hash_memory symbol that a default-hashed unordered
+// map keyed on std::string pulls into the wasm build (the table_one landmine;
+// see check-wasm-string-hash.sh). The label values are irrelevant — fit_lm
+// only needs the partition they induce.
 static std::vector<int> DensifyClusters(const std::vector<std::string> &keys) {
 	const std::size_t n = keys.size();
 	std::vector<int> order(n);

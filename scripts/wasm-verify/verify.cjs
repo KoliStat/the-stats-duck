@@ -83,6 +83,14 @@ async function q(conn, sql, label, ms = 30000) {
     ['corr_matrix-tablefn', `SELECT count(*) AS n FROM corr_matrix('penguins', variables := ['body_mass_g','flipper_length_mm'])`],
     ['visualize', `VISUALIZE body_mass_g AS x, flipper_length_mm AS y FROM penguins DRAW point`],
     ['table_one-internalconn', `SELECT count(*) AS n FROM table_one('penguins', variables := ['body_mass_g','sex'], by := ['species'])`],
+    // lm_fit: aggregate returning LIST<STRUCT> on the header-only lm_core kernel.
+    // 'HC1' exercises the base path; the 'CR1' probes exercise the cluster path
+    // (DensifyClusters + the cluster sandwich + the n_clusters field). The cluster
+    // grouping is sort-based precisely so it imports no std::__hash_memory — these
+    // probes are the runtime proof of that (species = 3 clusters of 4 rows).
+    ['lm_fit-hc1', `SELECT (lm_fit(body_mass_g, [bill_length_mm], 'HC1')).k AS k FROM penguins`],
+    ['lm_fit-cluster-cr1', `SELECT (lm_fit(body_mass_g, [bill_length_mm], 'CR1', species)).n_clusters AS g FROM penguins`],
+    ['lm_fit-cluster-unnest', `SELECT count(*) AS n FROM (SELECT unnest((lm_fit(body_mass_g, [bill_length_mm], 'CR1', species)).coefficients) FROM penguins)`],
   ];
   const results = [];
   for (const [name, sql] of probes) {

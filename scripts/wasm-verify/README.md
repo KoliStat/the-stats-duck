@@ -31,9 +31,14 @@ node verify.cjs
 Expected tail:
 
 ```
-[summary] baseline-builtin=PASS  scalar-ext=PASS  struct-agg-direct=PASS  anova-direct=PASS  corr_matrix-tablefn=PASS  visualize=PASS  table_one-internalconn=PASS
+[summary] baseline-builtin=PASS  scalar-ext=PASS  struct-agg-direct=PASS  anova-direct=PASS  corr_matrix-tablefn=PASS  visualize=PASS  table_one-internalconn=PASS  lm_fit-hc1=PASS  lm_fit-cluster-cr1=PASS  lm_fit-cluster-unnest=PASS
 PROBE_DONE
 ```
+
+The `lm_fit-cluster-*` probes exercise the cluster-robust path (`DensifyClusters` +
+the cluster sandwich) in-wasm; they exist to prove the sort-based cluster grouping
+imports no `std::__hash_memory` (it would trap as `t is not a function`, exactly
+like the original `table_one` hash regression).
 
 Any `FAIL` — especially `t is not a function` — is a real WASM ABI regression.
 
