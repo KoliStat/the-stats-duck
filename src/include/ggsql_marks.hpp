@@ -9,10 +9,10 @@
 //
 // ABI stability rules (read these before changing anything):
 //   - The layout of MarkInfo is FROZEN for ABI v1. New optional fields go in
-//     a parallel MarkInfoV2 (with a new prefix `ggsql_mark_v2_`), never as
+//     a parallel MarkInfoV2 (with a new prefix `visualize_mark_v2_`), never as
 //     bare struct members.
 //   - The first member of MarkInfo is `abi_version`. LookupMark verifies it.
-//   - The function-name prefix `ggsql_mark_v1_` encodes the version: a
+//   - The function-name prefix `visualize_mark_v1_` encodes the version: a
 //     consumer targeting v1 simply does not find v2 marks, and vice versa.
 //   - Bumping the ABI is a major-version event; coordinate cross-extension.
 
@@ -29,7 +29,7 @@ namespace ggsql {
 
 #define GGSQL_MARK_ABI_VERSION 1u
 
-constexpr const char *GGSQL_MARK_PREFIX = "ggsql_mark_v1_";
+constexpr const char *GGSQL_MARK_PREFIX = "visualize_mark_v1_";
 
 struct AestheticMapping {
 	string expression; // SQL expression text (phase 1: identifier only)

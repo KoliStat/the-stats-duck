@@ -22,3 +22,25 @@ that has been written down than to re-derive it.
   output chunk and ReadStat's `row_offset` reads-and-decodes skipped rows instead
   of seeking (and `bind` read the whole data section for the schema). Fix:
   parse-once buffering + header-only bind; why not a producer thread (WASM).
+
+- [`2026-06-bootstrap-rng-portability.md`](2026-06-bootstrap-rng-portability.md) —
+  `bootstrap`'s `seed` promised reproducibility, but `std::uniform_int_distribution`
+  is implementation-defined, so the same seed produced different resample streams
+  on libstdc++ / libc++ / MSVC. Fix: draw indices from `mt19937_64` directly with
+  an unbiased rejection bound. General rule: consume the engine, not the distribution.
+
+- [`2026-06-lm-fit-robust-se-aggregate.md`](2026-06-lm-fit-robust-se-aggregate.md)
+  — why `lm_fit` (OLS aggregate with HC0–HC3 SEs) **can't stream**: HC2/HC3
+  leverages `hᵢᵢ = xᵢᵀ(X'X)⁻¹xᵢ` and cluster scores don't reduce to sufficient
+  statistics, so the state buffers raw rows. Also: building the first
+  `LIST<STRUCT>` aggregate output, and why aggregates take positional constants
+  (not `:=` named params) — which is what makes its coefficients by-position.
+
+- [`2026-06-duckdb-version-must-match-duckdb-wasm.md`](2026-06-duckdb-version-must-match-duckdb-wasm.md)
+  — `table_one()` crashed in `@duckdb/duckdb-wasm` with `r/t is not a function`.
+  Overturned two hypotheses (the DuckDB version retarget and the `-sWASM_BIGINT`
+  flag — `=1` actually LinkErrors, `=0` is required) before `wasm-dis` pinned the
+  cause to **one** unresolved import: libc++ `std::__hash_memory`, pulled in by
+  `std::unordered_map<std::string>` in anova/chisq and not exported by duckdb-wasm.
+  Fixed by an in-extension string hash (`portable_string_hash.hpp`). Includes a
+  reusable `@duckdb/duckdb-wasm` Node verification harness.

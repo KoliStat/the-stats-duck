@@ -47,11 +47,11 @@ VISUALIZE bill_len AS x, bill_dep AS y FROM penguins DRAW point DRAW rule
 
 # Introspection: rule and tick declare empty required_aesthetics.
 query T
-SELECT ggsql_mark_v1_rule() AS info
+SELECT visualize_mark_v1_rule() AS info
 ----
 {"name":"rule","required_aesthetics":[]}
 
 query T
-SELECT ggsql_mark_v1_tick() AS info
+SELECT visualize_mark_v1_tick() AS info
 ----
 {"name":"tick","required_aesthetics":[]}

@@ -25,7 +25,7 @@ VISUALIZE group_id AS x, value AS y, group_id AS color FROM samples DRAW violin
 
 # Introspection: required_aesthetics = [x, y].
 query T
-SELECT ggsql_mark_v1_violin()
+SELECT visualize_mark_v1_violin()
 ----
 {"name":"violin","required_aesthetics":["x","y"]}
 

@@ -29,16 +29,16 @@ VISUALIZE group_id AS x, mean AS y FROM measurements DRAW boxplot
 
 # Introspection: required_aesthetics = [x, y] for all three.
 query T
-SELECT ggsql_mark_v1_errorbar() AS info
+SELECT visualize_mark_v1_errorbar() AS info
 ----
 {"name":"errorbar","required_aesthetics":["x","y"]}
 
 query T
-SELECT ggsql_mark_v1_errorband() AS info
+SELECT visualize_mark_v1_errorband() AS info
 ----
 {"name":"errorband","required_aesthetics":["x","y"]}
 
 query T
-SELECT ggsql_mark_v1_boxplot() AS info
+SELECT visualize_mark_v1_boxplot() AS info
 ----
 {"name":"boxplot","required_aesthetics":["x","y"]}

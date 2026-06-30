@@ -20,7 +20,7 @@ statistician without leaving SQL. The current release covers four areas:
 
 - **Hypothesis tests** — parametric and non-parametric, with effect sizes and
   confidence intervals returned alongside the test statistic.
-- **Visualizations (ggsql)** — `VISUALIZE … FROM <table> DRAW <mark>`, a
+- **Visualizations (VISUALIZE)** — `VISUALIZE … FROM <table> DRAW <mark>`, a
   Posit-published Grammar-of-Graphics SQL dialect compiled to Vega-Lite v5.
   No server-side rendering: the extension emits a spec + per-layer SQL, and
   the client (browser, notebook, …) runs the SQL and feeds the rows to vega.
@@ -226,6 +226,7 @@ Output columns (fixed schema):
 | `table_one(data, variables [, by])`               | Long-format descriptives table for mixed variable types    |
 | `corr_matrix(data, variables [, method])`         | Long-format pairwise correlation matrix (`pearson` / `spearman` / `kendall`) |
 | `lm(data, y, x)` / `lm_summary(data, y, x)`       | OLS regression — `lm` returns per-term coefficients, `lm_summary` returns model R² / F / σ |
+| `lm_fit(y, x [, vcov [, cluster] [, add_intercept]])` | OLS regression **aggregate** (one model per `GROUP BY`) with classical, HC0–HC3, or CR0/CR1 cluster-robust standard errors |
 
 ```sql
 SELECT * FROM table_one(
@@ -314,6 +315,88 @@ Errors on singular `X'X` (perfectly collinear predictors) or insufficient rows
 (`n ≤ k` parameters). When the intercept is removed, R²/adj-R² use the
 uncentered TSS = Σ y² to match R's `summary.lm` — interpret with care.
 
+### Linear regression aggregate with robust SEs (`lm_fit`)
+
+`lm_fit` is the **aggregate** companion to `lm`: it fits OLS over the rows of a
+group, so a single `GROUP BY` returns one regression per key. Where `lm` takes
+column *names* (and labels its terms), the aggregate takes the design-matrix row
+as a `LIST(DOUBLE)` of predictor *values* — so coefficients come back **by
+position**. The intercept is prepended automatically.
+
+```sql
+-- example data: y ~ x1 over 8 rows in a table `points(y, x1)`
+SELECT (u).term, (u).estimate, (u).std_error
+FROM (SELECT unnest((lm_fit(y, [x1])).coefficients) AS u FROM points);
+--   term         estimate  std_error
+--   (Intercept)  0.0357    0.1404
+--   x1           1.9976    0.0278
+```
+
+The headline is **heteroskedasticity-consistent standard errors**. A third,
+constant argument selects the covariance estimator — `'const'` (default,
+classical), `'HC0'` (Eicker–Huber–White), `'HC1'` (the Stata `,robust`
+default, `× n/(n−k)`), `'HC2'`, or `'HC3'` (the recommended small-sample
+default). Only the `std_error` / `t_statistic` / `p_value` change; the point
+estimates do not:
+
+```sql
+SELECT (u).term, (u).std_error
+FROM (SELECT unnest((lm_fit(y, [x1], 'HC3')).coefficients) AS u FROM points);
+--   term         std_error
+--   (Intercept)  0.1313
+--   x1           0.0282
+```
+
+The killer query is a regression *per group*, computed where the data lives:
+
+```sql
+-- a separate fit for every cylinder count, robust SEs, in one pass
+SELECT cyl, lm_fit(mpg, [wt, hp], 'HC1') AS model
+FROM mtcars GROUP BY cyl;
+```
+
+**Cluster-robust standard errors** (`'CR0'`, or `'CR1'` — the Stata
+`vce(cluster)` / statsmodels `cov_type='cluster'` default) account for
+within-cluster correlation. Unlike `vcov`, the cluster key is a real **per-row
+column** (not a constant); pass it as `VARCHAR` and cast a non-text key with
+`::VARCHAR`:
+
+```sql
+-- SEs clustered by firm; 'CR1' applies the [G/(G−1)]·[(N−1)/(N−k)] correction
+SELECT (u).term, (u).estimate, (u).std_error
+FROM (SELECT unnest((lm_fit(ret, [mktrf, smb], 'CR1', firm_id::VARCHAR)).coefficients) AS u
+      FROM panel);
+```
+
+Cluster-robust inference uses a `t(G − 1)` reference (G = number of clusters,
+surfaced as `n_clusters`), so it differs from the `t(n − k)` used by classical /
+HC. `'cluster'` is accepted as an alias for `'CR1'`.
+
+`lm_fit` returns a single `STRUCT`:
+
+| Field                                                       | Type                | Notes |
+| ----------------------------------------------------------- | ------------------- | ----- |
+| `coefficients`                                              | `LIST<STRUCT>`      | one element per term: `term`, `estimate`, `std_error`, `t_statistic`, `p_value` |
+| `n`, `k`, `df_residual`                                     | `BIGINT`            | rows used, parameters (incl. intercept), `n − k` |
+| `r_squared`, `adj_r_squared`, `sigma`                       | `DOUBLE`            | classical model fit |
+| `f_statistic`, `f_p_value`                                  | `DOUBLE`            | classical overall-significance F (not robustified) |
+| `has_intercept`                                             | `BOOLEAN`           | |
+| `vcov_type`                                                 | `VARCHAR`           | the estimator actually used |
+| `n_clusters`                                                | `BIGINT`            | number of clusters G (CR0/CR1 only; NULL otherwise) |
+
+A trailing constant `add_intercept := false` (positionally
+`lm_fit(y, x, 'const', false)`, or `lm_fit(y, x, 'CR1', cluster, false)` when
+clustered) drops the constant term — note aggregates take **positional**
+constants, not the `name := value` form `lm` uses. Rows with a NULL `y`, any NULL
+list element, or (when clustered) a NULL cluster key are dropped (complete-case).
+A group with too few rows (`n ≤ k`), a singular/collinear design, or — for CR0/CR1
+— fewer than two clusters yields a **NULL** result for that group rather than
+aborting the query. `t`/`p` use the t(n−k) distribution for classical/HC and
+t(G−1) for CR0/CR1 (matching Stata / statsmodels `use_t`). All numerics run on the
+shared header-only linear-algebra kernel (`(X'X)⁻¹`, the robust sandwich),
+validated against statsmodels — see `test/cpp/test_lm_fit.cpp`. The bias-reduced
+CR2/CR3 cluster estimators are a planned follow-up.
+
 ### Multiple-testing correction (scalar)
 
 | Function                                | Description                                                                |
@@ -353,12 +436,23 @@ position and are excluded from `n`.
 > pyreadstat, haven, R) but are **not opened by real SAS / SAS Universal
 > Viewer / SAS OnDemand**. Use XPT for SAS-native readability.
 
-### Visualizations (ggsql parser extension)
+### Visualizations (VISUALIZE parser extension)
 
 A Grammar-of-Graphics SQL dialect: `VISUALIZE` returns a single row with two
 columns — `spec` (a complete Vega-Lite v5 JSON spec) and `layer_sqls` (a
 `MAP(VARCHAR, VARCHAR)` of named SQL strings, one per layer). The client
 runs each layer's SQL and feeds the rows to vega-embed via the `datasets` API.
+
+**Tutorial:** [`docs/visualize.md`](docs/visualize.md) walks through a worked
+example of every mark and clause.
+
+**See also:** [posit-dev/ggsql-duckdb](https://github.com/posit-dev/ggsql-duckdb)
+— the dedicated grammar-of-graphics DuckDB extension from the ggplot2 team that
+inspired this syntax. `stats_duck`'s
+`VISUALIZE` is **not** a reimplementation of ggsql and doesn't track its syntax — it's
+a deliberately minimal, WebAssembly-friendly built-in supporting only a fixed set of
+marks and clauses, for plotting stats output inline. For the full grammar of graphics,
+use ggsql.
 
 ```
 [WITH [RECURSIVE] <cte> AS (...) [, <cte> AS (...)]*]
@@ -366,9 +460,16 @@ VISUALIZE <expr> AS <aesthetic> [: <type>] (, <expr> AS <aesthetic> ...)
 FROM <table>
 DRAW <mark> [STAT <identity|smooth|summary>] (DRAW <mark> [STAT ...])*
 [FACET BY <expr> [ROWS | COLS] | FACET BY <row_expr>, <col_expr>]
-[SCALE <channel> {TO <scheme> | ZERO true|false | DOMAIN <lo> <hi> | LABEL '<text>'}]*
+[SCALE <channel> {TO <scheme> | ZERO true|false | DOMAIN <lo> <hi> | LABEL '<text>'}+]*
 [TITLE '<text>' [SUBTITLE '<text>']]
 ```
+
+Multiple `SCALE` options may be **stacked** on one channel
+(`SCALE x LABEL 'Bill Depth' ZERO false`) or split across repeated `SCALE x`
+clauses — they merge into one scale/axis block either way. SQL comments
+(`-- …` to end of line, and `/* … */`) may appear anywhere in a `VISUALIZE`
+statement; they're skipped like whitespace (but never treated as comments
+inside a string literal).
 
 A leading `WITH` clause is supported; CTEs are scoped to each layer's
 projected SQL so they compose with wrapping marks (`line`, `bar`, `area`,
@@ -378,7 +479,7 @@ parser unchanged.
 
 **Marks:** `point`, `line`, `bar`, `histogram`, `text`, `area`, `rule`, `tick`,
 `errorbar`, `errorband`, `boxplot`, `violin`, `heatmap`, `density`, `regression`. Custom
-marks register as `ggsql_mark_v1_<name>` scalar functions and are discovered
+marks register as `visualize_mark_v1_<name>` scalar functions and are discovered
 via DuckDB's catalog, so other extensions can ship their own marks without
 modifying stats_duck.
 
@@ -576,7 +677,7 @@ NULL handling differs by storage format: numeric NULLs round-trip as
 SAS/SPSS system-missing, but VARCHAR NULLs collapse to empty strings (these
 formats have no NULL/empty distinction for character columns).
 
-### Visualizations (ggsql)
+### Visualizations (VISUALIZE)
 
 ```sql
 -- Set up — penguin morphology, classic ggplot2 demo data

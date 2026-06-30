@@ -1,0 +1,28 @@
+name: Checks
+
+on:
+  push:
+    branches: [main, "v0.*"]
+  pull_request:
+
+jobs:
+  wasm-string-hash-guard:
+    name: WASM std::string-hash guard
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # No submodules needed — this only greps src/.
+      - name: No default-hash std::string-keyed unordered containers (WASM ABI guard)
+        run: bash scripts/check-wasm-string-hash.sh
+
+  cpp-tests:
+    name: C++ unit tests (linalg + lm_fit)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # Only the Eigen submodule is needed (these layers are DuckDB-free); skip
+      # the huge duckdb submodule.
+      - name: Check out Eigen
+        run: git submodule update --init --depth 1 third_party/eigen
+      - name: Build + run C++ unit tests
+        run: bash scripts/run-cpp-tests.sh

@@ -281,6 +281,22 @@ static double ComputeStat(BootstrapStat stat, const std::vector<double> &values,
 // Finalize — emit LIST<DOUBLE> of n_iters resampled statistic values.
 //===--------------------------------------------------------------------===//
 
+// Portable, unbiased uniform index in [0, n). std::uniform_int_distribution is
+// NOT portable across standard libraries (libstdc++ / libc++ / MSVC each produce
+// a different sequence from the same engine state), which would make seeded
+// bootstraps irreproducible across the platforms we ship. mt19937_64 itself is
+// standard-specified, so we draw from it directly and reject the modulo-biased
+// tail (rejection is vanishingly rare for realistic n).
+static inline size_t BoundedIndex(std::mt19937_64 &rng, size_t n) {
+	const uint64_t range = static_cast<uint64_t>(n);
+	const uint64_t reject = (0ULL - range) % range; // 2^64 mod range
+	uint64_t r;
+	do {
+		r = rng();
+	} while (r < reject);
+	return static_cast<size_t>(r % range);
+}
+
 static void BootstrapFinalize(Vector &state_vector, AggregateInputData &input_data, Vector &result,
                               idx_t count, idx_t offset) {
 	auto &bd = input_data.bind_data->Cast<BootstrapBindData>();
@@ -313,15 +329,13 @@ static void BootstrapFinalize(Vector &state_vector, AggregateInputData &input_da
 			std::random_device rd;
 			rng.seed((static_cast<uint64_t>(rd()) << 32) | rd());
 		}
-		std::uniform_int_distribution<size_t> dist(0, n - 1);
-
 		auto &out = per_row[i];
 		out.reserve(static_cast<size_t>(bd.n_iters));
 		std::vector<size_t> indices(n);
 		std::vector<double> scratch;
 		for (int64_t it = 0; it < bd.n_iters; it++) {
 			for (size_t k = 0; k < n; k++) {
-				indices[k] = dist(rng);
+				indices[k] = BoundedIndex(rng, n);
 			}
 			out.push_back(ComputeStat(bd.stat, vals, indices, scratch));
 		}

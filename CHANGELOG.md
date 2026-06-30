@@ -8,6 +8,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 The extension installs and loads in DuckDB under the technical name `stats_duck` —
 that name is preserved across releases for backward compatibility.
 
+## [0.7.0-what] - 2026-06-30
+
+### Added
+
+- **`lm_fit(y, x [, vcov [, cluster] [, add_intercept]])` — OLS regression
+  aggregate with robust standard errors.** The aggregate companion to
+  `lm`/`lm_summary`: it fits one model per `GROUP BY` group, consuming the
+  design-matrix row as a `LIST(DOUBLE)` of predictor values (coefficients come
+  back by position). A constant `vcov` argument selects the covariance
+  estimator — `'const'` (default); the heteroskedasticity-consistent `'HC0'`,
+  `'HC1'` (Stata `,robust`), `'HC2'`, `'HC3'` (small-sample default); or the
+  cluster-robust `'CR0'` and `'CR1'` (the Stata `vce(cluster)` / statsmodels
+  default, `'cluster'` accepted as an alias) — so only the standard errors / t / p
+  change, not the point estimates. Cluster-robust SEs take a per-row `cluster`
+  VARCHAR key (cast a non-text key with `::VARCHAR`) and use a `t(G−1)` reference
+  distribution (G = number of clusters). Returns a `STRUCT` whose `coefficients`
+  field is a `LIST<STRUCT(term, estimate, std_error, t_statistic, p_value)>`
+  alongside `n`, `k`, `df_residual`, `r_squared`, `adj_r_squared`, `sigma`,
+  `f_statistic`, `f_p_value`, `has_intercept`, `vcov_type`, and `n_clusters`
+  (NULL unless clustered). Degenerate groups (`n ≤ k`, a singular design, or fewer
+  than two clusters) yield NULL for that group rather than aborting the query.
+  Validated against statsmodels `cov_type='HC*'` / `'cluster'`; see
+  `test/cpp/test_lm_fit.cpp`. The bias-reduced CR2/CR3 cluster estimators are a
+  planned follow-up.
+- **Dense linear-algebra kernel** (`src/include/linalg.hpp` + `src/linalg.cpp`)
+  backing the modeling functions — Cholesky / QR / SVD solves, rank, Moore–Penrose
+  pseudo-inverse, SPD inverse, and the covariance sandwich, implemented on Eigen
+  but behind a header-only, DuckDB-free / Eigen-free API so it can be shared with
+  downstream extensions without pulling in DuckDB. Not SQL-exposed; `lm_fit` is
+  its first consumer (and `lm`/`lm_summary` will be re-hosted on it). The C++ API
+  is documented in `docs/kernel_api.md`; build and validate it standalone with
+  `scripts/run-cpp-tests.sh`.
+
+### Changed
+
+- **`bootstrap()` is now reproducible across platforms.** Resample indices were
+  drawn with `std::uniform_int_distribution`, whose algorithm the C++ standard
+  leaves implementation-defined — so the same `seed` produced different resample
+  streams on libstdc++ (Linux / MinGW), libc++, and MSVC. Indices are now drawn
+  from the `mt19937_64` engine directly (the engine *is* standard-specified) with
+  an unbiased rejection bound, so a seeded `bootstrap` returns identical output on
+  every platform. Per-platform results are unchanged in distribution; only the
+  exact resample stream moves, and the `seed`'s reproducibility promise now holds
+  across machines. See `notes/engineering/2026-06-bootstrap-rng-portability.md`.
+
 ## [0.6.0-i-m-not-dead] - 2026-06-15
 
 ### Added
@@ -121,7 +166,7 @@ that name is preserved across releases for backward compatibility.
   approximation). Non-integer `k` in `dpois` returns 0 (matches R's
   warn-and-zero). Cross-verified against R to 6 decimal places.
 
-- ggsql: per-layer `STAT smooth | summary | identity` modifier — appended
+- VISUALIZE: per-layer `STAT smooth | summary | identity` modifier — appended
   after a mark name as `DRAW <mark> STAT <name>`. `smooth` injects a
   Vega-Lite loess transform on `(x, y)` and groups by `color` when mapped
   (rejected on marks that already emit their own transform — `regression`,
@@ -132,7 +177,7 @@ that name is preserved across releases for backward compatibility.
   canonical scatter-with-LOESS overlay without a separate transform
   function.
 
-- ggsql: 2D `FACET BY <row_expr>, <col_expr>` — two comma-separated
+- VISUALIZE: 2D `FACET BY <row_expr>, <col_expr>` — two comma-separated
   expressions produce a row × column grid via vega-lite's facet operator
   with both `row` and `column` sub-channels. Composes with `SCALE`,
   `TITLE`, multi-layer `DRAW`, and `WITH … VISUALIZE`. The 1D form
@@ -141,7 +186,7 @@ that name is preserved across releases for backward compatibility.
   The bar mark's GROUP BY extends to both facet columns so per-cell
   ordinal bins compute correctly.
 
-- ggsql: `violin` mark — per-category density rendered as horizontal
+- VISUALIZE: `violin` mark — per-category density rendered as horizontal
   Vega-Lite area marks via the canonical `density` transform + `column`
   facet idiom. Required aesthetics `x` (categorical) and `y` (numeric);
   optional channels (`color`, `opacity`, ...) propagate through the
@@ -184,7 +229,7 @@ that name is preserved across releases for backward compatibility.
   NULL handling per the underlying `pearson_test` / `spearman_test` /
   `kendall_test` aggregates. Non-numeric columns are rejected at bind time.
 
-- **ggsql: `WITH … VISUALIZE`** — a leading CTE clause is now accepted in
+- **VISUALIZE: `WITH … VISUALIZE`** — a leading CTE clause is now accepted in
   front of a `VISUALIZE` statement. The captured `WITH [RECURSIVE] <cte> AS
   (...) [, <cte> AS (...)]*` block is prepended to each layer's projected
   SQL, so the `FROM` clause and aesthetic expressions can reference
@@ -281,18 +326,18 @@ that name is preserved across releases for backward compatibility.
 
 ### Added
 
-- ggsql: three new marks — `heatmap`, `density`, `regression`. `heatmap` is a
+- VISUALIZE: three new marks — `heatmap`, `density`, `regression`. `heatmap` is a
   `rect` mark with ordinal x/y and quantitative color (correlation matrices,
   contingency tables). `density` is a KDE via Vega-Lite's `density` transform
   on the `x` aesthetic; groups by `color` if mapped (one curve per level).
   `regression` is a `line` mark via Vega-Lite's `regression` transform fitting
   `y ~ x`; groups by `color` if mapped. Pairs naturally with `DRAW point
   DRAW regression` for scatter-with-fit overlays.
-- ggsql: `TITLE '<text>' [SUBTITLE '<text>']` clause appended after any
+- VISUALIZE: `TITLE '<text>' [SUBTITLE '<text>']` clause appended after any
   `SCALE` clauses. Emitted as a Vega-Lite `TitleParams` object (always object
   form, even without subtitle) so consumers don't need to handle both string
   and object shapes. `SUBTITLE` without a preceding `TITLE` is a parse error.
-- ggsql: `SCALE <channel> LABEL '<text>'` operator injects an `axis.title`
+- VISUALIZE: `SCALE <channel> LABEL '<text>'` operator injects an `axis.title`
   block alongside the channel's existing `scale` block. Composes with
   `TO` / `ZERO` / `DOMAIN` on the same channel and with `FACET BY` and
   multi-layer specs. LABEL on an unmapped channel is a silent no-op, matching
@@ -494,7 +539,7 @@ label)`, without scanning the data. Useful for inspecting SAS / SPSS
 
 ### Added
 
-- **ggsql — Grammar of Graphics for SQL.** New `VISUALIZE … FROM <table> DRAW <mark>`
+- **VISUALIZE — Grammar of Graphics for SQL.** New `VISUALIZE … FROM <table> DRAW <mark>`
   parser extension that compiles at plan time into a Vega-Lite v5 spec plus one SQL
   string per layer, returned as `(spec VARCHAR, layer_sqls MAP(VARCHAR, VARCHAR))`.
   Clients (e.g. Bedevere Wise in DuckDB-WASM) execute each layer's SQL and feed Arrow
@@ -505,7 +550,7 @@ label)`, without scanning the data. Useful for inspecting SAS / SPSS
   (`TO <scheme>` for color schemes, `ZERO true|false`, `DOMAIN <lo> <hi>`),
   type-annotated aesthetics (`year AS color:ordinal`), and SQL expressions in
   mappings (`bill_len * 2 AS x`, `coalesce(a, b) AS x`). Marks are registered
-  through a catalog-mediated registry (`ggsql_mark_v1_<name>` scalar functions),
+  through a catalog-mediated registry (`visualize_mark_v1_<name>` scalar functions),
   so other extensions can ship custom marks without modifying stats_duck.
 - `COPY tbl TO 'file.xpt'` — write SAS Transport (XPT v5) files via ReadStat.
   Supports BOOLEAN, all integer/float/decimal types, VARCHAR, DATE, TIMESTAMP, and

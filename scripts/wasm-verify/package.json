@@ -1,0 +1,12 @@
+{
+  "name": "stats-duck-wasm-verify",
+  "private": true,
+  "description": "Loads the built stats_duck wasm_eh extension into @duckdb/duckdb-wasm and runs a probe matrix (table_one, anova, chisq, corr_matrix, VISUALIZE).",
+  "scripts": {
+    "verify": "node verify.cjs"
+  },
+  "dependencies": {
+    "@duckdb/duckdb-wasm": "^1.32.0",
+    "web-worker": "^1.5.0"
+  }
+}

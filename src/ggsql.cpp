@@ -72,7 +72,7 @@ void ApplyStat(MarkResult &rendered, const VisualizeStatement &stmt, const DrawL
 	if (layer.stat == "smooth") {
 		if (rendered.layer_body.compare(0, 12, "\"transform\":") == 0) {
 			throw InvalidInputException(
-			    "ggsql: STAT smooth is not allowed on '%s' (mark already emits a transform)",
+			    "visualize: STAT smooth is not allowed on '%s' (mark already emits a transform)",
 			    layer.mark);
 		}
 		string loess = "\"transform\":[{\"loess\":\"y\",\"on\":\"x\"";
@@ -105,7 +105,7 @@ MarkResult RenderLayer(ClientContext &context, const VisualizeStatement &stmt,
 	const auto &info = LookupMark(context, layer.mark);
 	for (const auto &req : info.required_aesthetics) {
 		if (!HasAesthetic(stmt, req)) {
-			throw InvalidInputException("ggsql: '%s' requires '%s' aesthetic", layer.mark, req);
+			throw InvalidInputException("visualize: '%s' requires '%s' aesthetic", layer.mark, req);
 		}
 	}
 	MarkContext ctx{stmt.aesthetics, projected_sql};
@@ -226,7 +226,7 @@ string ApplyTypeOverrides(string layer_body, const vector<TypeOverride> &overrid
 
 CompiledResult Compile(ClientContext &context, const VisualizeStatement &stmt) {
 	if (stmt.layers.empty()) {
-		throw InvalidInputException("ggsql: at least one DRAW clause is required");
+		throw InvalidInputException("visualize: at least one DRAW clause is required");
 	}
 	string projected_sql = BuildProjectedSql(stmt);
 	bool faceted = HasFacet(stmt);
@@ -336,7 +336,7 @@ struct GgsqlParseData : public ParserExtensionParseData {
 		return make_uniq<GgsqlParseData>(stmt);
 	}
 	string ToString() const override {
-		return "ggsql statement";
+		return "VISUALIZE statement";
 	}
 };
 
@@ -532,7 +532,7 @@ ParserExtensionPlanResult GgsqlPlan(ParserExtensionInfo *, ClientContext &contex
 	auto compiled = Compile(context, data.stmt);
 
 	TableFunction tf;
-	tf.name = "ggsql_result";
+	tf.name = "visualize_result";
 	tf.arguments.push_back(LogicalType::VARCHAR);
 	tf.arguments.push_back(LogicalType::MAP(LogicalType::VARCHAR, LogicalType::VARCHAR));
 	tf.bind = GgsqlResultBind;
@@ -563,7 +563,7 @@ public:
 void RegisterGgsql(ExtensionLoader &loader) {
 	auto &db = loader.GetDatabaseInstance();
 	auto &config = DBConfig::GetConfig(db);
-	ParserExtension::Register(config, ggsql::GgsqlParserExtension());
+	config.parser_extensions.push_back(ggsql::GgsqlParserExtension());
 }
 
 } // namespace duckdb

@@ -28,3 +28,14 @@ vcpkg_installed/
 
 # Sigillo
 .sigillo/
+
+# Local build / run capture logs (root-level)
+/build_*.log
+/ci_watch_*.log
+
+# Local emscripten shim scripts (machine-specific emsdk paths)
+/scripts/em-shims/
+
+# duckdb-wasm verification harness: track the scripts, ignore deps + run logs
+/scripts/wasm-verify/node_modules/
+/scripts/wasm-verify/*.log

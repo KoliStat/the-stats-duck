@@ -33,7 +33,7 @@ string BuildIntrospectionString(const string &name, const vector<string> &requir
 
 void MarkIntrospectionStub(DataChunk &args, ExpressionState &state, Vector &result) {
 	auto &func_expr = state.expr.Cast<BoundFunctionExpression>();
-	auto &info = func_expr.function.GetExtraFunctionInfo().Cast<MarkInfo>();
+	auto &info = func_expr.function.function_info->Cast<MarkInfo>();
 	auto desc = BuildIntrospectionString(info.name, info.required_aesthetics);
 	result.SetVectorType(VectorType::CONSTANT_VECTOR);
 	auto data = ConstantVector::GetData<string_t>(result);
@@ -330,7 +330,7 @@ void RegisterMark(ExtensionLoader &loader, const string &name,
 	info->name = name;
 	info->required_aesthetics = std::move(required_aesthetics);
 	info->render = render;
-	func.SetExtraFunctionInfo(std::move(info));
+	func.function_info = std::move(info);
 
 	loader.RegisterFunction(std::move(func));
 }
@@ -340,20 +340,20 @@ const MarkInfo &LookupMark(ClientContext &context, const string &name) {
 	auto entry = catalog.GetEntry(context, CatalogType::SCALAR_FUNCTION_ENTRY, DEFAULT_SCHEMA,
 	                              CatalogName(name), OnEntryNotFound::RETURN_NULL);
 	if (!entry) {
-		throw InvalidInputException("ggsql: unknown mark '%s'", name);
+		throw InvalidInputException("visualize: unknown mark '%s'", name);
 	}
 	auto &func_entry = entry->Cast<ScalarFunctionCatalogEntry>();
 	if (func_entry.functions.Size() == 0) {
-		throw InvalidInputException("ggsql: unknown mark '%s'", name);
+		throw InvalidInputException("visualize: unknown mark '%s'", name);
 	}
 	auto &func = func_entry.functions.GetFunctionReferenceByOffset(0);
-	if (!func.HasExtraFunctionInfo()) {
-		throw InvalidInputException("ggsql: '%s' is not a registered mark", name);
+	if (!func.function_info) {
+		throw InvalidInputException("visualize: '%s' is not a registered mark", name);
 	}
-	auto &info = func.GetExtraFunctionInfo().Cast<MarkInfo>();
+	auto &info = func.function_info->Cast<MarkInfo>();
 	if (info.abi_version != GGSQL_MARK_ABI_VERSION) {
 		throw InvalidInputException(
-		    "ggsql: mark '%s' uses ABI version %u but this build expects %u", name,
+		    "visualize: mark '%s' uses ABI version %u but this build expects %u", name,
 		    info.abi_version, GGSQL_MARK_ABI_VERSION);
 	}
 	return info;

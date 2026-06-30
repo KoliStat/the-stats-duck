@@ -64,6 +64,26 @@ TokenizeResult Tokenize(const string &input) {
 		}
 
 		// Outside parens, outside quotes.
+		// SQL comments act as delimiters and are skipped. They can't occur inside
+		// a quote (handled above); inside parens they ride along in the expression
+		// token for DuckDB to strip. `--` runs to end of line; `/* */` to its close.
+		if (c == '-' && i + 1 < input.size() && input[i + 1] == '-') {
+			flush();
+			i += 2;
+			while (i < input.size() && input[i] != '\n') {
+				i++;
+			}
+			continue; // the for-loop's ++ steps past the newline (or end)
+		}
+		if (c == '/' && i + 1 < input.size() && input[i + 1] == '*') {
+			flush();
+			i += 2;
+			while (i + 1 < input.size() && !(input[i] == '*' && input[i + 1] == '/')) {
+				i++;
+			}
+			i = (i + 1 < input.size()) ? i + 1 : input.size(); // land on the closing '/'
+			continue;
+		}
 		if (c == '(') {
 			paren_depth++;
 			current += c;
@@ -418,74 +438,84 @@ ParseResult ParseGgsql(const string &query) {
 		}
 	}
 
-	// Optional `SCALE <aesthetic> <op> <args...>` clauses, zero or more.
-	// Supported ops:
+	// Optional `SCALE <aesthetic> <op> <args...> [<op> <args...>]...` clauses.
+	// Zero or more SCALE clauses; each targets one channel and carries one or
+	// more options that merge into a single scale/axis block. Supported ops:
 	//   TO <scheme>             — color scheme name
 	//   ZERO <true|false>       — include zero in quantitative scale
 	//   DOMAIN <num1> <num2>    — explicit numeric domain
+	//   LABEL '<text>'          — axis title
 	while (!at_end() && IEqual(peek(), "SCALE")) {
 		i++;
 		if (at_end()) {
 			result.error = "Expected aesthetic name after 'SCALE'";
 			return result;
 		}
-		ScaleSpec scale;
-		scale.aesthetic = tokens[i++];
-		if (at_end()) {
-			result.error = "Expected SCALE operator (TO / ZERO / DOMAIN) after aesthetic";
-			return result;
-		}
-		string op = tokens[i++];
-		if (IEqual(op, "TO")) {
-			if (at_end()) {
-				result.error = "Expected scheme name after 'SCALE <aesthetic> TO'";
-				return result;
-			}
-			scale.property = "scheme";
-			scale.value_json = "\"" + tokens[i++] + "\"";
-		} else if (IEqual(op, "ZERO")) {
-			if (at_end()) {
-				result.error = "Expected boolean (true/false) after 'SCALE <aesthetic> ZERO'";
-				return result;
-			}
-			string v = tokens[i++];
-			if (IEqual(v, "true")) {
-				scale.value_json = "true";
-			} else if (IEqual(v, "false")) {
-				scale.value_json = "false";
+		string aesthetic = tokens[i++];
+		// Consume one or more options for this channel until the next clause
+		// (SCALE / FACET / TITLE / SUBTITLE / end).
+		bool any_op = false;
+		while (!at_end() && !IEqual(peek(), "SCALE") && !IEqual(peek(), "FACET") &&
+		       !IEqual(peek(), "TITLE") && !IEqual(peek(), "SUBTITLE")) {
+			ScaleSpec scale;
+			scale.aesthetic = aesthetic;
+			string op = tokens[i++];
+			if (IEqual(op, "TO")) {
+				if (at_end()) {
+					result.error = "Expected scheme name after 'SCALE <aesthetic> TO'";
+					return result;
+				}
+				scale.property = "scheme";
+				scale.value_json = "\"" + tokens[i++] + "\"";
+			} else if (IEqual(op, "ZERO")) {
+				if (at_end()) {
+					result.error = "Expected boolean (true/false) after 'SCALE <aesthetic> ZERO'";
+					return result;
+				}
+				string v = tokens[i++];
+				if (IEqual(v, "true")) {
+					scale.value_json = "true";
+				} else if (IEqual(v, "false")) {
+					scale.value_json = "false";
+				} else {
+					result.error = "Expected 'true' or 'false' after 'SCALE <aesthetic> ZERO', got '" +
+					               v + "'";
+					return result;
+				}
+				scale.property = "zero";
+			} else if (IEqual(op, "DOMAIN")) {
+				if (at_end()) {
+					result.error = "Expected two numeric bounds after 'SCALE <aesthetic> DOMAIN'";
+					return result;
+				}
+				string lo = tokens[i++];
+				if (at_end()) {
+					result.error = "Expected upper bound after 'SCALE <aesthetic> DOMAIN <lo>'";
+					return result;
+				}
+				string hi = tokens[i++];
+				scale.property = "domain";
+				scale.value_json = "[" + lo + "," + hi + "]";
+			} else if (IEqual(op, "LABEL")) {
+				if (at_end()) {
+					result.error = "Expected axis label after 'SCALE <aesthetic> LABEL'";
+					return result;
+				}
+				scale.sub_object = "axis";
+				scale.property = "title";
+				scale.value_json = "\"" + JsonEscape(UnquoteSqlString(tokens[i++])) + "\"";
 			} else {
-				result.error = "Expected 'true' or 'false' after 'SCALE <aesthetic> ZERO', got '" +
-				               v + "'";
+				result.error = "Unknown SCALE operator '" + op +
+				               "' (expected TO / ZERO / DOMAIN / LABEL)";
 				return result;
 			}
-			scale.property = "zero";
-		} else if (IEqual(op, "DOMAIN")) {
-			if (at_end()) {
-				result.error = "Expected two numeric bounds after 'SCALE <aesthetic> DOMAIN'";
-				return result;
-			}
-			string lo = tokens[i++];
-			if (at_end()) {
-				result.error = "Expected upper bound after 'SCALE <aesthetic> DOMAIN <lo>'";
-				return result;
-			}
-			string hi = tokens[i++];
-			scale.property = "domain";
-			scale.value_json = "[" + lo + "," + hi + "]";
-		} else if (IEqual(op, "LABEL")) {
-			if (at_end()) {
-				result.error = "Expected axis label after 'SCALE <aesthetic> LABEL'";
-				return result;
-			}
-			scale.sub_object = "axis";
-			scale.property = "title";
-			scale.value_json = "\"" + JsonEscape(UnquoteSqlString(tokens[i++])) + "\"";
-		} else {
-			result.error = "Unknown SCALE operator '" + op +
-			               "' (expected TO / ZERO / DOMAIN / LABEL)";
+			result.stmt.scales.push_back(std::move(scale));
+			any_op = true;
+		}
+		if (!any_op) {
+			result.error = "Expected SCALE operator (TO / ZERO / DOMAIN / LABEL) after aesthetic";
 			return result;
 		}
-		result.stmt.scales.push_back(std::move(scale));
 	}
 
 	// Optional `TITLE '<text>' [SUBTITLE '<text>']`. SUBTITLE without TITLE is

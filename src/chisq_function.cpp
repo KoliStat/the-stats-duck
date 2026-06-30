@@ -1,5 +1,6 @@
 #include "chisq_function.hpp"
 #include "distributions.hpp"
+#include "portable_string_hash.hpp"
 
 #include "duckdb/function/aggregate_function.hpp"
 #include "duckdb/function/function_set.hpp"
@@ -14,6 +15,14 @@
 #include <unordered_set>
 
 namespace duckdb {
+
+namespace {
+// std::string-keyed map with an in-extension hash (default std::hash<std::string>
+// → libc++ std::__hash_memory, unexported by duckdb-wasm → WASM crash). See
+// portable_string_hash.hpp.
+template <class V>
+using StrMap = std::unordered_map<std::string, V, stats_duck::PortableStringHash>;
+} // namespace
 
 // Chi-square tests.
 //
@@ -68,7 +77,7 @@ static LogicalType ChiSqIndependenceResultType() {
 
 struct ChiSqIndependenceState {
 	// row_label -> col_label -> count
-	std::unordered_map<std::string, std::unordered_map<std::string, int64_t>> *table;
+	StrMap<StrMap<int64_t>> *table;
 };
 
 static void ChiSqIndInit(const AggregateFunction &, data_ptr_t state_p) {
@@ -93,7 +102,7 @@ static void ChiSqIndUpdate(Vector inputs[], AggregateInputData &, idx_t, Vector 
 		}
 		auto &state = *states[i];
 		if (!state.table) {
-			state.table = new std::unordered_map<std::string, std::unordered_map<std::string, int64_t>>();
+			state.table = new StrMap<StrMap<int64_t>>();
 		}
 		std::string r_key(rvals[r_idx].GetData(), rvals[r_idx].GetSize());
 		std::string c_key(cvals[c_idx].GetData(), cvals[c_idx].GetSize());
@@ -111,7 +120,7 @@ static void ChiSqIndCombine(Vector &source, Vector &target, AggregateInputData &
 			continue;
 		}
 		if (!t.table) {
-			t.table = new std::unordered_map<std::string, std::unordered_map<std::string, int64_t>>();
+			t.table = new StrMap<StrMap<int64_t>>();
 		}
 		for (auto &row_kv : *s.table) {
 			auto &t_row = (*t.table)[row_kv.first];
@@ -167,8 +176,8 @@ static void ChiSqIndFinalize(Vector &state_vector, AggregateInputData &aggr_inpu
 		}
 
 		// Gather the union of column labels and compute row totals.
-		std::unordered_map<std::string, int64_t> row_totals;
-		std::unordered_map<std::string, int64_t> col_totals;
+		StrMap<int64_t> row_totals;
+		StrMap<int64_t> col_totals;
 		int64_t n = 0;
 		for (auto &row_kv : *state.table) {
 			int64_t row_sum = 0;
@@ -238,7 +247,7 @@ static LogicalType ChiSqGoFResultType() {
 }
 
 struct ChiSqGoFState {
-	std::unordered_map<std::string, int64_t> *counts;
+	StrMap<int64_t> *counts;
 };
 
 static void ChiSqGoFInit(const AggregateFunction &, data_ptr_t state_p) {
@@ -260,7 +269,7 @@ static void ChiSqGoFUpdate(Vector inputs[], AggregateInputData &, idx_t, Vector 
 		}
 		auto &state = *states[i];
 		if (!state.counts) {
-			state.counts = new std::unordered_map<std::string, int64_t>();
+			state.counts = new StrMap<int64_t>();
 		}
 		std::string key(cvals[c_idx].GetData(), cvals[c_idx].GetSize());
 		(*state.counts)[key]++;
@@ -277,7 +286,7 @@ static void ChiSqGoFCombine(Vector &source, Vector &target, AggregateInputData &
 			continue;
 		}
 		if (!t.counts) {
-			t.counts = new std::unordered_map<std::string, int64_t>();
+			t.counts = new StrMap<int64_t>();
 		}
 		for (auto &kv : *s.counts) {
 			(*t.counts)[kv.first] += kv.second;

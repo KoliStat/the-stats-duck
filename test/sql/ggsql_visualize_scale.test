@@ -73,3 +73,15 @@ statement error
 VISUALIZE bill_len AS x, bill_dep AS y FROM penguins DRAW point SCALE y ZERO yes
 ----
 Expected 'true' or 'false'
+
+# Stacked options on ONE SCALE clause — DOMAIN + ZERO merge (no need to repeat SCALE x).
+query TT
+VISUALIZE bill_len AS x, bill_dep AS y FROM penguins DRAW point SCALE x DOMAIN 30 50 ZERO false
+----
+{"$schema":"https://vega.github.io/schema/vega-lite/v5.json","data":{"name":"layer_0"},"mark":"point","encoding":{"x":{"field":"x","type":"quantitative","scale":{"domain":[30,50],"zero":false}},"y":{"field":"y","type":"quantitative"}}}	{layer_0='SELECT bill_len AS x, bill_dep AS y FROM penguins'}
+
+# Stacked LABEL (axis sub-object) + ZERO (scale sub-object) on one channel — both applied.
+query TT
+VISUALIZE bill_len AS x, bill_dep AS y FROM penguins DRAW point SCALE x LABEL 'Bill' ZERO false
+----
+{"$schema":"https://vega.github.io/schema/vega-lite/v5.json","data":{"name":"layer_0"},"mark":"point","encoding":{"x":{"field":"x","type":"quantitative","axis":{"title":"Bill"},"scale":{"zero":false}},"y":{"field":"y","type":"quantitative"}}}	{layer_0='SELECT bill_len AS x, bill_dep AS y FROM penguins'}
