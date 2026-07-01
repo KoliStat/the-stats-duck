@@ -16,7 +16,7 @@ authors:
 repository-code: "https://github.com/caerbannogwhite/the-stats-duck"
 url: "https://github.com/caerbannogwhite/the-stats-duck"
 version: 0.7.0-what
-date-released: "2026-06-30"
+date-released: "2026-07-01"
 license: Apache-2.0
 keywords:
   - duckdb
