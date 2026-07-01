@@ -40,6 +40,13 @@ that name is preserved across releases for backward compatibility.
   its first consumer (and `lm`/`lm_summary` will be re-hosted on it). The C++ API
   is documented in `docs/kernel_api.md`; build and validate it standalone with
   `scripts/run-cpp-tests.sh`.
+- **DuckDB v1.5.1 source compatibility.** The `VISUALIZE` parser hook now
+  feature-detects DuckDB's parser-extension registration API — v1.5.1 moved it
+  from `DBConfig::parser_extensions` to the extension callback manager — so the
+  same source compiles against both the pinned **v1.4.3** (the duckdb-wasm bundle
+  target) and **v1.5.1**. Verified on both: full SQL suite green and the
+  `VISUALIZE` parser hook attaches at runtime. Shipped binaries still target
+  v1.4.3.
 
 ### Changed
 
