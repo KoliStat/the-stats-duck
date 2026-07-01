@@ -32,6 +32,16 @@ jobs:
     needs: duckdb-stable-build
     uses: duckdb/extension-ci-tools/.github/workflows/_extension_deploy.yml@v1.4.3
     secrets: inherit
+    # The reusable deploy workflow declares no permissions and relies on the
+    # default GITHUB_TOKEN. actions/download-artifact@v4 (v4.3.0+) needs
+    # `actions: read` to ListArtifacts; on the push-to-main event the default
+    # token lacks it, so the artifact download 403s. Grant it explicitly (the
+    # caller's permissions propagate to the reusable workflow). contents: read
+    # is for the checkout step; the S3 upload uses inherited secrets, not the
+    # token. See duckdb/extension-ci-tools _extension_deploy.yml.
+    permissions:
+      contents: read
+      actions: read
     with:
       extension_name: stats_duck
       duckdb_version: v1.4.3
