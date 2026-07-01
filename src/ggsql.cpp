@@ -14,6 +14,15 @@
 #include "duckdb/main/extension/extension_loader.hpp"
 #include "duckdb/parser/parser_extension.hpp"
 
+// DuckDB v1.5.x moved parser-extension registration from
+// DBConfig::parser_extensions to the ExtensionCallbackManager. Feature-detect
+// the header so this one source compiles against both: v1.4.3 (the pinned /
+// duckdb-wasm-bundle target) and v1.5.1+ (native). See RegisterGgsql below.
+#if __has_include("duckdb/main/extension_callback_manager.hpp")
+#include "duckdb/main/extension_callback_manager.hpp"
+#define STATSDUCK_DUCKDB_HAS_CALLBACK_MANAGER 1
+#endif
+
 #include <algorithm>
 
 namespace duckdb {
@@ -563,7 +572,11 @@ public:
 void RegisterGgsql(ExtensionLoader &loader) {
 	auto &db = loader.GetDatabaseInstance();
 	auto &config = DBConfig::GetConfig(db);
-	config.parser_extensions.push_back(ggsql::GgsqlParserExtension());
+#ifdef STATSDUCK_DUCKDB_HAS_CALLBACK_MANAGER
+	config.GetCallbackManager().Register(ggsql::GgsqlParserExtension()); // DuckDB v1.5.x+
+#else
+	config.parser_extensions.push_back(ggsql::GgsqlParserExtension()); // DuckDB ≤ v1.4.x
+#endif
 }
 
 } // namespace duckdb
