@@ -8,6 +8,11 @@ SPSS, and Stata files — into SQL. Functions are implemented as streaming
 aggregates and scalar primitives, so they scale from local notebooks to
 billion-row warehouses and also run inside DuckDB-WASM in the browser.
 
+The Stats Duck is built by [KoliStat](https://kolistat.com/) (see the
+[product page](https://kolistat.com/products/the-stats-duck)) and powers
+[Bedevere Wise](https://bedeverewise.app/), KoliStat's browser-based
+statistical workbench.
+
 > The extension installs and loads in DuckDB under the technical name
 > `stats_duck` (matching the binary, the SQL function namespace, and the
 > `INSTALL` keyword). "The Stats Duck" is the project / brand name; `stats_duck`
@@ -748,8 +753,8 @@ SCALE color TO viridis;
 The output of any `VISUALIZE` query is a single row with `(spec, layer_sqls)`.
 The client side (a browser app, a notebook renderer, …) is responsible for
 running each layer's SQL and feeding the rows into vega-embed via its
-`datasets` API. See [Bedevere Wise](https://github.com/caerbannogwhite/bedevere-wise)
-for a reference DuckDB-WASM consumer.
+`datasets` API. See [Bedevere Wise](https://bedeverewise.app/) for a reference
+DuckDB-WASM consumer.
 
 ## Building
 
@@ -806,7 +811,7 @@ external dep, used for SPSS `.zsav` read/write) becomes optional and
 gracefully degrades if absent (see `CMakeLists.txt:97`); install zlib via
 your mingw package manager if you need `.zsav` support.
 
-### Building with zig as the C++ toolchain (matches sassy)
+### Building with zig as the C++ toolchain (libc++ hosts)
 
 DuckDB's platform string `windows_amd64_mingw` does not distinguish which C++
 runtime the binary is linked against. Two `windows_amd64_mingw` extensions can
@@ -815,11 +820,10 @@ registration if their `std::map` / `std::shared_ptr` / etc. layouts differ —
 which they do across **libstdc++** (GNU's STL, what mingw-w64 GCC uses) and
 **libc++** (LLVM's STL, what zig's bundled clang uses with `link_libcpp`).
 
-The downstream [sassy](https://github.com/caerbannogwhite/sassy) SAS
-interpreter builds DuckDB with zig + `link_libcpp = true`, so its DuckDB
-links against libc++. The `make mingw_release` target above produces a
-libstdc++-linked binary and is _not_ compatible — it'll segfault inside
-sassy. Use the zig variant instead:
+Some consumers embed a DuckDB built with zig and `link_libcpp = true`, so
+their DuckDB links against libc++. The `make mingw_release` target above
+produces a libstdc++-linked binary and is _not_ compatible — it'll segfault
+inside such a host at function registration. Use the zig variant instead:
 
 ```bash
 make zig_mingw_release
@@ -855,6 +859,15 @@ Or on Windows where the Makefile test runner may not work:
 ```bash
 ./build/release/test/Release/unittest.exe "test/sql/*"
 ```
+
+## KoliStat
+
+The Stats Duck is developed by [KoliStat](https://kolistat.com/):
+
+- [The Stats Duck product page](https://kolistat.com/products/the-stats-duck)
+- [Bedevere Wise](https://bedeverewise.app/) — KoliStat's browser-based
+  statistical workbench, where this extension runs on DuckDB-WASM
+  ([product page](https://kolistat.com/products/bedevere))
 
 ## License
 

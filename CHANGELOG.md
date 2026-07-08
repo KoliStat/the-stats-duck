@@ -514,7 +514,7 @@ label)`, without scanning the data. Useful for inspecting SAS / SPSS
   `windows_amd64_mingw`-stamped extension for loading into mingw-built
   DuckDB hosts. `make zig_mingw_release` does the same with zig's
   bundled clang + libc++ for libc++-linked DuckDB hosts (e.g. the
-  zig-bundled DuckDB inside `sassy` with `link_libcpp = true`). See the
+  zig-bundled DuckDB inside `kolilang` with `link_libcpp = true`). See the
   README's "Building with MinGW" / "Building with zig" sections.
 
 - **SAS compatibility section** in the README — single-table reference
