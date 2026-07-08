@@ -9,7 +9,7 @@ include extension-ci-tools/makefiles/duckdb_extension.Makefile
 # ─── MinGW build (Windows) ────────────────────────────────────────────────────
 # Produces a stats_duck.duckdb_extension stamped with platform string
 # `windows_amd64_mingw` so it loads into mingw-built DuckDB hosts (e.g.
-# the zig-bundled DuckDB inside the sassy SAS interpreter, or DuckDB's
+# the zig-bundled DuckDB inside the kolilang SAS interpreter, or DuckDB's
 # own duckdb_cli-windows-amd64-mingw.zip releases). The default `release`
 # target on Windows uses MSVC and stamps `windows_amd64`; both binaries
 # can coexist — this target only writes under `build/mingw_release/`.
@@ -49,7 +49,7 @@ mingw_release:
 # bundled clang and **libc++** (LLVM's C++ runtime) instead of mingw-gcc's
 # **libstdc++** (GNU's). The platform string doesn't distinguish the two C++
 # runtimes, so a `mingw_release` artifact loaded into a libc++-linked DuckDB
-# host (e.g. zig-built `sassy` with `link_libcpp = true`) will pass the
+# host (e.g. zig-built `kolilang` with `link_libcpp = true`) will pass the
 # platform check and segfault at function-registration time — std::map and
 # friends have ABI-incompatible layouts across the two STLs.
 #
