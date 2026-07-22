@@ -33,6 +33,14 @@ VISUALIZE bill_len AS x:nominal, bill_dep AS y FROM penguins DRAW point
 ----
 {"$schema":"https://vega.github.io/schema/vega-lite/v5.json","data":{"name":"layer_0"},"mark":"point","encoding":{"x":{"field":"x","type":"nominal"},"y":{"field":"y","type":"quantitative"}}}	{layer_0='SELECT bill_len AS x, bill_dep AS y FROM penguins'}
 
+# Transform marks render computed fields: density's axes are `value` and
+# `density`, so an `x` override has no backing channel and is ignored rather
+# than retyping the computed axis (which would shatter it into per-sample bands).
+query TT
+VISUALIZE bill_len AS x:nominal FROM penguins DRAW density
+----
+{"$schema":"https://vega.github.io/schema/vega-lite/v5.json","data":{"name":"layer_0"},"transform":[{"density":"x"}],"mark":"area","encoding":{"x":{"field":"value","type":"quantitative"},"y":{"field":"density","type":"quantitative"}}}	{layer_0=SELECT bill_len AS x FROM penguins}
+
 # Invalid type literal — clean error.
 statement error
 VISUALIZE bill_len AS x, bill_dep AS y, species AS color:bogus FROM penguins DRAW point
