@@ -8,6 +8,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 The extension installs and loads in DuckDB under the technical name `stats_duck` —
 that name is preserved across releases for backward compatibility.
 
+## [Unreleased]
+
+### Added
+
+- Kernel: `optimize.hpp` — header-only Nelder-Mead minimizer
+  (`statsduck::optimize::nelder_mead`), DuckDB-free and Eigen-free; groundwork
+  for downstream mixed-model REML fitting (#42).
+
 ## [0.7.0-what] - 2026-07-01
 
 ### Added
