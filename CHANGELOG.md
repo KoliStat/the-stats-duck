@@ -14,7 +14,29 @@ that name is preserved across releases for backward compatibility.
 
 - Kernel: `optimize.hpp` — header-only Nelder-Mead minimizer
   (`statsduck::optimize::nelder_mead`), DuckDB-free and Eigen-free; groundwork
-  for downstream mixed-model REML fitting (#42).
+  for downstream mixed-model REML fitting (#42). Documented alongside the rest
+  of the DuckDB-free core in `docs/kernel_api.md`; validated standalone via
+  `test/cpp/test_optimize.cpp` (`scripts/run-cpp-tests.sh`).
+
+### Fixed
+
+- **`VISUALIZE` type overrides now target the channel that renders the
+  aesthetic's field**, not the literal channel name. Transform marks broke the
+  old assumption: on `DRAW violin` the `x` aesthetic renders as the `column`
+  facet while the spec's literal `x` channel is the computed KDE density sweep,
+  so `era AS x:nominal … DRAW violin` retyped the density axis and shattered
+  each violin into one discrete band per KDE sample. Overrides on violin's `x`
+  now land on the facet (`x:ordinal` meaningfully controls category sort);
+  overrides on aesthetics consumed by a transform (violin/density `y`,
+  histogram's count axis) are silently ignored like any unmapped channel.
+  Direct marks (point, line, bar, boxplot, heatmap, …) emit field == channel
+  name and are byte-identical.
+
+### Changed
+
+- README: introduced the [KoliStat](https://kolistat.com/) ecosystem section
+  (product page + Bedevere Wise links) and genericized the zig/libc++ consumer
+  notes; historical `sassy` references renamed to `kolilang` in build comments.
 
 ## [0.7.0-what] - 2026-07-01
 
