@@ -37,6 +37,14 @@ that name is preserved across releases for backward compatibility.
 - README: introduced the [KoliStat](https://kolistat.com/) ecosystem section
   (product page + Bedevere Wise links) and genericized the zig/libc++ consumer
   notes; historical `sassy` references renamed to `kolilang` in build comments.
+- **DuckDB compatibility verified through v1.5.5.** The 0.7.0 `__has_include`
+  guard compiles unchanged against v1.5.5 (callback-manager registration
+  path): full SQL suite (2041 assertions) and the `VISUALIZE` suite (321
+  assertions) pass on a local v1.5.5 build. v1.5.5's bundled fmt no longer
+  needs the local VS2026 `_SECURE_SCL` patch — that remains a v1.4.3-only
+  concern. Shipped binaries still target v1.4.3 (the duckdb-wasm bundle pin);
+  v1.5.x users install from the community registry, which serves each current
+  DuckDB stable.
 
 ## [0.7.0-what] - 2026-07-01
 
