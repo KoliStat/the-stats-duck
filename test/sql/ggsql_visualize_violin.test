@@ -40,3 +40,26 @@ query TT
 WITH s AS (SELECT group_id, value FROM samples WHERE value < 6) VISUALIZE group_id AS x, value AS y FROM s DRAW violin
 ----
 {"$schema":"https://vega.github.io/schema/vega-lite/v5.json","data":{"name":"layer_0"},"transform":[{"density":"y","groupby":["x"]}],"mark":{"type":"area","orient":"horizontal"},"encoding":{"y":{"field":"value","type":"quantitative"},"x":{"field":"density","type":"quantitative","stack":"center","impute":null,"axis":null},"column":{"field":"x","type":"nominal"}}}	{layer_0='WITH s AS (SELECT group_id, value FROM samples WHERE value < 6) SELECT group_id AS x, value AS y FROM s'}
+
+# An `x` type override targets the channel carrying the x aesthetic — the
+# `column` facet (field "x") — never the literal `x` channel, which is the
+# computed KDE density sweep. Regression test: `x:nominal` used to retype the
+# density axis, exploding each violin into one discrete band per KDE sample.
+query TT
+VISUALIZE group_id AS x:nominal, value AS y FROM samples DRAW violin
+----
+{"$schema":"https://vega.github.io/schema/vega-lite/v5.json","data":{"name":"layer_0"},"transform":[{"density":"y","groupby":["x"]}],"mark":{"type":"area","orient":"horizontal"},"encoding":{"y":{"field":"value","type":"quantitative"},"x":{"field":"density","type":"quantitative","stack":"center","impute":null,"axis":null},"column":{"field":"x","type":"nominal"}}}	{layer_0='SELECT group_id AS x, value AS y FROM samples'}
+
+# Visible retarget: `x:ordinal` lands on the column facet.
+query TT
+VISUALIZE group_id AS x:ordinal, value AS y FROM samples DRAW violin
+----
+{"$schema":"https://vega.github.io/schema/vega-lite/v5.json","data":{"name":"layer_0"},"transform":[{"density":"y","groupby":["x"]}],"mark":{"type":"area","orient":"horizontal"},"encoding":{"y":{"field":"value","type":"quantitative"},"x":{"field":"density","type":"quantitative","stack":"center","impute":null,"axis":null},"column":{"field":"x","type":"ordinal"}}}	{layer_0='SELECT group_id AS x, value AS y FROM samples'}
+
+# The y aesthetic is consumed by the density transform — no channel renders a
+# field named "y", so a `y` override is silently ignored (same contract as an
+# unmapped channel).
+query TT
+VISUALIZE group_id AS x, value AS y:nominal FROM samples DRAW violin
+----
+{"$schema":"https://vega.github.io/schema/vega-lite/v5.json","data":{"name":"layer_0"},"transform":[{"density":"y","groupby":["x"]}],"mark":{"type":"area","orient":"horizontal"},"encoding":{"y":{"field":"value","type":"quantitative"},"x":{"field":"density","type":"quantitative","stack":"center","impute":null,"axis":null},"column":{"field":"x","type":"nominal"}}}	{layer_0='SELECT group_id AS x, value AS y FROM samples'}

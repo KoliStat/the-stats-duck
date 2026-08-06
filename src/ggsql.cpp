@@ -203,23 +203,30 @@ string BuildTitleBlock(const VisualizeStatement &stmt) {
 	return out;
 }
 
-// Replace the rendered "type":"..." inside the targeted channel with the user's
-// override. Same lookup pattern as ApplyScales — find the channel block, locate
-// the type field within it, swap the value.
+// Replace the rendered "type":"..." with the user's override, targeting the
+// channel whose "field" is the aesthetic — not the channel that happens to
+// share its name. The two differ in transform marks: violin renders the x
+// aesthetic as the `column` facet while its literal `x` channel is the
+// computed KDE density sweep (retyping that to nominal shatters the axis into
+// one band per density sample). For every direct mark BuildChannel emits
+// field == channel name, so the behavior there is unchanged. Aesthetics whose
+// values only feed a transform (violin/density y, histogram's count axis)
+// render no field and the override is silently ignored, same as an unmapped
+// channel. Runs before ApplyScales, so channel blocks are still flat — the
+// first '}' after the field key closes its channel.
 string ApplyTypeOverrides(string layer_body, const vector<TypeOverride> &overrides) {
 	for (const auto &ov : overrides) {
-		string needle = "\"" + ov.aesthetic + "\":{";
-		size_t pos = layer_body.find(needle);
-		if (pos == string::npos) {
-			continue; // channel not mapped → silently ignore
+		string needle = "\"field\":\"" + ov.aesthetic + "\"";
+		size_t field_pos = layer_body.find(needle);
+		if (field_pos == string::npos) {
+			continue; // aesthetic not rendered as a field → silently ignore
 		}
-		size_t open_brace = pos + needle.size() - 1;
-		size_t close_brace = layer_body.find('}', open_brace + 1);
+		size_t close_brace = layer_body.find('}', field_pos);
 		if (close_brace == string::npos) {
 			continue;
 		}
 		const string type_key = "\"type\":\"";
-		size_t type_pos = layer_body.find(type_key, open_brace);
+		size_t type_pos = layer_body.find(type_key, field_pos);
 		if (type_pos == string::npos || type_pos >= close_brace) {
 			continue;
 		}

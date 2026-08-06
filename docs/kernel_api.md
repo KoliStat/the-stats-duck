@@ -10,8 +10,9 @@ calls the kernel directly.
 
 This page is the orientation map. **The headers are the source of truth** — each
 function's preconditions, tolerances, and result semantics live in the
-doc-comments of [`src/include/linalg.hpp`](../src/include/linalg.hpp) and
-[`src/include/lm_core.hpp`](../src/include/lm_core.hpp).
+doc-comments of [`src/include/linalg.hpp`](../src/include/linalg.hpp),
+[`src/include/lm_core.hpp`](../src/include/lm_core.hpp), and
+[`src/include/optimize.hpp`](../src/include/optimize.hpp).
 
 ## Consuming the core from a sibling repo
 
@@ -26,8 +27,12 @@ it. So a consumer:
    `linalg.cpp`** — that is the only Eigen dependency, and it never leaks past
    that TU.
 
+`optimize.hpp` is simpler still: it is **fully header-only** (Eigen-free even in
+implementation) — include it and go, nothing extra to compile.
+
 No DuckDB, no `idx_t`, no ABI coupling to the extension. Everything is in
-namespace `statsduck` (linear algebra in `statsduck::linalg`).
+namespace `statsduck` (linear algebra in `statsduck::linalg`, optimization in
+`statsduck::optimize`).
 
 ## `linalg.hpp` — dense linear-algebra kernel
 
@@ -82,9 +87,41 @@ Conventions worth knowing before consuming `LmResult`:
   `error` on `n ≤ k`, a singular/collinear design, or (for CR*) a missing
   cluster vector or fewer than two clusters. Callers branch on `ok`.
 
+## `optimize.hpp` — derivative-free minimization
+
+Classic Nelder–Mead simplex minimization, built for profile-likelihood /
+REML-style surfaces: few parameters (1–5), no cheap gradients, positivity
+handled by log-reparameterization in the caller. Fully header-only.
+
+```cpp
+optimize::Result r = optimize::nelder_mead(
+    [](const std::vector<double>& x) { return f(x); },  // objective
+    x0,                                                  // start point
+    opts);                                               // optional Options
+```
+
+| Symbol | Kind | Notes |
+| --- | --- | --- |
+| `Options` | struct | `xtol` (1e-8), `ftol` (1e-10), `max_eval` (2000), `init_step` (0.05) |
+| `Result` | struct | `x`, `fx`, `n_eval`, `n_iter`, `converged` |
+| `nelder_mead` | `(function<double(const vector<double>&)>, vector<double> x0, const Options& = {}) -> Result` | minimizes from `x0` |
+
+Conventions:
+
+- **NaN/±Inf objective values act as +Inf** — invalid regions of a likelihood
+  surface repel the simplex instead of poisoning the vertex ordering.
+- **Convergence requires both tolerances jointly**: the simplex must be flat in
+  `f` (`ftol`) *and* small in `x` (`xtol`); otherwise the run ends at
+  `max_eval` with `converged = false` and `x` holding the best point seen.
+- **Deterministic by construction** — no RNG, no restarts; identical inputs
+  give bit-identical results. `n = 1` (two-point simplex) is supported.
+- **Failure is a value**: degenerate input (empty `x0`, `max_eval ≤ 0`) returns
+  `converged = false` with `fx = NaN`, never throws.
+
 ## Testing & validation
 
-Both layers are unit-tested directly, standalone (no DuckDB), against
-golden values — `test/cpp/test_linalg.cpp` and `test/cpp/test_lm_fit.cpp`
-(statsmodels oracle). Build and run them with `scripts/run-cpp-tests.sh` (or
+All three layers are unit-tested directly, standalone (no DuckDB), against
+golden values — `test/cpp/test_linalg.cpp`, `test/cpp/test_lm_fit.cpp`
+(statsmodels oracle), and `test/cpp/test_optimize.cpp` (classic optimization
+test functions). Build and run them with `scripts/run-cpp-tests.sh` (or
 `make test_cpp`).

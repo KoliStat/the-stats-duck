@@ -8,6 +8,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 The extension installs and loads in DuckDB under the technical name `stats_duck` —
 that name is preserved across releases for backward compatibility.
 
+## [0.8.0-nothing] - 2026-08-06
+
+### Added
+
+- Kernel: `optimize.hpp` — header-only Nelder-Mead minimizer
+  (`statsduck::optimize::nelder_mead`), DuckDB-free and Eigen-free; groundwork
+  for downstream mixed-model REML fitting (#42). Documented alongside the rest
+  of the DuckDB-free core in `docs/kernel_api.md`; validated standalone via
+  `test/cpp/test_optimize.cpp` (`scripts/run-cpp-tests.sh`).
+
+### Fixed
+
+- **`VISUALIZE` type overrides now target the channel that renders the
+  aesthetic's field**, not the literal channel name. Transform marks broke the
+  old assumption: on `DRAW violin` the `x` aesthetic renders as the `column`
+  facet while the spec's literal `x` channel is the computed KDE density sweep,
+  so `era AS x:nominal … DRAW violin` retyped the density axis and shattered
+  each violin into one discrete band per KDE sample. Overrides on violin's `x`
+  now land on the facet (`x:ordinal` meaningfully controls category sort);
+  overrides on aesthetics consumed by a transform (violin/density `y`,
+  histogram's count axis) are silently ignored like any unmapped channel.
+  Direct marks (point, line, bar, boxplot, heatmap, …) emit field == channel
+  name and are byte-identical.
+
+### Changed
+
+- README: introduced the [KoliStat](https://kolistat.com/) ecosystem section
+  (product page + Bedevere Wise links) and genericized the zig/libc++ consumer
+  notes; historical `sassy` references renamed to `kolilang` in build comments.
+- **DuckDB compatibility verified through v1.5.5.** The 0.7.0 `__has_include`
+  guard compiles unchanged against v1.5.5 (callback-manager registration
+  path): full SQL suite (2041 assertions) and the `VISUALIZE` suite (321
+  assertions) pass on a local v1.5.5 build. v1.5.5's bundled fmt no longer
+  needs the local VS2026 `_SECURE_SCL` patch — that remains a v1.4.3-only
+  concern. Shipped binaries still target v1.4.3 (the duckdb-wasm bundle pin);
+  v1.5.x users install from the community registry, which serves each current
+  DuckDB stable.
+
 ## [0.7.0-what] - 2026-07-01
 
 ### Added
@@ -514,7 +552,7 @@ label)`, without scanning the data. Useful for inspecting SAS / SPSS
   `windows_amd64_mingw`-stamped extension for loading into mingw-built
   DuckDB hosts. `make zig_mingw_release` does the same with zig's
   bundled clang + libc++ for libc++-linked DuckDB hosts (e.g. the
-  zig-bundled DuckDB inside `sassy` with `link_libcpp = true`). See the
+  zig-bundled DuckDB inside `kolilang` with `link_libcpp = true`). See the
   README's "Building with MinGW" / "Building with zig" sections.
 
 - **SAS compatibility section** in the README — single-table reference

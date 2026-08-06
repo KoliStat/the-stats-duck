@@ -13,10 +13,10 @@ type: software
 authors:
   - family-names: Meneghello
     given-names: Massimo
-repository-code: "https://github.com/caerbannogwhite/the-stats-duck"
-url: "https://github.com/caerbannogwhite/the-stats-duck"
-version: 0.7.0-what
-date-released: "2026-07-01"
+repository-code: "https://github.com/KoliStat/the-stats-duck"
+url: "https://github.com/KoliStat/the-stats-duck"
+version: 0.8.0-nothing
+date-released: "2026-08-06"
 license: Apache-2.0
 keywords:
   - duckdb
