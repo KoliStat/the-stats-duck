@@ -16,7 +16,7 @@ authors:
 repository-code: "https://github.com/KoliStat/the-stats-duck"
 url: "https://github.com/KoliStat/the-stats-duck"
 version: 0.8.0-nothing
-date-released: "2026-08-02"
+date-released: "2026-08-06"
 license: Apache-2.0
 keywords:
   - duckdb
