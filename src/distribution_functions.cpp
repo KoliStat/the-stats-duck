@@ -1,4 +1,5 @@
 #include "distribution_functions.hpp"
+#include "register_documented.hpp"
 #include "distributions.hpp"
 
 #include "duckdb/common/types/vector.hpp"
@@ -563,37 +564,52 @@ void RegisterDistributionFunctions(ExtensionLoader &loader) {
 		dnorm.AddFunction(ScalarFunction({DBL}, DBL, DNormStdExec));
 		dnorm.AddFunction(ScalarFunction({DBL, DBL}, DBL, DNorm2Exec));
 		dnorm.AddFunction(ScalarFunction({DBL, DBL, DBL}, DBL, DNorm3Exec));
-		loader.RegisterFunction(dnorm);
+		statsduck::RegisterDocumented(loader, std::move(dnorm),
+		                              "Normal distribution PDF; defaults mean = 0, sd = 1.",
+		                              {"x", "mean", "sd"}, "SELECT dnorm(0.0)");
 	}
 	{
 		ScalarFunctionSet pnorm("pnorm");
 		pnorm.AddFunction(ScalarFunction({DBL}, DBL, PNormStdExec));
 		pnorm.AddFunction(ScalarFunction({DBL, DBL}, DBL, PNorm2Exec));
 		pnorm.AddFunction(ScalarFunction({DBL, DBL, DBL}, DBL, PNorm3Exec));
-		loader.RegisterFunction(pnorm);
+		statsduck::RegisterDocumented(loader, std::move(pnorm),
+		                              "Normal distribution CDF; defaults mean = 0, sd = 1.",
+		                              {"q", "mean", "sd"}, "SELECT pnorm(1.96)");
 	}
 	{
 		ScalarFunctionSet qnorm("qnorm");
 		qnorm.AddFunction(ScalarFunction({DBL}, DBL, QNormStdExec));
 		qnorm.AddFunction(ScalarFunction({DBL, DBL}, DBL, QNorm2Exec));
 		qnorm.AddFunction(ScalarFunction({DBL, DBL, DBL}, DBL, QNorm3Exec));
-		loader.RegisterFunction(qnorm);
+		statsduck::RegisterDocumented(loader, std::move(qnorm),
+		                              "Normal distribution quantile; defaults mean = 0, sd = 1.",
+		                              {"p", "mean", "sd"}, "SELECT qnorm(0.975)");
 	}
 
 	// ── Student's t ─────────────────────────────────────────────────────────
-	loader.RegisterFunction(ScalarFunction("dt", {DBL, DBL}, DBL, DTExec));
-	loader.RegisterFunction(ScalarFunction("pt", {DBL, DBL}, DBL, PTExec));
-	loader.RegisterFunction(ScalarFunction("qt", {DBL, DBL}, DBL, QTExec));
+	statsduck::RegisterDocumented(loader, ScalarFunction("dt", {DBL, DBL}, DBL, DTExec),
+	                              "Student's t distribution PDF.", {"x", "df"}, "SELECT dt(0.5, 10)");
+	statsduck::RegisterDocumented(loader, ScalarFunction("pt", {DBL, DBL}, DBL, PTExec),
+	                              "Student's t distribution CDF.", {"q", "df"}, "SELECT pt(2.04, 30)");
+	statsduck::RegisterDocumented(loader, ScalarFunction("qt", {DBL, DBL}, DBL, QTExec),
+	                              "Student's t distribution quantile.", {"p", "df"}, "SELECT qt(0.975, 30)");
 
 	// ── Chi-square ──────────────────────────────────────────────────────────
-	loader.RegisterFunction(ScalarFunction("dchisq", {DBL, DBL}, DBL, DChiSqExec));
-	loader.RegisterFunction(ScalarFunction("pchisq", {DBL, DBL}, DBL, PChiSqExec));
-	loader.RegisterFunction(ScalarFunction("qchisq", {DBL, DBL}, DBL, QChiSqExec));
+	statsduck::RegisterDocumented(loader, ScalarFunction("dchisq", {DBL, DBL}, DBL, DChiSqExec),
+	                              "Chi-square distribution PDF.", {"x", "df"}, "SELECT dchisq(3.0, 2)");
+	statsduck::RegisterDocumented(loader, ScalarFunction("pchisq", {DBL, DBL}, DBL, PChiSqExec),
+	                              "Chi-square distribution CDF.", {"q", "df"}, "SELECT pchisq(3.84, 1)");
+	statsduck::RegisterDocumented(loader, ScalarFunction("qchisq", {DBL, DBL}, DBL, QChiSqExec),
+	                              "Chi-square distribution quantile.", {"p", "df"}, "SELECT qchisq(0.95, 1)");
 
 	// ── F ───────────────────────────────────────────────────────────────────
-	loader.RegisterFunction(ScalarFunction("df", {DBL, DBL, DBL}, DBL, DFExec));
-	loader.RegisterFunction(ScalarFunction("pf", {DBL, DBL, DBL}, DBL, PFExec));
-	loader.RegisterFunction(ScalarFunction("qf", {DBL, DBL, DBL}, DBL, QFExec));
+	statsduck::RegisterDocumented(loader, ScalarFunction("df", {DBL, DBL, DBL}, DBL, DFExec),
+	                              "F distribution PDF.", {"x", "df1", "df2"}, "SELECT df(1.0, 3, 12)");
+	statsduck::RegisterDocumented(loader, ScalarFunction("pf", {DBL, DBL, DBL}, DBL, PFExec),
+	                              "F distribution CDF.", {"q", "df1", "df2"}, "SELECT pf(4.47, 3, 12)");
+	statsduck::RegisterDocumented(loader, ScalarFunction("qf", {DBL, DBL, DBL}, DBL, QFExec),
+	                              "F distribution quantile.", {"p", "df1", "df2"}, "SELECT qf(0.95, 3, 12)");
 
 	// ── Gamma ───────────────────────────────────────────────────────────────
 	// dgamma(x, shape) defaults rate = 1; dgamma(x, shape, rate) for the
@@ -602,25 +618,37 @@ void RegisterDistributionFunctions(ExtensionLoader &loader) {
 		ScalarFunctionSet dgamma("dgamma");
 		dgamma.AddFunction(ScalarFunction({DBL, DBL}, DBL, DGamma2Exec));
 		dgamma.AddFunction(ScalarFunction({DBL, DBL, DBL}, DBL, DGamma3Exec));
-		loader.RegisterFunction(dgamma);
+		statsduck::RegisterDocumented(loader, std::move(dgamma),
+		                              "Gamma distribution PDF; rate defaults to 1.",
+		                              {"x", "shape", "rate"}, "SELECT dgamma(2.0, 3.0)");
 	}
 	{
 		ScalarFunctionSet pgamma("pgamma");
 		pgamma.AddFunction(ScalarFunction({DBL, DBL}, DBL, PGamma2Exec));
 		pgamma.AddFunction(ScalarFunction({DBL, DBL, DBL}, DBL, PGamma3Exec));
-		loader.RegisterFunction(pgamma);
+		statsduck::RegisterDocumented(loader, std::move(pgamma),
+		                              "Gamma distribution CDF; rate defaults to 1.",
+		                              {"q", "shape", "rate"}, "SELECT pgamma(2.0, 3.0)");
 	}
 	{
 		ScalarFunctionSet qgamma("qgamma");
 		qgamma.AddFunction(ScalarFunction({DBL, DBL}, DBL, QGamma2Exec));
 		qgamma.AddFunction(ScalarFunction({DBL, DBL, DBL}, DBL, QGamma3Exec));
-		loader.RegisterFunction(qgamma);
+		statsduck::RegisterDocumented(loader, std::move(qgamma),
+		                              "Gamma distribution quantile; rate defaults to 1.",
+		                              {"p", "shape", "rate"}, "SELECT qgamma(0.95, 3.0)");
 	}
 
 	// ── Beta ────────────────────────────────────────────────────────────────
-	loader.RegisterFunction(ScalarFunction("dbeta", {DBL, DBL, DBL}, DBL, DBetaExec));
-	loader.RegisterFunction(ScalarFunction("pbeta", {DBL, DBL, DBL}, DBL, PBetaExec));
-	loader.RegisterFunction(ScalarFunction("qbeta", {DBL, DBL, DBL}, DBL, QBetaExec));
+	statsduck::RegisterDocumented(loader, ScalarFunction("dbeta", {DBL, DBL, DBL}, DBL, DBetaExec),
+	                              "Beta distribution PDF on [0, 1].", {"x", "alpha", "beta"},
+	                              "SELECT dbeta(0.5, 2.0, 3.0)");
+	statsduck::RegisterDocumented(loader, ScalarFunction("pbeta", {DBL, DBL, DBL}, DBL, PBetaExec),
+	                              "Beta distribution CDF.", {"q", "alpha", "beta"},
+	                              "SELECT pbeta(0.5, 2.0, 3.0)");
+	statsduck::RegisterDocumented(loader, ScalarFunction("qbeta", {DBL, DBL, DBL}, DBL, QBetaExec),
+	                              "Beta distribution quantile.", {"p", "alpha", "beta"},
+	                              "SELECT qbeta(0.95, 2.0, 3.0)");
 
 	// ── Exponential ─────────────────────────────────────────────────────────
 	// One-arg form defaults rate = 1 (matches R's `dexp(x, rate = 1)`).
@@ -628,19 +656,25 @@ void RegisterDistributionFunctions(ExtensionLoader &loader) {
 		ScalarFunctionSet dexp("dexp");
 		dexp.AddFunction(ScalarFunction({DBL}, DBL, DExpStdExec));
 		dexp.AddFunction(ScalarFunction({DBL, DBL}, DBL, DExp2Exec));
-		loader.RegisterFunction(dexp);
+		statsduck::RegisterDocumented(loader, std::move(dexp),
+		                              "Exponential distribution PDF; rate defaults to 1.",
+		                              {"x", "rate"}, "SELECT dexp(1.0)");
 	}
 	{
 		ScalarFunctionSet pexp("pexp");
 		pexp.AddFunction(ScalarFunction({DBL}, DBL, PExpStdExec));
 		pexp.AddFunction(ScalarFunction({DBL, DBL}, DBL, PExp2Exec));
-		loader.RegisterFunction(pexp);
+		statsduck::RegisterDocumented(loader, std::move(pexp),
+		                              "Exponential distribution CDF; rate defaults to 1.",
+		                              {"q", "rate"}, "SELECT pexp(1.0)");
 	}
 	{
 		ScalarFunctionSet qexp("qexp");
 		qexp.AddFunction(ScalarFunction({DBL}, DBL, QExpStdExec));
 		qexp.AddFunction(ScalarFunction({DBL, DBL}, DBL, QExp2Exec));
-		loader.RegisterFunction(qexp);
+		statsduck::RegisterDocumented(loader, std::move(qexp),
+		                              "Exponential distribution quantile (closed form); rate defaults to 1.",
+		                              {"p", "rate"}, "SELECT qexp(0.95)");
 	}
 
 	// ── Weibull ─────────────────────────────────────────────────────────────
@@ -649,19 +683,25 @@ void RegisterDistributionFunctions(ExtensionLoader &loader) {
 		ScalarFunctionSet dweibull("dweibull");
 		dweibull.AddFunction(ScalarFunction({DBL, DBL}, DBL, DWeibull2Exec));
 		dweibull.AddFunction(ScalarFunction({DBL, DBL, DBL}, DBL, DWeibull3Exec));
-		loader.RegisterFunction(dweibull);
+		statsduck::RegisterDocumented(loader, std::move(dweibull),
+		                              "Weibull distribution PDF; scale defaults to 1.",
+		                              {"x", "shape", "scale"}, "SELECT dweibull(1.0, 2.0)");
 	}
 	{
 		ScalarFunctionSet pweibull("pweibull");
 		pweibull.AddFunction(ScalarFunction({DBL, DBL}, DBL, PWeibull2Exec));
 		pweibull.AddFunction(ScalarFunction({DBL, DBL, DBL}, DBL, PWeibull3Exec));
-		loader.RegisterFunction(pweibull);
+		statsduck::RegisterDocumented(loader, std::move(pweibull),
+		                              "Weibull distribution CDF; scale defaults to 1.",
+		                              {"q", "shape", "scale"}, "SELECT pweibull(1.0, 2.0)");
 	}
 	{
 		ScalarFunctionSet qweibull("qweibull");
 		qweibull.AddFunction(ScalarFunction({DBL, DBL}, DBL, QWeibull2Exec));
 		qweibull.AddFunction(ScalarFunction({DBL, DBL, DBL}, DBL, QWeibull3Exec));
-		loader.RegisterFunction(qweibull);
+		statsduck::RegisterDocumented(loader, std::move(qweibull),
+		                              "Weibull distribution quantile (closed form); scale defaults to 1.",
+		                              {"p", "shape", "scale"}, "SELECT qweibull(0.95, 2.0)");
 	}
 
 	// ── Log-normal ──────────────────────────────────────────────────────────
@@ -672,40 +712,61 @@ void RegisterDistributionFunctions(ExtensionLoader &loader) {
 		dlnorm.AddFunction(ScalarFunction({DBL}, DBL, DLNormStdExec));
 		dlnorm.AddFunction(ScalarFunction({DBL, DBL}, DBL, DLNorm2Exec));
 		dlnorm.AddFunction(ScalarFunction({DBL, DBL, DBL}, DBL, DLNorm3Exec));
-		loader.RegisterFunction(dlnorm);
+		statsduck::RegisterDocumented(loader, std::move(dlnorm),
+		                              "Log-normal distribution PDF; defaults meanlog = 0, sdlog = 1.",
+		                              {"x", "meanlog", "sdlog"}, "SELECT dlnorm(1.0)");
 	}
 	{
 		ScalarFunctionSet plnorm("plnorm");
 		plnorm.AddFunction(ScalarFunction({DBL}, DBL, PLNormStdExec));
 		plnorm.AddFunction(ScalarFunction({DBL, DBL}, DBL, PLNorm2Exec));
 		plnorm.AddFunction(ScalarFunction({DBL, DBL, DBL}, DBL, PLNorm3Exec));
-		loader.RegisterFunction(plnorm);
+		statsduck::RegisterDocumented(loader, std::move(plnorm),
+		                              "Log-normal distribution CDF; defaults meanlog = 0, sdlog = 1.",
+		                              {"q", "meanlog", "sdlog"}, "SELECT plnorm(1.0)");
 	}
 	{
 		ScalarFunctionSet qlnorm("qlnorm");
 		qlnorm.AddFunction(ScalarFunction({DBL}, DBL, QLNormStdExec));
 		qlnorm.AddFunction(ScalarFunction({DBL, DBL}, DBL, QLNorm2Exec));
 		qlnorm.AddFunction(ScalarFunction({DBL, DBL, DBL}, DBL, QLNorm3Exec));
-		loader.RegisterFunction(qlnorm);
+		statsduck::RegisterDocumented(loader, std::move(qlnorm),
+		                              "Log-normal distribution quantile; defaults meanlog = 0, sdlog = 1.",
+		                              {"p", "meanlog", "sdlog"}, "SELECT qlnorm(0.95)");
 	}
 
 	// ── Poisson ─────────────────────────────────────────────────────────────
 	// Discrete: dpois(k, lambda) / ppois(q, lambda) / qpois(p, lambda).
-	loader.RegisterFunction(ScalarFunction("dpois", {DBL, DBL}, DBL, DPoisExec));
-	loader.RegisterFunction(ScalarFunction("ppois", {DBL, DBL}, DBL, PPoisExec));
-	loader.RegisterFunction(ScalarFunction("qpois", {DBL, DBL}, DBL, QPoisExec));
+	statsduck::RegisterDocumented(loader, ScalarFunction("dpois", {DBL, DBL}, DBL, DPoisExec),
+	                              "Poisson PMF (discrete).", {"k", "lambda"}, "SELECT dpois(3, 2.5)");
+	statsduck::RegisterDocumented(loader, ScalarFunction("ppois", {DBL, DBL}, DBL, PPoisExec),
+	                              "Poisson CDF.", {"q", "lambda"}, "SELECT ppois(3, 2.5)");
+	statsduck::RegisterDocumented(loader, ScalarFunction("qpois", {DBL, DBL}, DBL, QPoisExec),
+	                              "Poisson quantile (integer search).", {"p", "lambda"},
+	                              "SELECT qpois(0.95, 2.5)");
 
 	// ── Negative Binomial ───────────────────────────────────────────────────
 	// Discrete: dnbinom(k, size, prob) / pnbinom(q, size, prob) / qnbinom(p, size, prob).
-	loader.RegisterFunction(ScalarFunction("dnbinom", {DBL, DBL, DBL}, DBL, DNBinomExec));
-	loader.RegisterFunction(ScalarFunction("pnbinom", {DBL, DBL, DBL}, DBL, PNBinomExec));
-	loader.RegisterFunction(ScalarFunction("qnbinom", {DBL, DBL, DBL}, DBL, QNBinomExec));
+	statsduck::RegisterDocumented(loader, ScalarFunction("dnbinom", {DBL, DBL, DBL}, DBL, DNBinomExec),
+	                              "Negative-binomial PMF: failures before size successes.",
+	                              {"k", "size", "prob"}, "SELECT dnbinom(2, 5, 0.5)");
+	statsduck::RegisterDocumented(loader, ScalarFunction("pnbinom", {DBL, DBL, DBL}, DBL, PNBinomExec),
+	                              "Negative-binomial CDF.", {"q", "size", "prob"},
+	                              "SELECT pnbinom(2, 5, 0.5)");
+	statsduck::RegisterDocumented(loader, ScalarFunction("qnbinom", {DBL, DBL, DBL}, DBL, QNBinomExec),
+	                              "Negative-binomial quantile (integer search).", {"p", "size", "prob"},
+	                              "SELECT qnbinom(0.95, 5, 0.5)");
 
 	// ── Hypergeometric ──────────────────────────────────────────────────────
 	// Discrete: dhyper(x, m, n, k) / phyper(q, m, n, k) / qhyper(p, m, n, k).
-	loader.RegisterFunction(ScalarFunction("dhyper", {DBL, DBL, DBL, DBL}, DBL, DHyperExec));
-	loader.RegisterFunction(ScalarFunction("phyper", {DBL, DBL, DBL, DBL}, DBL, PHyperExec));
-	loader.RegisterFunction(ScalarFunction("qhyper", {DBL, DBL, DBL, DBL}, DBL, QHyperExec));
+	statsduck::RegisterDocumented(loader, ScalarFunction("dhyper", {DBL, DBL, DBL, DBL}, DBL, DHyperExec),
+	                              "Hypergeometric PMF (m successes, n failures, k draws).",
+	                              {"x", "m", "n", "k"}, "SELECT dhyper(1, 5, 10, 4)");
+	statsduck::RegisterDocumented(loader, ScalarFunction("phyper", {DBL, DBL, DBL, DBL}, DBL, PHyperExec),
+	                              "Hypergeometric CDF.", {"q", "m", "n", "k"}, "SELECT phyper(1, 5, 10, 4)");
+	statsduck::RegisterDocumented(loader, ScalarFunction("qhyper", {DBL, DBL, DBL, DBL}, DBL, QHyperExec),
+	                              "Hypergeometric quantile.", {"p", "m", "n", "k"},
+	                              "SELECT qhyper(0.95, 5, 10, 4)");
 }
 
 } // namespace duckdb

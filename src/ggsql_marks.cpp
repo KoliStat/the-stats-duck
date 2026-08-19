@@ -1,4 +1,5 @@
 #include "ggsql_marks_internal.hpp"
+#include "register_documented.hpp"
 
 #include "duckdb/catalog/catalog.hpp"
 #include "duckdb/catalog/catalog_entry/scalar_function_catalog_entry.hpp"
@@ -332,7 +333,10 @@ void RegisterMark(ExtensionLoader &loader, const string &name,
 	info->render = render;
 	func.function_info = std::move(info);
 
-	loader.RegisterFunction(std::move(func));
+	statsduck::RegisterDocumented(loader, std::move(func),
+	                              "Internal VISUALIZE plumbing: mark registry entry for DRAW " + name +
+	                                  ". Not intended for direct use.",
+	                              {}, nullptr);
 }
 
 const MarkInfo &LookupMark(ClientContext &context, const string &name) {

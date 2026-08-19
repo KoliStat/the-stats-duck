@@ -1,4 +1,5 @@
 #include "normality_function.hpp"
+#include "register_documented.hpp"
 #include "distributions.hpp"
 
 #include "duckdb/function/aggregate_function.hpp"
@@ -619,21 +620,27 @@ void RegisterJarqueBera(ExtensionLoader &loader) {
 	AggregateFunction fn("jarque_bera", {LogicalType::DOUBLE}, JarqueBeraResultType(),
 	                     AggregateFunction::StateSize<JBState>, JBInit, JBUpdate, JBCombine, JBFinalize,
 	                     FunctionNullHandling::DEFAULT_NULL_HANDLING);
-	loader.RegisterFunction(fn);
+	statsduck::RegisterDocumented(loader, std::move(fn),
+	                              "Jarque-Bera normality test (skewness + kurtosis).",
+	                              {"column"}, "SELECT jarque_bera(returns) FROM prices");
 }
 
 void RegisterShapiroWilk(ExtensionLoader &loader) {
 	AggregateFunction fn("shapiro_wilk", {LogicalType::DOUBLE}, SWResultType(),
 	                     AggregateFunction::StateSize<SWState>, SWInit, SWUpdate, SWCombine, SWFinalize,
 	                     FunctionNullHandling::DEFAULT_NULL_HANDLING, nullptr, nullptr, SWDestroy);
-	loader.RegisterFunction(fn);
+	statsduck::RegisterDocumented(loader, std::move(fn),
+	                              "Shapiro-Wilk normality test (Royston AS R94; n in [3, 5000]).",
+	                              {"column"}, "SELECT shapiro_wilk(residual) FROM fits");
 }
 
 void RegisterAndersonDarling(ExtensionLoader &loader) {
 	AggregateFunction fn("anderson_darling", {LogicalType::DOUBLE}, ADResultType(),
 	                     AggregateFunction::StateSize<ADState>, ADInit, ADUpdate, ADCombine, ADFinalize,
 	                     FunctionNullHandling::DEFAULT_NULL_HANDLING, nullptr, nullptr, ADDestroy);
-	loader.RegisterFunction(fn);
+	statsduck::RegisterDocumented(loader, std::move(fn),
+	                              "Anderson-Darling normality test against the fitted normal (n >= 8).",
+	                              {"column"}, "SELECT anderson_darling(x) FROM samples");
 }
 
 } // namespace duckdb

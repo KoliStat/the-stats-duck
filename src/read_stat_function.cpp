@@ -1,4 +1,5 @@
 #include "read_stat_function.hpp"
+#include "register_documented.hpp"
 #include "read_stat_types.hpp"
 
 #include "duckdb/function/table_function.hpp"
@@ -573,13 +574,20 @@ void RegisterReadStat(ExtensionLoader &loader) {
 	TableFunction func("read_stat", {LogicalType::VARCHAR}, ReadStatExecute, ReadStatBind, ReadStatInitGlobal);
 	func.named_parameters["format"] = LogicalType::VARCHAR;
 	func.named_parameters["encoding"] = LogicalType::VARCHAR;
-	loader.RegisterFunction(func);
+	statsduck::RegisterDocumented(loader, std::move(func),
+	                              "Read SAS (.sas7bdat/.xpt), SPSS (.sav/.por), or Stata (.dta) files as "
+	                              "a table.",
+	                              {"path", "format", "encoding"}, "SELECT * FROM read_stat('data.sav')");
 
 	TableFunction meta("read_stat_metadata", {LogicalType::VARCHAR}, ReadStatMetadataExecute, ReadStatMetadataBind,
 	                   ReadStatMetadataInitGlobal);
 	meta.named_parameters["format"] = LogicalType::VARCHAR;
 	meta.named_parameters["encoding"] = LogicalType::VARCHAR;
-	loader.RegisterFunction(meta);
+	statsduck::RegisterDocumented(loader, std::move(meta),
+	                              "Variable-level metadata (labels, formats, value labels) of a "
+	                              "SAS/SPSS/Stata file.",
+	                              {"path", "format", "encoding"},
+	                              "SELECT * FROM read_stat_metadata('data.sav')");
 
 	auto &db = loader.GetDatabaseInstance();
 	auto &config = DBConfig::GetConfig(db);

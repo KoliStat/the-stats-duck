@@ -1,4 +1,5 @@
 #include "summary_stats_function.hpp"
+#include "register_documented.hpp"
 
 #include "duckdb/function/aggregate_function.hpp"
 #include "duckdb/function/function_set.hpp"
@@ -359,7 +360,11 @@ void RegisterSummaryStats(ExtensionLoader &loader) {
 	set.AddFunction(MakeSummaryStats({LogicalType::DOUBLE, LogicalType::BOOLEAN}, SummaryStatsBindBias));
 	set.AddFunction(MakeSummaryStats({LogicalType::DOUBLE, LogicalType::BOOLEAN, LogicalType::INTEGER},
 	                                  SummaryStatsBindBiasQuantile));
-	loader.RegisterFunction(set);
+	statsduck::RegisterDocumented(loader, std::move(set),
+	                              "Descriptive summary: n, missing, mean, sd, variance, quartiles, "
+	                              "skewness, kurtosis, mode.",
+	                              {"column", "bias_correction", "quantile_type"},
+	                              "SELECT summary_stats(age) FROM patients");
 }
 
 } // namespace duckdb

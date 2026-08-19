@@ -1,4 +1,5 @@
 #include "meta_function.hpp"
+#include "register_documented.hpp"
 
 #include "duckdb/catalog/catalog.hpp"
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
@@ -365,7 +366,10 @@ static void MetaExecute(ClientContext &, TableFunctionInput &input, DataChunk &o
 
 void RegisterMeta(ExtensionLoader &loader) {
 	TableFunction fn("meta", {LogicalType::VARCHAR}, MetaExecute, MetaBind, MetaInitGlobal);
-	loader.RegisterFunction(fn);
+	statsduck::RegisterDocumented(loader, std::move(fn),
+	                              "Column-level profile of a table: one row per column with a kind "
+	                              "classification and light statistics.",
+	                              {"data"}, "SELECT * FROM meta('patients')");
 }
 
 } // namespace duckdb

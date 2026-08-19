@@ -1,4 +1,5 @@
 #include "auto_bin_function.hpp"
+#include "register_documented.hpp"
 
 #include "duckdb/common/types/vector.hpp"
 #include "duckdb/common/vector_operations/binary_executor.hpp"
@@ -429,14 +430,20 @@ void RegisterBinEdges(ExtensionLoader &loader) {
 	AggregateFunctionSet set("bin_edges");
 	set.AddFunction(MakeBinEdges({LogicalType::DOUBLE}, BinEdgesBindNoArg));
 	set.AddFunction(MakeBinEdges({LogicalType::DOUBLE, LogicalType::VARCHAR}, BinEdgesBindMethod));
-	loader.RegisterFunction(set);
+	statsduck::RegisterDocumented(loader, std::move(set),
+	                              "Automatic histogram bin edges — sturges (default), fd, scott, sqrt, "
+	                              "rice, or auto.",
+	                              {"x", "method"}, "SELECT bin_edges(price) FROM sales");
 }
 
 void RegisterBinLabel(ExtensionLoader &loader) {
 	ScalarFunction fn("bin_label",
 	                  {LogicalType::DOUBLE, LogicalType::LIST(LogicalType::DOUBLE)},
 	                  LogicalType::VARCHAR, BinLabelExec);
-	loader.RegisterFunction(fn);
+	statsduck::RegisterDocumented(loader, std::move(fn),
+	                              "Label of the bin containing x, given an edge vector (typically from "
+	                              "bin_edges).",
+	                              {"x", "edges"}, "SELECT bin_label(7.5, [0.0, 5.0, 10.0])");
 }
 
 } // namespace duckdb

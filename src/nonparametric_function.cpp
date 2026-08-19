@@ -1,4 +1,5 @@
 #include "nonparametric_function.hpp"
+#include "register_documented.hpp"
 
 #include "duckdb/function/aggregate_function.hpp"
 #include "duckdb/function/function_set.hpp"
@@ -312,7 +313,10 @@ void RegisterMannWhitneyU(ExtensionLoader &loader) {
 	set.AddFunction(MakeMannWhitneyAgg(
 	    {LogicalType::DOUBLE, LogicalType::DOUBLE, LogicalType::VARCHAR, LogicalType::BOOLEAN},
 	    NonParamBindAltCorrect));
-	loader.RegisterFunction(set);
+	statsduck::RegisterDocumented(loader, std::move(set),
+	                              "Mann-Whitney U test (Wilcoxon rank-sum) for two independent samples.",
+	                              {"column1", "column2", "alternative", "continuity"},
+	                              "SELECT mann_whitney_u(treatment, control) FROM outcomes");
 }
 
 // =============================================================================
@@ -475,7 +479,10 @@ void RegisterWilcoxonSignedRank(ExtensionLoader &loader) {
 	set.AddFunction(MakeWilcoxonAgg(
 	    {LogicalType::DOUBLE, LogicalType::DOUBLE, LogicalType::VARCHAR, LogicalType::BOOLEAN},
 	    NonParamBindAltCorrect));
-	loader.RegisterFunction(set);
+	statsduck::RegisterDocumented(loader, std::move(set),
+	                              "Wilcoxon signed-rank test on paired differences.",
+	                              {"column1", "column2", "alternative", "continuity"},
+	                              "SELECT wilcoxon_signed_rank(before, after) FROM measurements");
 }
 
 } // namespace duckdb

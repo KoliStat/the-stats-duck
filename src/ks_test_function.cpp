@@ -1,4 +1,5 @@
 #include "ks_test_function.hpp"
+#include "register_documented.hpp"
 
 #include "distributions.hpp"
 #include "duckdb/common/exception.hpp"
@@ -358,7 +359,9 @@ void RegisterKsTest1Samp(ExtensionLoader &loader) {
 	                     AggregateFunction::StateSize<Ks1SampState>, Ks1Init, Ks1Update, Ks1Combine,
 	                     Ks1Finalize, FunctionNullHandling::DEFAULT_NULL_HANDLING, nullptr, nullptr,
 	                     Ks1Destroy);
-	loader.RegisterFunction(fn);
+	statsduck::RegisterDocumented(loader, std::move(fn),
+	                              "One-sample Kolmogorov-Smirnov normality test against the fitted normal.",
+	                              {"column"}, "SELECT ks_test_1samp(x) FROM samples");
 }
 
 void RegisterKsTest2Samp(ExtensionLoader &loader) {
@@ -366,7 +369,9 @@ void RegisterKsTest2Samp(ExtensionLoader &loader) {
 	                     KsTest2SampResultType(), AggregateFunction::StateSize<Ks2SampState>, Ks2Init,
 	                     Ks2Update, Ks2Combine, Ks2Finalize, FunctionNullHandling::DEFAULT_NULL_HANDLING,
 	                     nullptr, nullptr, Ks2Destroy);
-	loader.RegisterFunction(fn);
+	statsduck::RegisterDocumented(loader, std::move(fn),
+	                              "Two-sample Kolmogorov-Smirnov test for equality of distributions.",
+	                              {"column1", "column2"}, "SELECT ks_test_2samp(a, b) FROM t");
 }
 
 } // namespace duckdb

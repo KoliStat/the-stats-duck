@@ -8,6 +8,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 The extension installs and loads in DuckDB under the technical name `stats_duck` —
 that name is preserved across releases for backward compatibility.
 
+## [Unreleased]
+
+### Added
+
+- Every SQL function now registers `FunctionDescription` metadata —
+  description, parameter names, and a runnable example — so
+  `duckdb_functions()` and the community-extensions docs page's
+  "Added Functions" table (previously all-NULL for `stats_duck`) render real
+  documentation (#47). One description covers every overload of a function;
+  coverage is enforced by the new `test/sql/function_docs.test`.
+
 ## [0.8.0-nothing] - 2026-08-06
 
 ### Added

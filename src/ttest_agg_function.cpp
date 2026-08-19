@@ -1,4 +1,5 @@
 #include "ttest_agg_function.hpp"
+#include "register_documented.hpp"
 #include "distributions.hpp"
 
 #include "duckdb/function/aggregate_function.hpp"
@@ -314,7 +315,11 @@ void RegisterTTest1SampAgg(ExtensionLoader &loader) {
 	    MakeTTest1SampAgg({LogicalType::DOUBLE, LogicalType::DOUBLE, LogicalType::DOUBLE}, TTest1SampBind3));
 	set.AddFunction(MakeTTest1SampAgg(
 	    {LogicalType::DOUBLE, LogicalType::DOUBLE, LogicalType::DOUBLE, LogicalType::VARCHAR}, TTest1SampBind4));
-	loader.RegisterFunction(set);
+	statsduck::RegisterDocumented(loader, std::move(set),
+	                              "One-sample t-test of the column mean against a hypothesized value "
+	                              "(default mu = 0).",
+	                              {"column", "mu", "alpha", "alternative"},
+	                              "SELECT ttest_1samp(reaction_ms, 250.0) FROM trials");
 }
 
 // =============================================================================
@@ -421,7 +426,10 @@ void RegisterTTestPairedAgg(ExtensionLoader &loader) {
 	    MakeTTestPairedAgg({LogicalType::DOUBLE, LogicalType::DOUBLE, LogicalType::DOUBLE}, TTestPairedBind3));
 	set.AddFunction(MakeTTestPairedAgg(
 	    {LogicalType::DOUBLE, LogicalType::DOUBLE, LogicalType::DOUBLE, LogicalType::VARCHAR}, TTestPairedBind4));
-	loader.RegisterFunction(set);
+	statsduck::RegisterDocumented(loader, std::move(set),
+	                              "Paired t-test on per-row differences.",
+	                              {"column1", "column2", "alpha", "alternative"},
+	                              "SELECT ttest_paired(before, after) FROM measurements");
 }
 
 // =============================================================================
@@ -587,7 +595,11 @@ void RegisterTTest2SampAgg(ExtensionLoader &loader) {
 	set.AddFunction(MakeTTest2SampAgg({LogicalType::DOUBLE, LogicalType::DOUBLE, LogicalType::BOOLEAN,
 	                                   LogicalType::DOUBLE, LogicalType::VARCHAR},
 	                                  TTest2SampBind5));
-	loader.RegisterFunction(set);
+	statsduck::RegisterDocumented(loader, std::move(set),
+	                              "Two-sample t-test — Welch's by default, Student's pooled with "
+	                              "equal_var := true.",
+	                              {"column1", "column2", "equal_var", "alpha", "alternative"},
+	                              "SELECT ttest_2samp(score_a, score_b) FROM results");
 }
 
 } // namespace duckdb

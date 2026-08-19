@@ -1,4 +1,5 @@
 #include "rank_correlation_function.hpp"
+#include "register_documented.hpp"
 #include "distributions.hpp"
 #include "stats_validation.hpp"
 
@@ -495,7 +496,10 @@ void RegisterSpearmanTest(ExtensionLoader &loader) {
 	set.AddFunction(MakeSpearman(
 	    {LogicalType::DOUBLE, LogicalType::DOUBLE, LogicalType::DOUBLE, LogicalType::VARCHAR},
 	    SpearmanBind4));
-	loader.RegisterFunction(set);
+	statsduck::RegisterDocumented(loader, std::move(set),
+	                              "Spearman rank correlation with significance test.",
+	                              {"x", "y", "alpha", "alternative"},
+	                              "SELECT spearman_test(rank_a, rank_b) FROM scores");
 }
 
 void RegisterKendallTest(ExtensionLoader &loader) {
@@ -503,7 +507,9 @@ void RegisterKendallTest(ExtensionLoader &loader) {
 	set.AddFunction(MakeKendall({LogicalType::DOUBLE, LogicalType::DOUBLE}, KendallBind2));
 	set.AddFunction(
 	    MakeKendall({LogicalType::DOUBLE, LogicalType::DOUBLE, LogicalType::VARCHAR}, KendallBind3));
-	loader.RegisterFunction(set);
+	statsduck::RegisterDocumented(loader, std::move(set),
+	                              "Kendall's tau-b rank correlation (tie-corrected, normal approximation).",
+	                              {"x", "y", "alternative"}, "SELECT kendall_test(x, y) FROM pairs");
 }
 
 } // namespace duckdb

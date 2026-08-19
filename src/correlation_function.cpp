@@ -1,4 +1,5 @@
 #include "correlation_function.hpp"
+#include "register_documented.hpp"
 #include "distributions.hpp"
 #include "stats_validation.hpp"
 
@@ -299,7 +300,10 @@ void RegisterPearsonTest(ExtensionLoader &loader) {
 	set.AddFunction(MakePearson({LogicalType::DOUBLE, LogicalType::DOUBLE, LogicalType::DOUBLE}, PearsonBind3));
 	set.AddFunction(MakePearson(
 	    {LogicalType::DOUBLE, LogicalType::DOUBLE, LogicalType::DOUBLE, LogicalType::VARCHAR}, PearsonBind4));
-	loader.RegisterFunction(set);
+	statsduck::RegisterDocumented(loader, std::move(set),
+	                              "Pearson correlation with significance test and confidence interval.",
+	                              {"x", "y", "alpha", "alternative"},
+	                              "SELECT pearson_test(height, weight) FROM people");
 }
 
 } // namespace duckdb

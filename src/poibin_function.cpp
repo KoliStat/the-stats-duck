@@ -1,4 +1,5 @@
 #include "poibin_function.hpp"
+#include "register_documented.hpp"
 
 #include "duckdb/common/types/vector.hpp"
 #include "duckdb/function/scalar_function.hpp"
@@ -145,7 +146,10 @@ void RegisterPoibinCdf(ExtensionLoader &loader) {
 	ScalarFunction fn("poibin_cdf",
 	                  {LogicalType::LIST(LogicalType::DOUBLE), LogicalType::BIGINT},
 	                  LogicalType::DOUBLE, PoibinCdfExec);
-	loader.RegisterFunction(fn);
+	statsduck::RegisterDocumented(loader, std::move(fn),
+	                              "Poisson-binomial CDF: P(X <= k) for a sum of independent Bernoulli "
+	                              "trials with the given success probabilities.",
+	                              {"probs", "k"}, "SELECT poibin_cdf([0.2, 0.5, 0.9], 2)");
 }
 
 } // namespace duckdb

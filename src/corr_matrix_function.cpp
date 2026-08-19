@@ -1,4 +1,5 @@
 #include "corr_matrix_function.hpp"
+#include "register_documented.hpp"
 
 #include "duckdb/catalog/catalog.hpp"
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
@@ -307,7 +308,11 @@ void RegisterCorrMatrix(ExtensionLoader &loader) {
 	                  CorrMatrixInitGlobal);
 	fn.named_parameters["variables"] = LogicalType::LIST(LogicalType::VARCHAR);
 	fn.named_parameters["method"] = LogicalType::VARCHAR;
-	loader.RegisterFunction(fn);
+	statsduck::RegisterDocumented(loader, std::move(fn),
+	                              "Long-format pairwise correlation matrix over a table's numeric columns "
+	                              "(pearson, spearman, or kendall).",
+	                              {"data", "variables", "method"},
+	                              "SELECT * FROM corr_matrix('iris', variables := ['sepal_length', 'petal_length'])");
 }
 
 } // namespace duckdb

@@ -1,4 +1,5 @@
 #include "lm_fit_function.hpp"
+#include "register_documented.hpp"
 
 #include "lm_core.hpp" // statsduck::fit_lm / Vcov / LmResult / parse_vcov / vcov_name
 
@@ -490,7 +491,11 @@ void RegisterLmFit(ExtensionLoader &loader) {
 	set.AddFunction(make({LogicalType::DOUBLE, list_double, LogicalType::VARCHAR, LogicalType::VARCHAR,
 	                      LogicalType::BOOLEAN},
 	                     LmFitBind5Cluster));
-	loader.RegisterFunction(set);
+	statsduck::RegisterDocumented(loader, std::move(set),
+	                              "OLS regression aggregate — one model per group; vcov 'const', "
+	                              "'HC0'..'HC3', or 'CR0'/'CR1' with a VARCHAR cluster key.",
+	                              {"y", "x", "vcov", "cluster", "add_intercept"},
+	                              "SELECT lm_fit(y, [x1, x2], 'HC1') FROM data");
 }
 
 } // namespace duckdb

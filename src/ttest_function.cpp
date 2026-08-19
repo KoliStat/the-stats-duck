@@ -1,4 +1,5 @@
 #include "ttest_function.hpp"
+#include "register_documented.hpp"
 #include "ttest_compute.hpp"
 
 #include "duckdb/function/table_function.hpp"
@@ -165,7 +166,11 @@ void RegisterTTest1Samp(ExtensionLoader &loader) {
 	func.named_parameters["mu"] = LogicalType::DOUBLE;
 	func.named_parameters["alpha"] = LogicalType::DOUBLE;
 	func.named_parameters["alternative"] = LogicalType::VARCHAR;
-	loader.RegisterFunction(func);
+	statsduck::RegisterDocumented(loader, std::move(func),
+	                              "One-sample t-test over an array literal (table form of the "
+	                              "ttest_1samp aggregate).",
+	                              {"sample", "mu", "alpha", "alternative"},
+	                              "SELECT * FROM ttest_1samp([5.1, 4.9, 5.3], mu := 5.0)");
 }
 
 // ─── Two-sample t-test ──────────────────────────────────────────────────────
@@ -194,7 +199,11 @@ void RegisterTTest2Samp(ExtensionLoader &loader) {
 	func.named_parameters["equal_var"] = LogicalType::BOOLEAN;
 	func.named_parameters["alpha"] = LogicalType::DOUBLE;
 	func.named_parameters["alternative"] = LogicalType::VARCHAR;
-	loader.RegisterFunction(func);
+	statsduck::RegisterDocumented(loader, std::move(func),
+	                              "Two-sample t-test over two array literals (table form; Welch's by "
+	                              "default).",
+	                              {"sample1", "sample2", "equal_var", "alpha", "alternative"},
+	                              "SELECT * FROM ttest_2samp([1.0, 2.0, 3.0], [2.0, 3.0, 4.0])");
 }
 
 // ─── Paired t-test ──────────────────────────────────────────────────────────
@@ -222,7 +231,10 @@ void RegisterTTestPaired(ExtensionLoader &loader) {
 	                   TTestPairedBind, TTestInitGlobal);
 	func.named_parameters["alpha"] = LogicalType::DOUBLE;
 	func.named_parameters["alternative"] = LogicalType::VARCHAR;
-	loader.RegisterFunction(func);
+	statsduck::RegisterDocumented(loader, std::move(func),
+	                              "Paired t-test over two array literals (table form).",
+	                              {"sample1", "sample2", "alpha", "alternative"},
+	                              "SELECT * FROM ttest_paired([1.0, 2.0], [1.5, 2.5])");
 }
 
 } // namespace duckdb

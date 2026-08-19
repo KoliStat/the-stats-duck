@@ -1,4 +1,5 @@
 #include "sign_test_function.hpp"
+#include "register_documented.hpp"
 #include "distributions.hpp"
 #include "stats_validation.hpp"
 
@@ -306,13 +307,19 @@ void RegisterSignTest(ExtensionLoader &loader) {
 	one_samp.AddFunction(MakeSignTest1Samp({LogicalType::DOUBLE, LogicalType::DOUBLE}, Bind1Samp2));
 	one_samp.AddFunction(
 	    MakeSignTest1Samp({LogicalType::DOUBLE, LogicalType::DOUBLE, LogicalType::VARCHAR}, Bind1Samp3));
-	loader.RegisterFunction(one_samp);
+	statsduck::RegisterDocumented(loader, std::move(one_samp),
+	                              "Sign test of the median against a hypothesized value (default 0).",
+	                              {"column", "mu", "alternative"},
+	                              "SELECT sign_test_1samp(delta, 0.0) FROM changes");
 
 	AggregateFunctionSet paired("sign_test_paired");
 	paired.AddFunction(MakeSignTestPaired({LogicalType::DOUBLE, LogicalType::DOUBLE}, BindPaired2));
 	paired.AddFunction(
 	    MakeSignTestPaired({LogicalType::DOUBLE, LogicalType::DOUBLE, LogicalType::VARCHAR}, BindPaired3));
-	loader.RegisterFunction(paired);
+	statsduck::RegisterDocumented(loader, std::move(paired),
+	                              "Paired sign test on per-row differences.",
+	                              {"column1", "column2", "alternative"},
+	                              "SELECT sign_test_paired(before, after) FROM measurements");
 }
 
 } // namespace duckdb

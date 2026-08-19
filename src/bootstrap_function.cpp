@@ -1,4 +1,5 @@
 #include "bootstrap_function.hpp"
+#include "register_documented.hpp"
 
 #include "duckdb/common/types/vector.hpp"
 #include "duckdb/execution/expression_executor.hpp"
@@ -381,7 +382,11 @@ void RegisterBootstrap(ExtensionLoader &loader) {
 	set.AddFunction(make_fn({LogicalType::DOUBLE, LogicalType::VARCHAR, LogicalType::BIGINT,
 	                         LogicalType::BIGINT},
 	                        BootstrapBindSeeded));
-	loader.RegisterFunction(set);
+	statsduck::RegisterDocumented(loader, std::move(set),
+	                              "With-replacement bootstrap of a statistic (mean, median, sum, stddev, "
+	                              "variance, min, max); returns a LIST of n_iters resampled values.",
+	                              {"x", "statistic", "n_iters", "seed"},
+	                              "SELECT bootstrap(revenue, 'mean', 1000, 42) FROM sales");
 }
 
 } // namespace duckdb

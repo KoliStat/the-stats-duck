@@ -1,4 +1,5 @@
 #include "table_one_function.hpp"
+#include "register_documented.hpp"
 
 #include "duckdb/catalog/catalog.hpp"
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
@@ -679,7 +680,11 @@ void RegisterTableOne(ExtensionLoader &loader) {
 	fn.named_parameters["by"] = LogicalType::LIST(LogicalType::VARCHAR);
 	fn.named_parameters["force_categorical"] = LogicalType::LIST(LogicalType::VARCHAR);
 	fn.named_parameters["force_numerical"] = LogicalType::LIST(LogicalType::VARCHAR);
-	loader.RegisterFunction(fn);
+	statsduck::RegisterDocumented(loader, std::move(fn),
+	                              "Clinical 'Table 1': long-format descriptives for mixed variable types, "
+	                              "optionally stratified with between-group tests.",
+	                              {"data", "variables", "by", "force_categorical", "force_numerical"},
+	                              "SELECT * FROM table_one('patients', variables := ['age', 'sex'], by := ['arm'])");
 }
 
 } // namespace duckdb

@@ -1,4 +1,5 @@
 #include "chisq_function.hpp"
+#include "register_documented.hpp"
 #include "distributions.hpp"
 #include "portable_string_hash.hpp"
 
@@ -358,13 +359,19 @@ void RegisterChiSquareTests(ExtensionLoader &loader) {
 	ind_set.AddFunction(MakeChiSqInd({LogicalType::VARCHAR, LogicalType::VARCHAR}, ChiSqIndBindNoArg));
 	ind_set.AddFunction(
 	    MakeChiSqInd({LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::BOOLEAN}, ChiSqIndBindCorrect));
-	loader.RegisterFunction(ind_set);
+	statsduck::RegisterDocumented(loader, std::move(ind_set),
+	                              "Chi-square test of independence between two categorical columns.",
+	                              {"row_var", "col_var", "continuity"},
+	                              "SELECT chisq_independence(sex, outcome) FROM patients");
 
 	AggregateFunction gof_fn("chisq_goodness_of_fit", {LogicalType::VARCHAR}, ChiSqGoFResultType(),
 	                          AggregateFunction::StateSize<ChiSqGoFState>, ChiSqGoFInit, ChiSqGoFUpdate, ChiSqGoFCombine,
 	                          ChiSqGoFFinalize, FunctionNullHandling::SPECIAL_HANDLING, nullptr, nullptr,
 	                          ChiSqGoFDestroy);
-	loader.RegisterFunction(gof_fn);
+	statsduck::RegisterDocumented(loader, std::move(gof_fn),
+	                              "Chi-square goodness-of-fit against a uniform distribution over the "
+	                              "observed categories.",
+	                              {"category"}, "SELECT chisq_goodness_of_fit(die_face) FROM rolls");
 }
 
 } // namespace duckdb

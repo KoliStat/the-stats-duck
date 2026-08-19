@@ -1,4 +1,5 @@
 #include "adjust_p_function.hpp"
+#include "register_documented.hpp"
 
 #include "duckdb/function/scalar_function.hpp"
 #include "duckdb/common/types/vector.hpp"
@@ -247,7 +248,10 @@ void RegisterAdjustP(ExtensionLoader &loader) {
 	ScalarFunction fn("adjust_p",
 	                  {LogicalType::LIST(LogicalType::DOUBLE), LogicalType::VARCHAR},
 	                  LogicalType::LIST(LogicalType::DOUBLE), AdjustPExec);
-	loader.RegisterFunction(fn);
+	statsduck::RegisterDocumented(loader, std::move(fn),
+	                              "Multiple-testing correction over a list of p-values "
+	                              "(bonferroni, holm, hochberg, or BH/fdr).",
+	                              {"pvals", "method"}, "SELECT adjust_p([0.01, 0.04, 0.20], 'holm')");
 }
 
 } // namespace duckdb

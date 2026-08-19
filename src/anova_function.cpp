@@ -1,4 +1,5 @@
 #include "anova_function.hpp"
+#include "register_documented.hpp"
 #include "distributions.hpp"
 #include "portable_string_hash.hpp"
 
@@ -240,7 +241,9 @@ void RegisterAnovaOneway(ExtensionLoader &loader) {
 	AggregateFunction fn("anova_oneway", {LogicalType::DOUBLE, LogicalType::VARCHAR}, AnovaResultType(),
 	                     AggregateFunction::StateSize<AnovaState>, AnovaInit, AnovaUpdate, AnovaCombine, AnovaFinalize,
 	                     FunctionNullHandling::SPECIAL_HANDLING, nullptr, nullptr, AnovaDestroy);
-	loader.RegisterFunction(fn);
+	statsduck::RegisterDocumented(loader, std::move(fn),
+	                              "One-way ANOVA across the groups of a categorical column.",
+	                              {"value", "group"}, "SELECT anova_oneway(yield, variety) FROM crops");
 }
 
 } // namespace duckdb

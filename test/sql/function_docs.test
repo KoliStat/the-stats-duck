@@ -1,0 +1,108 @@
+# name: test/sql/function_docs.test
+# description: Every stats_duck function carries FunctionDescription metadata (#47)
+# group: [stats_duck]
+
+require stats_duck
+
+# duckdb_functions() feeds the community-extensions docs page ("Added
+# Functions" table); a NULL description renders as an empty row there. One
+# FunctionDescription with empty parameter_types covers every overload of a
+# function, so these checks see every overload row. The names are listed
+# explicitly because duckdb_functions() has no extension column to filter by
+# (and local test builds link stats_duck statically, so a LOAD-diff can't
+# work either). New functions must be added here — that is the point.
+
+# ── 1. No stats_duck function may lack a description ─────────────────────────
+
+query I
+SELECT coalesce(list(DISTINCT function_name ORDER BY function_name), [])
+FROM duckdb_functions()
+WHERE description IS NULL AND function_name IN (
+    'adjust_p', 'anderson_darling', 'anova_oneway', 'bin_edges', 'bin_label',
+    'bootstrap', 'chisq_goodness_of_fit', 'chisq_independence', 'corr_matrix',
+    'dbeta', 'dchisq', 'dexp', 'df', 'dgamma', 'dhyper', 'dlnorm', 'dnbinom',
+    'dnorm', 'dpois', 'dt', 'dweibull',
+    'jarque_bera', 'kendall_test', 'ks_test_1samp', 'ks_test_2samp',
+    'lm', 'lm_fit', 'lm_summary', 'mann_whitney_u', 'meta',
+    'pbeta', 'pchisq', 'pearson_test', 'pexp', 'pf', 'pgamma', 'phyper',
+    'plnorm', 'pnbinom', 'pnorm', 'poibin_cdf', 'ppois', 'pt', 'pweibull',
+    'qbeta', 'qchisq', 'qexp', 'qf', 'qgamma', 'qhyper', 'qlnorm', 'qnbinom',
+    'qnorm', 'qpois', 'qt', 'qweibull',
+    'rbeta', 'rchisq', 'read_stat', 'read_stat_metadata', 'rexp', 'rf',
+    'rgamma', 'rhyper', 'rlnorm', 'rnbinom', 'rnorm', 'rpois', 'rt',
+    'rweibull',
+    'shapiro_wilk', 'sign_test_1samp', 'sign_test_paired', 'spearman_test',
+    'summary_stats', 'table_one',
+    'ttest_1samp', 'ttest_2samp', 'ttest_paired', 'wilcoxon_signed_rank',
+    'visualize_mark_v1_area', 'visualize_mark_v1_bar',
+    'visualize_mark_v1_boxplot', 'visualize_mark_v1_density',
+    'visualize_mark_v1_errorband', 'visualize_mark_v1_errorbar',
+    'visualize_mark_v1_heatmap', 'visualize_mark_v1_histogram',
+    'visualize_mark_v1_line', 'visualize_mark_v1_point',
+    'visualize_mark_v1_regression', 'visualize_mark_v1_rule',
+    'visualize_mark_v1_text', 'visualize_mark_v1_tick',
+    'visualize_mark_v1_violin');
+----
+[]
+
+# ── 2. User-facing functions also carry at least one example ─────────────────
+# (the internal visualize_mark_v1_* plumbing is exempt)
+
+query I
+SELECT coalesce(list(DISTINCT function_name ORDER BY function_name), [])
+FROM duckdb_functions()
+WHERE (examples IS NULL OR len(examples) = 0) AND function_name IN (
+    'adjust_p', 'anderson_darling', 'anova_oneway', 'bin_edges', 'bin_label',
+    'bootstrap', 'chisq_goodness_of_fit', 'chisq_independence', 'corr_matrix',
+    'dbeta', 'dchisq', 'dexp', 'df', 'dgamma', 'dhyper', 'dlnorm', 'dnbinom',
+    'dnorm', 'dpois', 'dt', 'dweibull',
+    'jarque_bera', 'kendall_test', 'ks_test_1samp', 'ks_test_2samp',
+    'lm', 'lm_fit', 'lm_summary', 'mann_whitney_u', 'meta',
+    'pbeta', 'pchisq', 'pearson_test', 'pexp', 'pf', 'pgamma', 'phyper',
+    'plnorm', 'pnbinom', 'pnorm', 'poibin_cdf', 'ppois', 'pt', 'pweibull',
+    'qbeta', 'qchisq', 'qexp', 'qf', 'qgamma', 'qhyper', 'qlnorm', 'qnbinom',
+    'qnorm', 'qpois', 'qt', 'qweibull',
+    'rbeta', 'rchisq', 'read_stat', 'read_stat_metadata', 'rexp', 'rf',
+    'rgamma', 'rhyper', 'rlnorm', 'rnbinom', 'rnorm', 'rpois', 'rt',
+    'rweibull',
+    'shapiro_wilk', 'sign_test_1samp', 'sign_test_paired', 'spearman_test',
+    'summary_stats', 'table_one',
+    'ttest_1samp', 'ttest_2samp', 'ttest_paired', 'wilcoxon_signed_rank');
+----
+[]
+
+# ── 3. Canary: the name list above stays in sync with what we register ───────
+# 95 distinct function names are registered today (80 user-facing + 15
+# visualize_mark_v1_* internals). If this count moves, a function was added
+# or removed — update the lists above (and the community docs get the new
+# entry automatically via FunctionDescription).
+
+query I
+SELECT count(DISTINCT function_name) FROM duckdb_functions()
+WHERE function_name IN (
+    'adjust_p', 'anderson_darling', 'anova_oneway', 'bin_edges', 'bin_label',
+    'bootstrap', 'chisq_goodness_of_fit', 'chisq_independence', 'corr_matrix',
+    'dbeta', 'dchisq', 'dexp', 'df', 'dgamma', 'dhyper', 'dlnorm', 'dnbinom',
+    'dnorm', 'dpois', 'dt', 'dweibull',
+    'jarque_bera', 'kendall_test', 'ks_test_1samp', 'ks_test_2samp',
+    'lm', 'lm_fit', 'lm_summary', 'mann_whitney_u', 'meta',
+    'pbeta', 'pchisq', 'pearson_test', 'pexp', 'pf', 'pgamma', 'phyper',
+    'plnorm', 'pnbinom', 'pnorm', 'poibin_cdf', 'ppois', 'pt', 'pweibull',
+    'qbeta', 'qchisq', 'qexp', 'qf', 'qgamma', 'qhyper', 'qlnorm', 'qnbinom',
+    'qnorm', 'qpois', 'qt', 'qweibull',
+    'rbeta', 'rchisq', 'read_stat', 'read_stat_metadata', 'rexp', 'rf',
+    'rgamma', 'rhyper', 'rlnorm', 'rnbinom', 'rnorm', 'rpois', 'rt',
+    'rweibull',
+    'shapiro_wilk', 'sign_test_1samp', 'sign_test_paired', 'spearman_test',
+    'summary_stats', 'table_one',
+    'ttest_1samp', 'ttest_2samp', 'ttest_paired', 'wilcoxon_signed_rank',
+    'visualize_mark_v1_area', 'visualize_mark_v1_bar',
+    'visualize_mark_v1_boxplot', 'visualize_mark_v1_density',
+    'visualize_mark_v1_errorband', 'visualize_mark_v1_errorbar',
+    'visualize_mark_v1_heatmap', 'visualize_mark_v1_histogram',
+    'visualize_mark_v1_line', 'visualize_mark_v1_point',
+    'visualize_mark_v1_regression', 'visualize_mark_v1_rule',
+    'visualize_mark_v1_text', 'visualize_mark_v1_tick',
+    'visualize_mark_v1_violin');
+----
+95

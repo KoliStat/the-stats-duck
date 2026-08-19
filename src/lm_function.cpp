@@ -1,4 +1,5 @@
 #include "lm_function.hpp"
+#include "register_documented.hpp"
 
 #include "distributions.hpp"
 
@@ -751,7 +752,11 @@ void RegisterLm(ExtensionLoader &loader) {
 		fn.named_parameters["y"] = LogicalType::VARCHAR;
 		fn.named_parameters["x"] = LogicalType::LIST(LogicalType::VARCHAR);
 		fn.named_parameters["formula"] = LogicalType::VARCHAR;
-		loader.RegisterFunction(fn);
+		statsduck::RegisterDocumented(loader, std::move(fn),
+		                              "OLS regression over a table: per-term coefficient estimates for "
+		                              "y ~ x (or a formula).",
+		                              {"data", "y", "x", "formula"},
+		                              "SELECT * FROM lm('cars', y := 'mpg', x := ['wt', 'hp'])");
 	}
 	{
 		TableFunction fn("lm_summary", {LogicalType::VARCHAR}, LmSummaryExecute, LmSummaryBind,
@@ -759,7 +764,11 @@ void RegisterLm(ExtensionLoader &loader) {
 		fn.named_parameters["y"] = LogicalType::VARCHAR;
 		fn.named_parameters["x"] = LogicalType::LIST(LogicalType::VARCHAR);
 		fn.named_parameters["formula"] = LogicalType::VARCHAR;
-		loader.RegisterFunction(fn);
+		statsduck::RegisterDocumented(loader, std::move(fn),
+		                              "OLS model-level summary (R-squared, F, sigma) for y ~ x over a "
+		                              "table.",
+		                              {"data", "y", "x", "formula"},
+		                              "SELECT * FROM lm_summary('cars', y := 'mpg', x := ['wt', 'hp'])");
 	}
 }
 
