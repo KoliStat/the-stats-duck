@@ -58,7 +58,7 @@ static readstat_error_t ParseWithFormat(readstat_parser_t *parser, const string 
 // ─── DuckDB FileSystem I/O handlers ─────────────────────────────────────────────
 // Route ReadStat's file reads through DuckDB's VFS so that remote files
 // (httpfs/s3), registered WASM file buffers, and other virtual file systems
-// work transparently. The default unistd handlers call raw POSIX open()/read(),
+// all work. The default unistd handlers call raw POSIX open()/read(),
 // which bypass DuckDB's VFS and fail in WASM.
 
 struct DuckDBIOContext {

@@ -25,7 +25,7 @@ namespace {
 // NextUniform() and the per-row independence assumption holds. A future
 // iteration can add an explicit-seed override (e.g. a session-level
 // stats_duck_seed() helper) — today the RNG is non-reproducible by design,
-// matching the ergonomics of DuckDB's `random()`.
+// matching the behavior of DuckDB's `random()`.
 //===--------------------------------------------------------------------===//
 
 static std::mt19937_64 &TLSRng() {

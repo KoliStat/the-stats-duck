@@ -43,7 +43,7 @@ inline void RegisterWith(duckdb::ExtensionLoader &loader, FN fn, duckdb::string 
 
 } // namespace docs_detail
 
-// example may be nullptr/"" for internal plumbing functions (they still get a
+// example may be nullptr/"" for internal support functions (they still get a
 // description so the docs table never shows a bare NULL row).
 
 inline void RegisterDocumented(duckdb::ExtensionLoader &loader, duckdb::ScalarFunction fn, duckdb::string description,

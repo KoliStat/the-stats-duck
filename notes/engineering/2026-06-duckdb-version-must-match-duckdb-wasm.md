@@ -85,10 +85,10 @@ Necessary to load at all (see #2). Removing it reintroduces the instantiation
 
 ## Reproducing — the Node harness
 
-`scripts/wasm-verify/` (untracked; `npm i` pulls `@duckdb/duckdb-wasm@1.32.0` +
+`scripts/wasm-verify/` (tracked in-repo; `npm i` pulls `@duckdb/duckdb-wasm@1.32.0` +
 `web-worker`) loads the freshly-built
 `build/wasm_eh/.../stats_duck.duckdb_extension.wasm` into the real worker EH
-bundle and runs the probe matrix above. Windows gotchas baked into the harness:
+bundle and runs the probe matrix above. Windows pitfalls the harness handles:
 duckdb-wasm's node runtime caches fetched extensions to
 `~/.duckdb/extensions/<host:port>/…` and a `:` is an illegal Windows path
 component, so `patch-worker.mjs` sanitizes the `host:port` colon across the

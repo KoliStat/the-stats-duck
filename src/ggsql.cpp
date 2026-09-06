@@ -35,8 +35,8 @@ string BuildProjectedSql(const VisualizeStatement &stmt) {
 	// Prepend any leading WITH clause so the FROM and aesthetic expressions
 	// can resolve CTE-bound names. CTEs are scoped to the inner query when a
 	// mark wraps the projection (e.g. `SELECT * FROM (<projected>) ORDER BY x`),
-	// so passing the WITH through verbatim composes cleanly with line / bar /
-	// area / errorband / regression wraps without any extra plumbing.
+	// so passing the WITH through verbatim works with line / bar /
+	// area / errorband / regression wraps without extra handling.
 	if (!stmt.with_clause.empty()) {
 		sql += stmt.with_clause + " ";
 	}

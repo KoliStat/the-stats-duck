@@ -557,8 +557,8 @@ static void SasExportFinalize(ClientContext &, FunctionData &bind_data_p, Global
 	readstat_set_data_writer(writer, SasExportDataWriter);
 
 	if (bind_data.format == SasFormat::XPT) {
-		// XPT v5 (default) — most universally readable. v8 lifts the column-name
-		// width to 32 chars and is read transparently by ReadStat-family readers
+		// XPT v5 (default) — the most widely readable. v8 lifts the column-name
+		// width to 32 chars and is read correctly by ReadStat-family readers
 		// (this extension's read_stat(), pyreadstat, haven, R), but some legacy
 		// SAS toolchains still expect v5.
 		readstat_writer_set_file_format_version(writer, bind_data.xpt_version);

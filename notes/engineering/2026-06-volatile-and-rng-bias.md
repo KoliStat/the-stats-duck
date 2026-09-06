@@ -1,4 +1,4 @@
-# Two RNG footguns we hit shipping the `r*` random-sampling functions
+# Two RNG pitfalls we hit shipping the `r*` random-sampling functions
 
 *June 2026, while landing `rnorm` / `rt` / `rchisq` / `rf` / `rgamma` / `rbeta` / `rexp` / `rweibull` / `rlnorm` / `rpois` for v0.6.*
 

@@ -334,7 +334,7 @@ void RegisterMark(ExtensionLoader &loader, const string &name,
 	func.function_info = std::move(info);
 
 	statsduck::RegisterDocumented(loader, std::move(func),
-	                              "Internal VISUALIZE plumbing: mark registry entry for DRAW " + name +
+	                              "Internal VISUALIZE support function: mark registry entry for DRAW " + name +
 	                                  ". Not intended for direct use.",
 	                              {}, nullptr);
 }

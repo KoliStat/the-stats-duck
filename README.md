@@ -2,16 +2,16 @@
 
 A statistical computing toolkit for DuckDB.
 
-The Stats Duck brings statistical workflows — descriptive statistics, hypothesis
-tests, grammar-of-graphics visualization, and direct readers/writers for SAS,
-SPSS, and Stata files — into SQL. Functions are implemented as streaming
+The Stats Duck adds statistical analysis to SQL: descriptive statistics,
+hypothesis tests, grammar-of-graphics visualization, and direct readers/writers
+for SAS, SPSS, and Stata files. Functions are implemented as streaming
 aggregates and scalar primitives, so they scale from local notebooks to
 billion-row warehouses and also run inside DuckDB-WASM in the browser.
 
 The Stats Duck is built by [KoliStat](https://kolistat.com/) (see the
-[product page](https://kolistat.com/products/the-stats-duck)) and powers
-[Bedevere Wise](https://bedeverewise.app/), KoliStat's browser-based
-statistical workbench.
+[product page](https://kolistat.com/products/the-stats-duck)). It is the
+statistical engine of [Bedevere Wise](https://bedeverewise.app/), KoliStat's
+browser-based statistical workbench.
 
 > The extension installs and loads in DuckDB under the technical name
 > `stats_duck` (matching the binary, the SQL function namespace, and the
@@ -29,12 +29,11 @@ statistician without leaving SQL. The current release covers four areas:
   Posit-published Grammar-of-Graphics SQL dialect compiled to Vega-Lite v5.
   No server-side rendering: the extension emits a spec + per-layer SQL, and
   the client (browser, notebook, …) runs the SQL and feeds the rows to vega.
-- **Statistical file I/O** — first-class readers AND writers for SAS, SPSS, and
-  Stata files, integrated with DuckDB's virtual file system so they work
-  transparently with local paths, `httpfs://`, `s3://`, and registered WASM
-  file buffers.
+- **Statistical file I/O** — readers and writers for SAS, SPSS, and Stata
+  files, integrated with DuckDB's virtual file system so they work with local
+  paths, `httpfs://`, `s3://`, and registered WASM file buffers.
 - **Streaming aggregates** — every test is a single-pass aggregate over the
-  data, so it composes naturally with `GROUP BY`, window frames, and DuckDB's
+  data, so it works with `GROUP BY`, window frames, and DuckDB's
   parallel execution.
 
 Future releases will add Spearman/Kendall correlations, regression with full
@@ -612,7 +611,7 @@ FROM (SELECT ttest_1samp(v3) AS r FROM measurements);
 
 #### Group-by
 
-Run a test per group with no extra plumbing:
+Run a test per group with a plain `GROUP BY`:
 
 ```sql
 SELECT id3,

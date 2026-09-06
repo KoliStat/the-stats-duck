@@ -11,7 +11,7 @@ that has been written down than to re-derive it.
 ## Inventory
 
 - [`2026-06-volatile-and-rng-bias.md`](2026-06-volatile-and-rng-bias.md) — two
-  RNG footguns hit while landing the `r*` random-sampling family: DuckDB's
+  RNG pitfalls hit while building the `r*` random-sampling family: DuckDB's
   `UnaryExecutor` caches the lambda result for constant-vector inputs (the
   `VOLATILE` flag does not disable this), and MSVC's
   `std::uniform_real_distribution<double>` clips the upper tail. Fixes and

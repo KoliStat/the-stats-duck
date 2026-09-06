@@ -586,7 +586,7 @@ static unique_ptr<FunctionData> LmBindCommon(ClientContext &context, TableFuncti
 	bd->data_table = input.inputs[0].GetValue<string>();
 
 	// Two ways to specify the model:
-	//   formula := 'y ~ x1 + x2'             (R-style DSL, ergonomic)
+	//   formula := 'y ~ x1 + x2'             (R-style formula string)
 	//   y := 'y_col', x := ['x1', 'x2']      (explicit lists, easy to generate)
 	// They are mutually exclusive — passing both is a bind error.
 	auto it_formula = input.named_parameters.find("formula");

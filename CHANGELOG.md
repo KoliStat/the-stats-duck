@@ -19,6 +19,13 @@ that name is preserved across releases for backward compatibility.
   documentation (#47). One description covers every overload of a function;
   coverage is enforced by the new `test/sql/function_docs.test`.
 
+### Changed
+
+- Reworded README, CITATION.cff, engineering notes, code comments, and the
+  `visualize_mark_v1_*` function descriptions to plain English. Removed
+  buzzwords and slang ("first-class", "seamlessly", "plumbing", "footgun");
+  statistical terms such as robust standard errors and leverage are unchanged.
+
 ## [0.8.0-nothing] - 2026-08-06
 
 ### Added
@@ -45,7 +52,7 @@ that name is preserved across releases for backward compatibility.
 
 ### Changed
 
-- README: introduced the [KoliStat](https://kolistat.com/) ecosystem section
+- README: introduced the [KoliStat](https://kolistat.com/) section
   (product page + Bedevere Wise links) and genericized the zig/libc++ consumer
   notes; historical `sassy` references renamed to `kolilang` in build comments.
 - **DuckDB compatibility verified through v1.5.5.** The 0.7.0 `__has_include`
@@ -191,7 +198,7 @@ that name is preserved across releases for backward compatibility.
   variance (alias var), min, max}`. When `seed` is provided the RNG
   (std::mt19937_64) is seeded deterministically — mixed with the per-row
   index so multi-group `GROUP BY` bootstraps produce stable but distinct
-  streams. Empty input → NULL list. Composes naturally with `list_quantile`
+  streams. Empty input → NULL list. Composes with `list_quantile`
   for percentile CIs:
   ```
   WITH b AS (SELECT bootstrap(price, 'mean', 1000, 42) AS samples FROM t)
@@ -248,7 +255,7 @@ that name is preserved across releases for backward compatibility.
   optional channels (`color`, `opacity`, ...) propagate through the
   encoding. Composes with `FACET BY ... ROWS` (vega `row` channel) but
   conflicts with `FACET BY ... COLS` because both would request the
-  `column` channel. Pairs naturally with `boxplot` for distribution
+  `column` channel. Pairs with `boxplot` for distribution
   comparison overlays.
 
 ### Changed
@@ -306,7 +313,7 @@ that name is preserved across releases for backward compatibility.
   Methods that depend on robust scale (FD, Scott) silently fall back to
   Sturges when IQR/sd is zero. `bin_label(x, edges) → VARCHAR` formats the
   bin containing `x` as `'[lo, hi)'` (or `'[lo, hi]'` for the rightmost bin so
-  the maximum is never dropped). Pairs naturally with `table_one` — bin a
+  the maximum is never dropped). Pairs with `table_one` — bin a
   numeric column up front, then summarise the binned column categorically.
 
 - **Local DuckDB submodule patch (`duckdb/third_party/fmt/include/fmt/format.h`).**
@@ -387,7 +394,7 @@ that name is preserved across releases for backward compatibility.
   contingency tables). `density` is a KDE via Vega-Lite's `density` transform
   on the `x` aesthetic; groups by `color` if mapped (one curve per level).
   `regression` is a `line` mark via Vega-Lite's `regression` transform fitting
-  `y ~ x`; groups by `color` if mapped. Pairs naturally with `DRAW point
+  `y ~ x`; groups by `color` if mapped. Pairs with `DRAW point
   DRAW regression` for scatter-with-fit overlays.
 - VISUALIZE: `TITLE '<text>' [SUBTITLE '<text>']` clause appended after any
   `SCALE` clauses. Emitted as a Vega-Lite `TitleParams` object (always object

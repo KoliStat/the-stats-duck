@@ -3,10 +3,10 @@
 #
 # Emits reference values (OLS coefficients, classical + HC0/HC1/HC2/HC3 robust
 # standard errors, t / p, R^2, adj-R^2, F, sigma) for the small deterministic
-# datasets baked into test/cpp/test_lm_fit.cpp. statsmodels is the oracle: its
-# cov_type='HC*' implementations are the standard reference the rest of the
-# ecosystem is validated against, so matching them validates OUR formulas (not
-# just our re-derivation of them).
+# datasets stored in test/cpp/test_lm_fit.cpp. statsmodels is the oracle: its
+# cov_type='HC*' implementations are the standard reference that other
+# statistics packages are validated against, so matching them validates our
+# formulas (not just our re-derivation of them).
 #
 # This is an OFFLINE generator — its output is hand-copied into the C++ test as
 # golden constants. It is NOT part of any build (statsmodels is not a build dep).

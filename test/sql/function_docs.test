@@ -46,7 +46,7 @@ WHERE description IS NULL AND function_name IN (
 []
 
 # ── 2. User-facing functions also carry at least one example ─────────────────
-# (the internal visualize_mark_v1_* plumbing is exempt)
+# (the internal visualize_mark_v1_* support functions are exempt)
 
 query I
 SELECT coalesce(list(DISTINCT function_name ORDER BY function_name), [])

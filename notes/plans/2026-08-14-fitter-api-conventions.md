@@ -189,7 +189,7 @@ Append to `docs/fitter_conventions.md`:
 - **Deterministic by construction.** Identical inputs (and seed, where an
   explicit seed argument exists) give bit-identical results. Randomness only
   ever enters behind a seed argument (`bootstrap`, sampling functions).
-- **The wasm string-hash landmine.** Never put a default-hash
+- **The wasm string-hash pitfall.** Never put a default-hash
   `std::string`-keyed `std::unordered_map`/`unordered_set` in extension
   code: it pulls in an unexported libc++ symbol (`std::__hash_memory`) and
   breaks the wasm build at load time. Use `PortableStringHash`

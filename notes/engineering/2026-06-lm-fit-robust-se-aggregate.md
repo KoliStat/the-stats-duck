@@ -85,7 +85,7 @@ weighting fails loudly there instead of hiding behind near-identical numbers.
 
 The math lives in a DuckDB-free `lm_core` (built on `linalg.hpp`) so it is unit-
 tested directly (`test/cpp/test_lm_fit.cpp`) and can later back `lm`/`lm_summary`
-too — the aggregate is a thin vector-plumbing wrapper over it.
+too — the aggregate is a thin wrapper that moves vectors in and out.
 
 ## Addendum: cluster-robust SEs (CR0/CR1)
 

@@ -178,7 +178,7 @@ too long for XPT v5
 
 # ─── XPT v8 (32-char names) ────────────────────────────────────────────────────
 # Reader auto-detects v5 vs v8 from the file header (longname[32] subrecord),
-# so writing as v8 round-trips through this extension's read_stat() seamlessly.
+# so files written as v8 round-trip through this extension's read_stat().
 
 # Long column name accepted with VERSION 8.
 statement ok
