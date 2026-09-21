@@ -37,6 +37,10 @@ template <class INFO, class FN>
 inline void RegisterWith(duckdb::ExtensionLoader &loader, FN fn, duckdb::string description,
                          duckdb::vector<duckdb::string> parameter_names, const char *example) {
 	INFO info(std::move(fn));
+	// CreateInfo defaults to ERROR_ON_CONFLICT; the bare RegisterFunction
+	// overloads use ALTER_ON_CONFLICT (extension_loader.cpp). Keep that
+	// behavior so documented registration stays a pure metadata change.
+	info.on_conflict = duckdb::OnCreateConflict::ALTER_ON_CONFLICT;
 	info.descriptions.push_back(MakeDescription(description, std::move(parameter_names), example));
 	loader.RegisterFunction(std::move(info));
 }
