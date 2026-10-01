@@ -18,6 +18,10 @@ browser-based statistical workbench.
 > `INSTALL` keyword). "The Stats Duck" is the project / brand name; `stats_duck`
 > is what you type at the SQL prompt.
 
+The name is a play on [The Fat Duck](https://thefatduck.co.uk/), Heston
+Blumenthal's restaurant in Bray, Berkshire. That restaurant has been the
+inspiration for the project name from the start.
+
 ## Scope
 
 The Stats Duck is meant to cover the everyday work of a general-purpose
@@ -38,6 +42,15 @@ statistician without leaving SQL. The current release covers four areas:
 
 Future releases will add Spearman/Kendall correlations, regression with full
 diagnostics, multiple-testing corrections, and more distribution families.
+
+Further documentation:
+
+- [`docs/visualize.md`](docs/visualize.md) — a worked example of every
+  `VISUALIZE` mark and clause.
+- [`docs/kernel_api.md`](docs/kernel_api.md) — the DuckDB-free C++ kernel
+  and how a sibling repo consumes it.
+- [`docs/fitter_conventions.md`](docs/fitter_conventions.md) — conventions
+  for model-fitting functions: inputs, the return STRUCT, validation.
 
 ## Functions
 
