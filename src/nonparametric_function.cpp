@@ -172,8 +172,10 @@ static void MannWhitneyUpdate(Vector inputs[], AggregateInputData &, idx_t, Vect
 	for (idx_t i = 0; i < count; i++) {
 		auto &state = *states[i];
 
+		// Each column drops its own NULL and NaN values. A NaN must never reach
+		// the rank sort: std::sort with operator< is undefined on NaN.
 		auto idx1 = idata1.sel->get_index(i);
-		if (idata1.validity.RowIsValid(idx1)) {
+		if (idata1.validity.RowIsValid(idx1) && !std::isnan(v1[idx1])) {
 			if (!state.data_a) {
 				state.data_a = new std::vector<double>();
 			}
@@ -181,7 +183,7 @@ static void MannWhitneyUpdate(Vector inputs[], AggregateInputData &, idx_t, Vect
 		}
 
 		auto idx2 = idata2.sel->get_index(i);
-		if (idata2.validity.RowIsValid(idx2)) {
+		if (idata2.validity.RowIsValid(idx2) && !std::isnan(v2[idx2])) {
 			if (!state.data_b) {
 				state.data_b = new std::vector<double>();
 			}
@@ -359,6 +361,9 @@ static void WilcoxonUpdate(Vector inputs[], AggregateInputData &, idx_t, Vector 
 			continue;
 		}
 		double diff = v1[idx1] - v2[idx2];
+		if (std::isnan(diff)) {
+			continue; // A NaN on either side drops the pair, like a NULL.
+		}
 		if (diff == 0.0) {
 			continue; // Zero differences are excluded
 		}

@@ -67,6 +67,11 @@ diagnostics, multiple-testing corrections, and more distribution families.
 All tests return a `STRUCT` with the test statistic, degrees of freedom,
 p-value, and relevant effect sizes / confidence intervals.
 
+Every test skips NULL inputs, and treats NaN the same way: a NaN value
+counts as missing and never enters the test. For two-column tests a NaN
+on either side drops the pair (paired tests) or that single value
+(two-sample tests), exactly as a NULL would.
+
 #### Common parameters
 
 | Parameter     | Type      | Default       | Description                                                      |

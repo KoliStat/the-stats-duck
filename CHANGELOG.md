@@ -41,6 +41,13 @@ that name is preserved across releases for backward compatibility.
 
 ### Fixed
 
+- `ttest_1samp`, `ttest_paired`, `ttest_2samp`, `mann_whitney_u`, and
+  `wilcoxon_signed_rank` now skip NaN inputs the way they skip NULL (#52).
+  Before, a NaN entered the accumulator: the t-tests returned NaN for every
+  field, and the two rank tests handed the NaN to `std::sort`, whose
+  ordering is undefined for NaN. The other tests already dropped NaN.
+  `test/sql/nan_inputs.test` checks each function against a NULL twin of
+  the same data.
 - `RegisterDocumented` now sets `ALTER_ON_CONFLICT`, as the bare
   `RegisterFunction` overloads do. The #47 helper had left the `CreateInfo`
   default (`ERROR_ON_CONFLICT`) in place for all 95 registrations. Found
