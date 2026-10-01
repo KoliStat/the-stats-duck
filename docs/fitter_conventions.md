@@ -104,3 +104,52 @@ Increment A (#37) and land with it.
 | 12 | `rank` | `BIGINT` | *lands with Increment A (#37)* |
 | 13 | `loglik` | `DOUBLE` | *lands with Increment A (#37)* |
 | 14 | `cov` | `LIST<DOUBLE>` | row-major k²; *lands with Increment A (#37)* |
+
+## Numeric and portability discipline
+
+- **Deterministic by construction.** Identical inputs give bit-identical
+  results, on every platform. Randomness exists only in the sampling
+  functions. The `r*` scalars draw from a per-thread generator seeded from
+  `std::random_device` and are registered `VOLATILE`
+  (`src/random_sampling_function.cpp`). `bootstrap` takes an optional seed
+  argument for reproducible runs. A fitter never draws random numbers, and
+  it never sums in an order that depends on a hash table.
+- **The wasm string-hash pitfall.** Never put a default-hash
+  `std::string`-keyed `std::unordered_map` or `unordered_set` in extension
+  code. It pulls in a libc++ symbol (`std::__hash_memory`) that duckdb-wasm
+  does not export, and the extension then fails at load time in the
+  browser. Use `PortableStringHash` (`src/include/portable_string_hash.hpp`),
+  as `anova_oneway`, `chisq_*`, and the ReadStat type tables do. Or avoid
+  hashing: the `lm_fit` cluster path groups keys by sorting
+  (`DensifyClusters` in `src/lm_fit_function.cpp`).
+  `scripts/check-wasm-string-hash.sh` enforces the rule in CI.
+- **Buffer rows when the estimator needs them.** Leverage-based (HC2, HC3)
+  and score-based (CR*, REML-style) estimators do not reduce to a fixed set
+  of streaming moments. The aggregate state buffers the raw rows and does
+  the math in Finalize. Do not reshape the math to force a streaming form.
+- **The math lives behind the kernel boundary.** Fitting numerics go in a
+  DuckDB-free core translation unit (`src/lm_core.cpp` is the pattern), as
+  described in [`kernel_api.md`](kernel_api.md). The `*_function.cpp` file
+  only binds arguments, buffers rows, and writes vectors.
+
+## Validation discipline
+
+- **The oracle runs offline; the goldens are committed.** Reference values
+  come from statsmodels through a generator script
+  (`test/cpp/gen_lm_fit_fixtures.py` is the pattern) run in a throwaway
+  virtualenv. The oracle is never a build or CI dependency. The generator
+  states its own conventions, and any deliberate difference from the
+  oracle is written down next to the affected golden.
+- **A tolerance band carries a written reason.** A loose band is a finding
+  to explain, not a default to accept. `test/cpp/test_lm_fit.cpp` names
+  its bands in one place (1e-6 for coefficients, standard errors, σ and
+  R²; 1e-3 for the F statistic; 1e-2 relative for p-values) but does not
+  yet say why the F and p bands are looser. New fitters must say why.
+- **Two test layers, both required.** Standalone C++ goldens
+  (`scripts/run-cpp-tests.sh`, no DuckDB) cover the kernel and core math.
+  sqllogictest files (`test/sql/*.test`) cover the SQL surface, with float
+  output through `printf('%.4f', …)` so results are deterministic text.
+- **New-fitter checklist.** Generator script and fixtures header → failing
+  C++ goldens, including the failure-as-value cases → core implementation
+  → SQL tests → README function-table row → cross-links here and in
+  `kernel_api.md` → CHANGELOG entry.
