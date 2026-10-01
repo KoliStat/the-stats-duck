@@ -18,6 +18,10 @@ browser-based statistical workbench.
 > `INSTALL` keyword). "The Stats Duck" is the project / brand name; `stats_duck`
 > is what you type at the SQL prompt.
 
+The name is a play on [The Fat Duck](https://thefatduck.co.uk/), Heston
+Blumenthal's restaurant in Bray, Berkshire. That restaurant has been the
+inspiration for the project name from the start.
+
 ## Scope
 
 The Stats Duck is meant to cover the everyday work of a general-purpose
