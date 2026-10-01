@@ -153,3 +153,55 @@ Increment A (#37) and land with it.
   C++ goldens, including the failure-as-value cases → core implementation
   → SQL tests → README function-table row → cross-links here and in
   `kernel_api.md` → CHANGELOG entry.
+
+## Appendix: audit of the existing surface (2026-10)
+
+The standard above binds new fitters. The functions below predate it. A
+deviation is grandfathered when fixing it would rename or retype a
+released field, or change a documented result. A deviation that would
+surprise a consumer writing generic code across functions has a follow-up
+issue in the last column.
+
+Audited on 2026-10-01 from the sources in `src/`. Readers, writers,
+`VISUALIZE`, `table_one`, `meta`, `corr_matrix`, and the list- or
+scalar-returning helpers (`bootstrap`, `bin_edges`, `adjust_p`,
+`poibin_cdf`) are out of scope: they return rows or plain values, not a
+result STRUCT.
+
+| Function | Result | NaN → NULL | Missing data | Data-shaped failure | Deviations and follow-ups |
+|---|---|---|---|---|---|
+| `lm_fit` | STRUCT (the template) | yes, `SetD` | listwise drop: NULL, NaN, Inf; a ragged design row fails the group | NULL group; misuse is a bind error | none; it defines the standard |
+| `lm`, `lm_summary` | table-function rows | NaN yes, ±Inf no (`SetDoubleOrNull`) | complete-case `WHERE … IS NOT NULL` filter | raises `InvalidInputException` for `n ≤ k` or a singular `X'X` | failure is an error, not a value; the re-host on `lm_core` (#45) decides the replacement |
+| `ttest_1samp`, `ttest_paired` | STRUCT | no | NULL rows skipped (paired: either side); NaN inputs not filtered | `n < 2` → NULL; zero variance → ±Inf or NaN fields | NaN inputs #52; NaN outputs #53 |
+| `ttest_2samp` | STRUCT | no | the two samples accumulate independently; NaN not filtered | either `n < 2` → NULL; Welch `df` is NaN when both variances are 0 | #52, #53 |
+| `mann_whitney_u` | STRUCT | no | samples independent; NaN not filtered and reaches `std::sort` | either `n < 2` → NULL; all ties → `z = 0`, `p = 1` | #52; the all-ties value is grandfathered |
+| `wilcoxon_signed_rank` | STRUCT | no | pair dropped when either side is NULL; zero differences dropped; NaN not filtered | fewer than 2 non-zero differences → NULL; tied ranks → `z = 0` | #52; the tie value is grandfathered |
+| `sign_test_1samp`, `sign_test_paired` | STRUCT | not needed (`p` is always finite) | NULL and NaN skipped; paired drops the pair | no signed difference (`n_pos + n_neg < 1`) → NULL | none |
+| `pearson_test`, `spearman_test` | STRUCT | no | pair dropped when either side is NULL or NaN | `n < 3` or zero variance → NULL; at `n = 3` the CI fields are NaN; `t_statistic` is ±Inf at `\|r\| = 1` | CI NaN #53; ±Inf passes through under the standard |
+| `kendall_test` | STRUCT | no | as Pearson | `n < 3` or a zero denominator → NULL; degenerate variance → `z = 0`, `p = 1` | grandfathered |
+| `anova_oneway` | STRUCT | no | row dropped when the value or the group is NULL, or the value is NaN | fewer than 2 groups, or `n − k ≤ 0` → NULL; zero within-group variance → `f = +Inf`, `p = 0` | sums in hash-table order #54 |
+| `chisq_independence`, `chisq_goodness_of_fit` | STRUCT | no NaN path (VARCHAR inputs) | row dropped when a label is NULL | empty table, `1 × N`, or fewer than 2 categories → NULL | sums in hash-table order #54 |
+| `jarque_bera` | STRUCT | not needed | NULL and NaN skipped | `n < 4` or zero variance → NULL | none |
+| `shapiro_wilk` | STRUCT | clamps `w` and `p` into [0, 1] | NULL and NaN skipped | `n < 3` or `n > 5000` → NULL; all-equal input → `w = 1`, `p = 1` | all-equal input differs from Anderson–Darling and KS, which return NULL; grandfathered |
+| `anderson_darling` | STRUCT | clamps `p` | NULL and NaN skipped | `n < 8` or zero variance → NULL | none |
+| `ks_test_1samp` | STRUCT | clamps `p` | NULL and NaN skipped | `n < 3` or zero variance → NULL | none |
+| `ks_test_2samp` | STRUCT | clamps `p` | the two samples accumulate independently | an empty sample → NULL | none |
+| `summary_stats` | STRUCT | no, by design | NULL and NaN are counted in `n_missing` | empty input → NULL; `n = 1` → `sd = 0` | NaN for `mode`, `skewness`, and `kurtosis` is the documented SAS "Mode ." convention; grandfathered |
+
+Observations across the surface:
+
+- No aggregate raises an exception for a data-shaped failure. Every one
+  returns a NULL STRUCT, which is what the standard asks. Only the `lm`
+  table functions raise.
+- Statistic naming already follows the standard: `t_statistic`,
+  `z_statistic`, `u_statistic`, `w_statistic`, `m_statistic`,
+  `f_statistic`, `chi_square`. No function has a bare `statistic` field.
+- Two-sample tests accumulate their two columns independently
+  (`ttest_2samp`, `mann_whitney_u`, `ks_test_2samp`). That is correct for
+  two independent samples. The listwise rule applies to one observation
+  per row.
+- Bind-time errors use `BinderException` in most files and
+  `InvalidInputException` in `src/ttest_agg_function.cpp`. A caller sees
+  an error either way. New fitters use `BinderException`.
+- `src/ttest_function.cpp` holds table-function t-tests that are compiled
+  but never registered (#55).
