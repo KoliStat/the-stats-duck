@@ -12,25 +12,25 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Pins follow the DuckDB stable that the community registry builds against.
+  # The duckdb/ submodule stays on v1.4.3 for the browser builds in docs/,
+  # because @duckdb/duckdb-wasm (1.32.0 and 1.33.0) still bundles v1.4.3.
+  # windows_amd64 (MSVC) is back in the matrix: the v1.5.6 reusable workflow
+  # checks both the VS 18 and the VS 2022 vcvars paths, which fixes the
+  # mingw fallback that v1.4.3 hit on the current windows-latest image
+  # (duckdb/extension-ci-tools#371).
   duckdb-stable-build:
     name: Build extension binaries
-    uses: duckdb/extension-ci-tools/.github/workflows/_extension_distribution.yml@v1.4.3
+    uses: duckdb/extension-ci-tools/.github/workflows/_extension_distribution.yml@v1.5.6
     with:
       extension_name: stats_duck
-      duckdb_version: v1.4.3
-      ci_tools_version: v1.4.3
-      # windows_amd64 (MSVC build) is excluded until duckdb/extension-ci-tools#371
-      # ships a fix. The hardcoded vcvars64.bat path in v1.4.3 of the reusable
-      # workflow no longer exists on the current windows-latest image, so cmake
-      # silently falls back to mingw and the link fails against the MSVC-built
-      # x64-windows-static-release vcpkg libs. windows_amd64_mingw still builds
-      # — Windows users without the MSVC binary should use the mingw artifact.
-      exclude_archs: 'windows_amd64'
+      duckdb_version: v1.5.6
+      ci_tools_version: v1.5.6
 
   duckdb-stable-deploy:
     name: Deploy extension binaries
     needs: duckdb-stable-build
-    uses: duckdb/extension-ci-tools/.github/workflows/_extension_deploy.yml@v1.4.3
+    uses: duckdb/extension-ci-tools/.github/workflows/_extension_deploy.yml@v1.5.6
     secrets: inherit
     # The reusable deploy workflow declares no permissions and relies on the
     # default GITHUB_TOKEN. actions/download-artifact@v4 (v4.3.0+) needs
@@ -44,8 +44,7 @@ jobs:
       actions: read
     with:
       extension_name: stats_duck
-      duckdb_version: v1.4.3
-      ci_tools_version: v1.4.3
-      exclude_archs: 'windows_amd64'
+      duckdb_version: v1.5.6
+      ci_tools_version: v1.5.6
       deploy_latest: ${{ startsWith(github.ref, 'refs/tags/v') || github.ref == 'refs/heads/main' }}
       deploy_versioned: ${{ startsWith(github.ref, 'refs/tags/v') || github.ref == 'refs/heads/main' }}

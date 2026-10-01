@@ -25,6 +25,26 @@ that name is preserved across releases for backward compatibility.
   `visualize_mark_v1_*` function descriptions to plain English. Removed
   buzzwords and slang ("first-class", "seamlessly", "plumbing", "footgun");
   statistical terms such as robust standard errors and leverage are unchanged.
+- **DuckDB compatibility verified through v1.5.6.** The full SQL suite (2044
+  assertions) and the `VISUALIZE` suite (321 assertions) pass on a local
+  v1.5.6 build. The build used a git worktree of the `duckdb/` submodule at
+  tag `v1.5.6`, kept outside the submodule checkout, and ran the suite with
+  the extension's absolute test path, the same way `make test_release` does.
+- CI: the distribution pipeline now builds against DuckDB v1.5.6 with
+  extension-ci-tools v1.5.6 (up from v1.4.3). That matches the DuckDB stable
+  the community registry builds against. The `windows_amd64` (MSVC) job is
+  back in the matrix: the v1.5.6 reusable workflow checks both the VS 18 and
+  the VS 2022 `vcvars` paths, which removes the mingw fallback that v1.4.3
+  hit on the current `windows-latest` image (duckdb/extension-ci-tools#371).
+  The `duckdb/` submodule stays on v1.4.3 for the browser builds in `docs/`,
+  because `@duckdb/duckdb-wasm` 1.32.0 and 1.33.0 both bundle v1.4.3.
+
+### Fixed
+
+- `RegisterDocumented` now sets `ALTER_ON_CONFLICT`, as the bare
+  `RegisterFunction` overloads do. The #47 helper had left the `CreateInfo`
+  default (`ERROR_ON_CONFLICT`) in place for all 95 registrations. Found
+  through the metadata audit in #50.
 
 ## [0.8.0-nothing] - 2026-08-06
 
