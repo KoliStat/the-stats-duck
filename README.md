@@ -43,6 +43,15 @@ statistician without leaving SQL. The current release covers four areas:
 Future releases will add Spearman/Kendall correlations, regression with full
 diagnostics, multiple-testing corrections, and more distribution families.
 
+Further documentation:
+
+- [`docs/visualize.md`](docs/visualize.md) — a worked example of every
+  `VISUALIZE` mark and clause.
+- [`docs/kernel_api.md`](docs/kernel_api.md) — the DuckDB-free C++ kernel
+  and how a sibling repo consumes it.
+- [`docs/fitter_conventions.md`](docs/fitter_conventions.md) — conventions
+  for model-fitting functions: inputs, the return STRUCT, validation.
+
 ## Functions
 
 ### Hypothesis tests (aggregate)

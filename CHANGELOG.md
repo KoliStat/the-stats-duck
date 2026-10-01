@@ -18,6 +18,16 @@ that name is preserved across releases for backward compatibility.
   "Added Functions" table (previously all-NULL for `stats_duck`) render real
   documentation (#47). One description covers every overload of a function;
   coverage is enforced by the new `test/sql/function_docs.test`.
+- `docs/fitter_conventions.md`: the model-fitting API standard. Input
+  conventions, the return-STRUCT standard with the `lm_fit` field table as
+  the template, numeric and portability discipline, validation discipline,
+  and an audit of the existing function surface against the standard
+  (#17). The audit filed four follow-ups: NaN inputs reach the t-tests and
+  rank tests unfiltered (#52), pre-standard aggregates write NaN or Inf
+  where the standard wants NULL (#53), `anova_oneway` and `chisq_*` sum in
+  hash-table order (#54), and `src/ttest_function.cpp` is unregistered
+  dead code (#55). README now credits The Fat Duck as the inspiration for
+  the project name and links the three docs pages.
 
 ### Changed
 

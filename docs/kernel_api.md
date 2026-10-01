@@ -8,6 +8,11 @@ lets the core be reused by a downstream extension (e.g. the planned
 `stats_duck` as a git submodule, puts `src/include` on its include path, and
 calls the kernel directly.
 
+The SQL-facing counterpart of this page is
+[`fitter_conventions.md`](fitter_conventions.md): the conventions every
+model-fitting function's SQL surface follows (inputs, the return-STRUCT
+standard, validation discipline).
+
 This page is the orientation map. **The headers are the source of truth** — each
 function's preconditions, tolerances, and result semantics live in the
 doc-comments of [`src/include/linalg.hpp`](../src/include/linalg.hpp),
