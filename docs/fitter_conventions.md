@@ -172,10 +172,10 @@ result STRUCT.
 |---|---|---|---|---|---|
 | `lm_fit` | STRUCT (the template) | yes, `SetD` | listwise drop: NULL, NaN, Inf; a ragged design row fails the group | NULL group; misuse is a bind error | none; it defines the standard |
 | `lm`, `lm_summary` | table-function rows | NaN yes, ±Inf no (`SetDoubleOrNull`) | complete-case `WHERE … IS NOT NULL` filter | raises `InvalidInputException` for `n ≤ k` or a singular `X'X` | failure is an error, not a value; the re-host on `lm_core` (#45) decides the replacement |
-| `ttest_1samp`, `ttest_paired` | STRUCT | no | NULL rows skipped (paired: either side); NaN inputs not filtered | `n < 2` → NULL; zero variance → ±Inf or NaN fields | NaN inputs #52; NaN outputs #53 |
-| `ttest_2samp` | STRUCT | no | the two samples accumulate independently; NaN not filtered | either `n < 2` → NULL; Welch `df` is NaN when both variances are 0 | #52, #53 |
-| `mann_whitney_u` | STRUCT | no | samples independent; NaN not filtered and reaches `std::sort` | either `n < 2` → NULL; all ties → `z = 0`, `p = 1` | #52; the all-ties value is grandfathered |
-| `wilcoxon_signed_rank` | STRUCT | no | pair dropped when either side is NULL; zero differences dropped; NaN not filtered | fewer than 2 non-zero differences → NULL; tied ranks → `z = 0` | #52; the tie value is grandfathered |
+| `ttest_1samp`, `ttest_paired` | STRUCT | no | NULL and NaN skipped (paired: either side drops the pair) | `n < 2` → NULL; zero variance → ±Inf or NaN fields | NaN inputs fixed in #52; NaN outputs #53 |
+| `ttest_2samp` | STRUCT | no | the two samples accumulate independently; each skips its own NULL and NaN | either `n < 2` → NULL; Welch `df` is NaN when both variances are 0 | NaN inputs fixed in #52; NaN outputs #53 |
+| `mann_whitney_u` | STRUCT | no | samples independent; each skips its own NULL and NaN | either `n < 2` → NULL; all ties → `z = 0`, `p = 1` | NaN inputs fixed in #52; the all-ties value is grandfathered |
+| `wilcoxon_signed_rank` | STRUCT | no | pair dropped when either side is NULL or NaN; zero differences dropped | fewer than 2 non-zero differences → NULL; tied ranks → `z = 0` | NaN inputs fixed in #52; the tie value is grandfathered |
 | `sign_test_1samp`, `sign_test_paired` | STRUCT | not needed (`p` is always finite) | NULL and NaN skipped; paired drops the pair | no signed difference (`n_pos + n_neg < 1`) → NULL | none |
 | `pearson_test`, `spearman_test` | STRUCT | no | pair dropped when either side is NULL or NaN | `n < 3` or zero variance → NULL; at `n = 3` the CI fields are NaN; `t_statistic` is ±Inf at `\|r\| = 1` | CI NaN #53; ±Inf passes through under the standard |
 | `kendall_test` | STRUCT | no | as Pearson | `n < 3` or a zero denominator → NULL; degenerate variance → `z = 0`, `p = 1` | grandfathered |
