@@ -84,8 +84,7 @@ exception.
 
 ### Worked example: `lm_fit`, the template
 
-Fields 0–11 are shipped. Fields 12–14 are the approved design of lm_fit
-Increment A (#37) and land with it.
+Fields 0–14 are shipped; 12–14 landed with lm_fit Increment A (#34, #35).
 
 | # | Field | Type | Notes |
 |---|-------|------|-------|
@@ -101,9 +100,9 @@ Increment A (#37) and land with it.
 | 9 | `has_intercept` | `BOOLEAN` | |
 | 10 | `vcov_type` | `VARCHAR` | the canonical estimator name, echoed back |
 | 11 | `n_clusters` | `BIGINT` | NULL unless CR0/CR1 |
-| 12 | `rank` | `BIGINT` | *lands with Increment A (#37)* |
-| 13 | `loglik` | `DOUBLE` | *lands with Increment A (#37)* |
-| 14 | `cov` | `LIST<DOUBLE>` | row-major k²; *lands with Increment A (#37)* |
+| 12 | `rank` | `BIGINT` | equals `k` until rank-deficient fits land (#36) |
+| 13 | `loglik` | `DOUBLE` | Gaussian MLE value; `+inf` at RSS = 0 |
+| 14 | `cov` | `LIST<DOUBLE>` | row-major k², in `coefficients` order; the diagonal is `std_error²` |
 
 ## Numeric and portability discipline
 

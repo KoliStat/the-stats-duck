@@ -51,6 +51,7 @@ struct LmResult {
 	std::size_t n = 0;           // observations used
 	std::size_t k = 0;           // parameters (predictors + intercept)
 	std::size_t df_residual = 0; // n − k
+	std::size_t rank = 0;        // estimated rank of the design; == k until rank-deficient fits land (#36)
 	std::size_t n_clusters = 0;  // #clusters G (vcov CR* only); 0 when unclustered
 	bool has_intercept = true;
 	Vcov vcov = Vcov::kConst;
@@ -66,6 +67,8 @@ struct LmResult {
 	double f_statistic = 0.0; // classical overall-significance F (not robustified)
 	double f_p_value = 0.0;
 	double sigma = 0.0;       // residual standard error √(RSS/df_residual)
+	double loglik = 0.0;      // Gaussian log-likelihood at the MLE: −n/2·(ln 2π + ln(RSS/n) + 1); +inf at RSS = 0
+	std::vector<double> cov;  // k×k row-major coefficient covariance for `vcov`: cov[i*k + j] = cov(βᵢ, βⱼ), in `terms` order
 };
 
 // Fit y (length n) on the predictor matrix X_pred (n × p, row-major, WITHOUT an

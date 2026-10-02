@@ -49,6 +49,9 @@ static LogicalType LmFitResultType() {
 	c.emplace_back("has_intercept", LogicalType::BOOLEAN);              // 9
 	c.emplace_back("vcov_type", LogicalType::VARCHAR);                  // 10
 	c.emplace_back("n_clusters", LogicalType::BIGINT);                  // 11 (NULL unless CR*)
+	c.emplace_back("rank", LogicalType::BIGINT);                        // 12
+	c.emplace_back("loglik", LogicalType::DOUBLE);                      // 13
+	c.emplace_back("cov", LogicalType::LIST(LogicalType::DOUBLE));      // 14 (row-major k×k)
 	return LogicalType::STRUCT(std::move(c));
 }
 
@@ -376,10 +379,11 @@ static void LmFitFinalize(Vector &state_vector, AggregateInputData &input_data, 
 		has_cluster = bd.has_cluster;
 	}
 
-	// Pass 1 — fit each group; tally total coefficients for the list child.
+	// Pass 1 — fit each group; tally the totals for the two list children.
 	std::vector<statsduck::LmResult> fits(count);
 	std::vector<bool> ok(count, false);
 	idx_t total_coefs = 0;
+	idx_t total_cov = 0;
 	for (idx_t i = 0; i < count; i++) {
 		auto *acc = states[i]->acc;
 		if (!acc || acc->ragged || !acc->width_set || acc->y.empty()) {
@@ -404,6 +408,7 @@ static void LmFitFinalize(Vector &state_vector, AggregateInputData &input_data, 
 		}
 		if (r.ok) {
 			total_coefs += r.k;
+			total_cov += r.k * r.k;
 			fits[i] = std::move(r);
 			ok[i] = true;
 		}
@@ -422,18 +427,30 @@ static void LmFitFinalize(Vector &state_vector, AggregateInputData &input_data, 
 	auto est_d = FlatVector::GetData<double>(*cf[1]);
 	auto se_d = FlatVector::GetData<double>(*cf[2]);
 
+	// cov: a second, independently managed LIST child — one flat row-major k×k
+	// block per group. Same rule: Reserve first, then fetch the child pointer.
+	Vector &cov_list = *children[14];
+	auto cov_entries = FlatVector::GetData<list_entry_t>(cov_list);
+	const idx_t cov_anchor = ListVector::GetListSize(cov_list);
+	ListVector::Reserve(cov_list, cov_anchor + total_cov);
+	Vector &cov_child = ListVector::GetEntry(cov_list);
+	auto cov_d = FlatVector::GetData<double>(cov_child);
+
 	auto n_d = FlatVector::GetData<int64_t>(*children[1]);
 	auto k_d = FlatVector::GetData<int64_t>(*children[2]);
 	auto dfr_d = FlatVector::GetData<int64_t>(*children[3]);
 	auto hint_d = FlatVector::GetData<bool>(*children[9]);
 	auto ncl_d = FlatVector::GetData<int64_t>(*children[11]);
+	auto rank_d = FlatVector::GetData<int64_t>(*children[12]);
 
 	idx_t out = anchor;
+	idx_t cov_out = cov_anchor;
 	for (idx_t i = 0; i < count; i++) {
 		const idx_t idx = i + offset;
 		if (!ok[i]) {
 			FlatVector::SetNull(result, idx, true);
 			coef_entries[idx] = list_entry_t(out, 0);
+			cov_entries[idx] = list_entry_t(cov_out, 0);
 			continue;
 		}
 		auto &r = fits[i];
@@ -447,6 +464,18 @@ static void LmFitFinalize(Vector &state_vector, AggregateInputData &input_data, 
 			SetD(*cf[4], pos, r.p_value[j]);
 		}
 		out += r.k;
+
+		const idx_t kk = r.k * r.k;
+		cov_entries[idx] = list_entry_t(cov_out, kk);
+		for (idx_t j = 0; j < kk; j++) {
+			const double v = r.cov[j];
+			if (std::isnan(v)) {
+				FlatVector::SetNull(cov_child, cov_out + j, true); // aliased terms, once #36 lands
+			} else {
+				cov_d[cov_out + j] = v;
+			}
+		}
+		cov_out += kk;
 
 		n_d[idx] = static_cast<int64_t>(r.n);
 		k_d[idx] = static_cast<int64_t>(r.k);
@@ -464,8 +493,11 @@ static void LmFitFinalize(Vector &state_vector, AggregateInputData &input_data, 
 		} else {
 			FlatVector::SetNull(*children[11], idx, true); // NULL for classical/HC
 		}
+		rank_d[idx] = static_cast<int64_t>(r.rank);
+		SetD(*children[13], idx, r.loglik);
 	}
 	ListVector::SetListSize(coef_list, out);
+	ListVector::SetListSize(cov_list, cov_out);
 }
 
 } // namespace

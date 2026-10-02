@@ -405,6 +405,9 @@ HC. `'cluster'` is accepted as an alias for `'CR1'`.
 | `has_intercept`                                             | `BOOLEAN`           | |
 | `vcov_type`                                                 | `VARCHAR`           | the estimator actually used |
 | `n_clusters`                                                | `BIGINT`            | number of clusters G (CR0/CR1 only; NULL otherwise) |
+| `rank`                                                      | `BIGINT`            | estimated rank of the design; equals `k` until rank-deficient fits land (#36) |
+| `loglik`                                                    | `DOUBLE`            | Gaussian log-likelihood at the fit (R `logLik`, statsmodels `.llf`); `+inf` for an exact fit |
+| `cov`                                                       | `LIST<DOUBLE>`      | full k×k coefficient covariance for the chosen `vcov`, row-major in coefficient order; SQL lists are 1-based, so `cov[i*k + j + 1]` is `cov(βᵢ, βⱼ)` and the diagonal is `std_error²` |
 
 A trailing constant `add_intercept := false` (positionally
 `lm_fit(y, x, 'const', false)`, or `lm_fit(y, x, 'CR1', cluster, false)` when
