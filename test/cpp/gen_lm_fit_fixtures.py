@@ -57,6 +57,14 @@ def emit(name, y, Xcols, has_intercept):
     print(f"// f_p_value     = {g(base.f_pvalue)}")
     print(f"// sigma         = {g(np.sqrt(base.scale))}")
     print(f"// df_resid      = {int(base.df_resid)}")
+    print(f"// rank          = {int(base.df_model) + (1 if has_intercept else 0)}")
+    print(f"// loglik        = {g(base.llf)}")
+    # The Gaussian MLE log-likelihood lm_core implements; statsmodels' .llf is
+    # the same quantity. Checked here so a divergence in either definition
+    # fails the generator, not the C++ test.
+    rss = float(base.ssr)
+    assert np.isclose(base.llf, -n / 2 * (np.log(2 * np.pi) + np.log(rss / n) + 1)), \
+        "statsmodels .llf != -n/2 (ln 2pi + ln(RSS/n) + 1)"
     for cov in VCOVS:
         r = sm.OLS(y, Xd).fit(cov_type=cov, use_t=True) if cov != "nonrobust" \
             else base
@@ -64,6 +72,12 @@ def emit(name, y, Xcols, has_intercept):
         print(f"// [{tag:9s}] se = {[g(v) for v in r.bse]}")
         print(f"// [{tag:9s}] t  = {[g(v) for v in r.tvalues]}")
         print(f"// [{tag:9s}] p  = {[g(v) for v in r.pvalues]}")
+        # Full coefficient covariance, row-major k*k, aligned to `terms`. Its
+        # diagonal must be bse^2 (self-check of the layout we copy into C++).
+        C = np.asarray(r.cov_params())
+        assert np.allclose(np.sqrt(np.diag(C)), np.asarray(r.bse)), \
+            "cov_params diagonal != bse^2"
+        print(f"// [{tag:9s}] cov (row-major) = {[g(v) for v in C.ravel()]}")
     print()
 
 
@@ -111,10 +125,16 @@ def emit_clustered(name, y, Xcols, groups, has_intercept=True):
     print(f"// df_residual n-k = {int(cr1.df_resid)}   // reported unchanged")
     print(f"// df_infer   G-1  = {G - 1}   // t reference for cluster p-values")
     print(f"// CR1 factor c    = {g(c)}")
+    print(f"// rank            = {k}")
+    print(f"// loglik          = {g(cr1.llf)}   // same for CR0: vcov does not change beta")
     for tag, r in (("CR0", cr0), ("CR1", cr1)):
         print(f"// [{tag}] se = {[g(v) for v in r.bse]}")
         print(f"// [{tag}] t  = {[g(v) for v in r.tvalues]}")
         print(f"// [{tag}] p  = {[g(v) for v in r.pvalues]}")
+        C = np.asarray(r.cov_params())
+        assert np.allclose(np.sqrt(np.diag(C)), np.asarray(r.bse)), \
+            "cov_params diagonal != bse^2"
+        print(f"// [{tag}] cov (row-major) = {[g(v) for v in C.ravel()]}")
     print()
 
 

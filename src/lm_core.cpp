@@ -262,10 +262,20 @@ LmResult fit_lm(const std::vector<double> &y, const linalg::Mat &X_pred, const L
 	res.n = n;
 	res.k = k;
 	res.df_residual = n - k;
+	res.rank = k; // Cholesky succeeded, so the design is full rank (#36 changes this)
 	res.n_clusters = clustered ? G : 0;
 	res.has_intercept = opts.intercept;
 	res.vcov = opts.vcov;
 	res.sigma = std::sqrt(sigma2);
+	// Gaussian MLE log-likelihood (R logLik.lm, statsmodels .llf). RSS = 0
+	// gives ln(0) = −inf and so loglik = +inf, which the SQL layer passes
+	// through (only NaN becomes NULL).
+	{
+		const double nd = static_cast<double>(n);
+		const double two_pi = 2.0 * 3.14159265358979323846;
+		res.loglik = -0.5 * nd * (std::log(two_pi) + std::log(rss / nd) + 1.0);
+	}
+	res.cov = V.data; // Mat is row-major, so this is already cov[i*k + j]
 
 	res.terms.reserve(k);
 	if (opts.intercept) {

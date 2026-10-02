@@ -62,9 +62,14 @@ static void check_rel(double a, double b, double rtol, const char *label, int li
 #define CHECK_CLOSE(a, b, tol) check_close((a), (b), (tol), #a " ~= " #b, __LINE__)
 
 // Tolerances.
-static const double TOL = 1e-6;     // β, SE, σ, R², adj-R²
+static const double TOL = 1e-6;     // β, SE, σ, R², adj-R², loglik
 static const double TOL_F = 1e-3;   // F-statistic
 static const double RTOL_P = 1e-2;  // p-values (relative)
+// Covariance entries are products of two SE-scale quantities, so the 1e-6
+// agreement on SEs propagates to about 2·SE·1e-6 on a variance (4e-6 for
+// DS1's intercept variance of 4.3). 1e-5 leaves headroom and still separates
+// the estimators, whose entries differ by 1e-2 or more.
+static const double TOL_COV = 1e-5;
 
 // Build an (n × p) predictor matrix from p column vectors.
 static Mat predictors(const std::vector<std::vector<double>> &cols) {
@@ -147,6 +152,22 @@ static void test_ds1_hetero() {
 		CHECK_CLOSE(r.f_statistic, 132.532474368047, TOL_F);
 		check_rel(r.f_p_value, 2.10741740745104e-07, RTOL_P, "ds1.f_p", __LINE__);
 		CHECK_CLOSE(r.sigma, 2.73206285423836, TOL);
+		// Increment A fields (#34, #35): rank (== k until rank-deficient fits
+		// land), the Gaussian log-likelihood, and the full k×k covariance
+		// (row-major, aligned to terms). The diagonal is SE² by construction,
+		// so that check is tight; the goldens below carry the oracle values.
+		CHECK(r.rank == 3);
+		CHECK(r.cov.size() == 9);
+		for (std::size_t j = 0; j < 3; j++) {
+			CHECK_CLOSE(r.cov[j * 3 + j], r.std_error[j] * r.std_error[j], 1e-12);
+		}
+		CHECK_CLOSE(r.cov[0 * 3 + 1], r.cov[1 * 3 + 0], 1e-12);
+		CHECK_CLOSE(r.loglik, -27.3618533411821, TOL);
+		check_vec(r.cov,
+		          {4.30197288655079, -0.140244518800206, -0.523287599804694, -0.140244518800206,
+		           0.0169807925681187, 0.00229470169839442, -0.523287599804694, 0.00229470169839442,
+		           0.101177222385041},
+		          TOL_COV, "ds1.const.cov", __LINE__);
 	}
 	// HC0 — White. β is invariant across vcov; SE/t/p change.
 	{
@@ -165,6 +186,13 @@ static void test_ds1_hetero() {
 		auto r = fit(y, X, Vcov::kHC1, true);
 		check_vec(r.std_error, {2.31459506457106, 0.144953406513188, 0.325524431305154}, TOL,
 		          "ds1.hc1.se", __LINE__);
+		// The robust covariance is what lin_hyp / emmeans consume, so it is
+		// validated against statsmodels cov_params(), not only the classical one.
+		check_vec(r.cov,
+		          {5.35735031293671, -0.191061988599497, -0.649665858329423, -0.191061988599497,
+		           0.0210114900597774, 0.0105710141727397, -0.649665858329423, 0.0105710141727397,
+		           0.105966155376544},
+		          TOL_COV, "ds1.hc1.cov", __LINE__);
 	}
 	// HC2 — leverage weight 1/(1−h).
 	{
@@ -207,6 +235,11 @@ static void test_ds2_noint() {
 		CHECK_CLOSE(r.adj_r_squared, 0.994579945799458, TOL);
 		CHECK_CLOSE(r.f_statistic, 918.5, TOL_F);
 		CHECK_CLOSE(r.sigma, 1.61245154965971, TOL);
+		CHECK(r.rank == 2);
+		CHECK(r.cov.size() == 4);
+		CHECK_CLOSE(r.loglik, -17.8512248006129, TOL); // no-intercept path
+		check_vec(r.cov, {0.261699346405229, -0.258300653594771, -0.258300653594771, 0.261699346405229},
+		          TOL_COV, "ds2.const.cov", __LINE__);
 	}
 	{
 		auto r = fit(y, X, Vcov::kHC0, false);
@@ -231,6 +264,8 @@ static void test_ds3_simple() {
 		check_vec(r.std_error, {0.140385362081028, 0.0278004442668841}, TOL, "ds3.const.se", __LINE__);
 		CHECK_CLOSE(r.r_squared, 0.998839286601139, TOL);
 		CHECK_CLOSE(r.sigma, 0.180167470594215, TOL);
+		CHECK(r.rank == 2);
+		CHECK_CLOSE(r.loglik, 3.51016777175683, TOL); // positive: σ < 1 here
 	}
 	{
 		auto r = fit(y, X, Vcov::kHC1, true);
@@ -278,6 +313,12 @@ static void test_ds4_cluster() {
 		check_vec_rel(r.p_value, {0.0129885429969767, 8.95422460575341e-06, 0.00314880404976347},
 		              RTOL_P, "ds4.cr0.p", __LINE__);
 		CHECK(std::string(statsduck::vcov_name(r.vcov)) == "CR0");
+		check_vec(r.cov,
+		          {0.173697208808423, -0.0092148985536128, 0.0244365529635018, -0.00921489855361279,
+		           0.00512237459221409, 0.00278582959788755, 0.0244365529635018, 0.00278582959788755,
+		           0.0272622949766088},
+		          TOL_COV, "ds4.cr0.cov", __LINE__);
+		CHECK_CLOSE(r.loglik, -32.9761104667665, TOL); // vcov does not change β or RSS
 	}
 	// CR1 — Stata / statsmodels default: CR0 × [G/(G−1)]·[(N−1)/(N−k)].
 	{
@@ -293,6 +334,17 @@ static void test_ds4_cluster() {
 		check_vec_rel(r.p_value, {0.021705842695979, 1.66012518838537e-05, 0.00554715018524578},
 		              RTOL_P, "ds4.cr1.p", __LINE__);
 		CHECK(std::string(statsduck::vcov_name(r.vcov)) == "CR1");
+		// The cluster-robust covariance is the one lin_hyp / emmeans need.
+		CHECK(r.rank == 3);
+		CHECK(r.cov.size() == 9);
+		for (std::size_t j = 0; j < 3; j++) {
+			CHECK_CLOSE(r.cov[j * 3 + j], r.std_error[j] * r.std_error[j], 1e-12);
+		}
+		check_vec(r.cov,
+		          {0.236859830193304, -0.0125657707549265, 0.033322572222957, -0.0125657707549265,
+		           0.00698505626211012, 0.00379885854257393, 0.033322572222957, 0.00379885854257393,
+		           0.0371758567862847},
+		          TOL_COV, "ds4.cr1.cov", __LINE__);
 	}
 }
 
