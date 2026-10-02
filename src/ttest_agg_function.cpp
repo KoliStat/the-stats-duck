@@ -213,6 +213,10 @@ static void TTest1SampUpdate(Vector inputs[], AggregateInputData &, idx_t, Vecto
 		if (!idata.validity.RowIsValid(idx)) {
 			continue;
 		}
+		// NaN is treated as missing, like NULL.
+		if (std::isnan(values[idx])) {
+			continue;
+		}
 		WelfordUpdate(states[i]->ws, values[idx]);
 	}
 }
@@ -343,6 +347,10 @@ static void TTestPairedUpdate(Vector inputs[], AggregateInputData &, idx_t, Vect
 		if (!idata1.validity.RowIsValid(idx1) || !idata2.validity.RowIsValid(idx2)) {
 			continue;
 		}
+		// A NaN on either side drops the pair, like a NULL.
+		if (std::isnan(v1[idx1]) || std::isnan(v2[idx2])) {
+			continue;
+		}
 		WelfordUpdate(states[i]->ws, v1[idx1] - v2[idx2]);
 	}
 }
@@ -459,13 +467,14 @@ static void TTest2SampUpdate(Vector inputs[], AggregateInputData &, idx_t, Vecto
 	for (idx_t i = 0; i < count; i++) {
 		auto &state = *states[i];
 
+		// Each column drops its own NULL and NaN values.
 		auto idx1 = idata1.sel->get_index(i);
-		if (idata1.validity.RowIsValid(idx1)) {
+		if (idata1.validity.RowIsValid(idx1) && !std::isnan(v1[idx1])) {
 			WelfordUpdate(state.ws_a, v1[idx1]);
 		}
 
 		auto idx2 = idata2.sel->get_index(i);
-		if (idata2.validity.RowIsValid(idx2)) {
+		if (idata2.validity.RowIsValid(idx2) && !std::isnan(v2[idx2])) {
 			WelfordUpdate(state.ws_b, v2[idx2]);
 		}
 	}
