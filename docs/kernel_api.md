@@ -50,6 +50,7 @@ Pure numerics: solves, rank, pseudo-inverse, the covariance sandwich. Row-major
 | `qr_solve` | `(const Mat& A, const vector<double>& b) -> Solution` | least squares, assumes full column rank |
 | `svd_solve` | `(const Mat& A, const vector<double>& b, double tol = 1e-12) -> Solution` | rank-revealing minimum-norm solution |
 | `rank` | `(const Mat& A, double tol = 1e-12) -> int` | numerical rank (singular values > `tol·σ_max`) |
+| `independent_columns` | `(const Mat& A, double tol = 1e-7) -> ColumnSelection` | greedy left-to-right independent column subset (modified Gram–Schmidt, two passes, no Eigen); the earlier column of a dependent set wins, as in R's `dqrdc2` |
 | `pinv` | `(const Mat& A, double tol = 1e-12) -> Pinv` | Moore–Penrose pseudo-inverse + rank |
 | `inv_spd` | `(const Mat& A, bool* ok = nullptr) -> Mat` | inverse of an SPD matrix (e.g. `(XᵀX)⁻¹`) |
 | `sandwich` | `(const Mat& L, const Mat& A) -> Mat` | `L · A · Lᵀ` — the covariance sandwich |
@@ -57,6 +58,10 @@ Pure numerics: solves, rank, pseudo-inverse, the covariance sandwich. Row-major
 
 `Solution { vector<double> x; int rank; bool ok; }` carries the numerical rank so
 callers can detect and report rank deficiency.
+`ColumnSelection { vector<int> keep; int rank; }` lists the independent columns in
+ascending order; the columns it leaves out are the aliased terms a rank-deficient
+fit reports as NULL (#36). A column is kept when its residual norm after
+orthogonalization exceeds `tol` times its own norm; zero and NaN columns are dropped.
 
 ## `lm_core.hpp` — ordinary least squares + robust covariance
 
