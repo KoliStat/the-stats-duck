@@ -11,7 +11,7 @@
 //
 // Scope (Epic 0.1): Householder QR, Cholesky, SVD; tolerance-based rank;
 // Moore–Penrose pseudo-inverse; symmetric/SPD solve + inverse; the covariance
-// sandwich L·A·Lᵀ. Pure numerics — no statistics, no model assembly (that lives
+// sandwich L·A·Lᵀ; rank-revealing column selection (independent_columns). Pure numerics — no statistics, no model assembly (that lives
 // in lm_fit / glm_fit / …).
 
 #include <cstddef>
@@ -55,6 +55,20 @@ Solution svd_solve(const Mat &A, const std::vector<double> &b, double tol = 1e-1
 
 // Numerical rank via SVD: count of singular values > tol * sigma_max.
 int rank(const Mat &A, double tol = 1e-12);
+
+// Greedy left-to-right selection of a maximal linearly independent column
+// subset (modified Gram–Schmidt with a second orthogonalization pass; plain
+// loops, no Eigen). Column j is KEPT when its residual norm, after
+// orthogonalizing against the columns already kept, exceeds tol × its original
+// norm. A zero column is always dropped, and so is a column holding NaN.
+// Keeping the EARLIER column of a dependent set matches R's dqrdc2: the later
+// duplicate becomes the aliased term. The default tol is R's lm.fit tol = 1e-7.
+// rank never exceeds A.rows.
+struct ColumnSelection {
+	std::vector<int> keep; // ascending indices of the independent columns
+	int rank = 0;          // == keep.size()
+};
+ColumnSelection independent_columns(const Mat &A, double tol = 1e-7);
 
 // Moore–Penrose pseudo-inverse. A is m×n; value is n×m. Also returns the rank.
 struct Pinv {
