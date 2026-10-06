@@ -424,8 +424,6 @@ static void LmFitFinalize(Vector &state_vector, AggregateInputData &input_data, 
 	Vector &coef_child = ListVector::GetEntry(coef_list); // STRUCT vector
 	auto &cf = StructVector::GetEntries(coef_child);
 	auto term_d = FlatVector::GetData<string_t>(*cf[0]);
-	auto est_d = FlatVector::GetData<double>(*cf[1]);
-	auto se_d = FlatVector::GetData<double>(*cf[2]);
 
 	// cov: a second, independently managed LIST child — one flat row-major k×k
 	// block per group. Same rule: Reserve first, then fetch the child pointer.
@@ -458,8 +456,10 @@ static void LmFitFinalize(Vector &state_vector, AggregateInputData &input_data, 
 		for (std::size_t j = 0; j < r.k; j++) {
 			const idx_t pos = out + j;
 			term_d[pos] = StringVector::AddString(*cf[0], r.terms[j]);
-			est_d[pos] = r.beta[j];
-			se_d[pos] = r.std_error[j];
+			// Every numeric field goes through SetD: an aliased term (a column
+			// dropped as dependent) carries NaN, which SetD renders as NULL.
+			SetD(*cf[1], pos, r.beta[j]);
+			SetD(*cf[2], pos, r.std_error[j]);
 			SetD(*cf[3], pos, r.t_statistic[j]);
 			SetD(*cf[4], pos, r.p_value[j]);
 		}
