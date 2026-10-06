@@ -27,16 +27,16 @@ namespace statsduck {
 // Covariance estimator for the coefficient standard errors.
 //   kConst — classical OLS:        σ̂² (XᵀX)⁻¹
 //   kHC0   — White / Eicker-Huber: (XᵀX)⁻¹ (Σ êᵢ² xᵢxᵢᵀ) (XᵀX)⁻¹
-//   kHC1   — HC0 × n/(n−k)         (Stata's `, robust` default)
+//   kHC1   — HC0 × n/(n−rank)      (Stata's `, robust` default)
 //   kHC2   — leverage-adjusted:    weight êᵢ²/(1−hᵢᵢ)
 //   kHC3   — jackknife approx:     weight êᵢ²/(1−hᵢᵢ)²  (small-sample default)
 // hᵢᵢ = xᵢᵀ(XᵀX)⁻¹xᵢ is the i-th hat-matrix diagonal (leverage).
 //   kCR0   — cluster-robust (Liang-Zeger): (XᵀX)⁻¹ (Σ_g s_g s_gᵀ) (XᵀX)⁻¹,
 //            s_g = Σ_{i∈g} xᵢêᵢ the cluster-g score sum.
-//   kCR1   — CR0 × [G/(G−1)]·[(N−1)/(N−k)]  (Stata `vce(cluster)` / statsmodels
+//   kCR1   — CR0 × [G/(G−1)]·[(N−1)/(N−rank)]  (Stata `vce(cluster)` / statsmodels
 //            `cov_type='cluster'` default). G = number of clusters.
 // CR0/CR1 require a per-row cluster id (see fit_lm) and use a t(G−1) reference
-// distribution for the coefficient p-values (df_residual itself stays n−k).
+// distribution for the coefficient p-values (df_residual itself stays n−rank).
 enum class Vcov { kConst, kHC0, kHC1, kHC2, kHC3, kCR0, kCR1 };
 
 struct LmOptions {
@@ -50,32 +50,43 @@ struct LmResult {
 
 	std::size_t n = 0;           // observations used
 	std::size_t k = 0;           // parameters (predictors + intercept)
-	std::size_t df_residual = 0; // n − k
-	std::size_t rank = 0;        // estimated rank of the design; == k until rank-deficient fits land (#36)
+	std::size_t df_residual = 0; // n − rank
+	// Estimated rank of the design: k unless dependent columns were dropped.
+	std::size_t rank = 0;
 	std::size_t n_clusters = 0;  // #clusters G (vcov CR* only); 0 when unclustered
 	bool has_intercept = true;
 	Vcov vcov = Vcov::kConst;
 
 	std::vector<std::string> terms;      // length k: "(Intercept)", "x1", "x2", …
-	std::vector<double> beta;            // length k
-	std::vector<double> std_error;       // length k (per `vcov`)
-	std::vector<double> t_statistic;     // length k: βⱼ / SEⱼ
-	std::vector<double> p_value;         // length k: two-sided, t(df_residual)
+	// All length k. A column dropped as dependent is NaN in each of them
+	// (R's "not defined because of singularities"); `terms` still names it.
+	std::vector<double> beta;
+	std::vector<double> std_error;   // per `vcov`
+	std::vector<double> t_statistic; // βⱼ / SEⱼ
+	std::vector<double> p_value;     // two-sided, t(n − rank), or t(G−1) when clustered
 
 	double r_squared = 0.0;
 	double adj_r_squared = 0.0;
 	double f_statistic = 0.0; // classical overall-significance F (not robustified)
 	double f_p_value = 0.0;
 	double sigma = 0.0;       // residual standard error √(RSS/df_residual)
-	double loglik = 0.0;      // Gaussian log-likelihood at the MLE: −n/2·(ln 2π + ln(RSS/n) + 1); +inf at RSS = 0
-	std::vector<double> cov;  // k×k row-major coefficient covariance for `vcov`: cov[i*k + j] = cov(βᵢ, βⱼ), in `terms` order
+	// Gaussian log-likelihood at the MLE: −n/2·(ln 2π + ln(RSS/n) + 1).
+	// +inf at RSS = 0.
+	double loglik = 0.0;
+	// k×k row-major coefficient covariance for `vcov`, in `terms` order:
+	// cov[i*k + j] = cov(βᵢ, βⱼ). Rows and columns of an aliased term are NaN.
+	std::vector<double> cov;
 };
 
 // Fit y (length n) on the predictor matrix X_pred (n × p, row-major, WITHOUT an
 // intercept column — opts.intercept controls whether a constant is prepended).
-// Returns ok=false with a populated `error` on too-few rows (n ≤ k) or a
-// singular / collinear design (XᵀX not positive-definite). All statistics are
-// computed on the linalg kernel.
+// A collinear design is NOT an error: dependent columns are dropped the way R
+// does (independent_columns, earlier column wins), the fit runs on the kept
+// ones, and the dropped coefficients come back as NaN. `rank` reports how
+// many parameters were estimated, and every degrees-of-freedom formula uses
+// it. Returns ok=false with a populated `error` only when nothing is
+// estimable: no independent column at all, or no residual df left (n ≤ rank).
+// All statistics are computed on the linalg kernel.
 //
 // cluster_ids: optional, length n, DENSE 0-based cluster labels (0..G−1).
 // Required iff opts.vcov is kCR0/kCR1 (else ok=false); ignored otherwise. With
