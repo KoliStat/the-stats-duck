@@ -38,6 +38,14 @@ that name is preserved across releases for backward compatibility.
   hash-table order (#54), and `src/ttest_function.cpp` is unregistered
   dead code (#55). README now credits The Fat Duck as the inspiration for
   the project name and links the three docs pages.
+- `lm_fit` returns three new STRUCT fields (#34, #35; lm_fit Increment A,
+  #37): `rank` (field 12, equals `k` until rank-deficient fits land, #36),
+  `loglik` (13, the Gaussian log-likelihood, R `logLik` / statsmodels
+  `.llf`, `+inf` for an exact fit), and `cov` (14, the full k×k coefficient
+  covariance for the chosen `vcov` as a flat row-major `LIST<DOUBLE>` in
+  coefficient order). `cov` is the input `lin_hyp` (#20) and `emmeans` (#21)
+  need. Goldens come from statsmodels `.llf` and `.cov_params()` for
+  classical, HC1, CR0, and CR1. Existing fields and positions are unchanged.
 
 ### Changed
 

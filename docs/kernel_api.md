@@ -78,7 +78,7 @@ LmResult fit_lm(const std::vector<double>& y,      // response, length n
 | --- | --- | --- |
 | `Vcov` | enum | `kConst`, `kHC0`–`kHC3` (heteroskedasticity-consistent), `kCR0`/`kCR1` (cluster-robust) |
 | `LmOptions` | struct | `vcov` (default `kConst`), `intercept` (default `true`, prepends a constant) |
-| `LmResult` | struct | `ok`/`error`; `n`, `k`, `df_residual`, `n_clusters`; per-term `terms`/`beta`/`std_error`/`t_statistic`/`p_value`; model `r_squared`, `adj_r_squared`, `f_statistic`, `f_p_value`, `sigma` |
+| `LmResult` | struct | `ok`/`error`; `n`, `k`, `df_residual`, `rank`, `n_clusters`; per-term `terms`/`beta`/`std_error`/`t_statistic`/`p_value`; model `r_squared`, `adj_r_squared`, `f_statistic`, `f_p_value`, `sigma`, `loglik`; `cov` (k×k row-major) |
 | `parse_vcov` | `(const string&, Vcov&) -> bool` | case-insensitive: `const`/`none`/`ols`/…, `hc0`–`hc3`, `cr0`/`cr1`/`cluster` (→ `kCR1`) |
 | `vcov_name` | `(Vcov) -> const char*` | canonical label echoed back in `LmResult.vcov` |
 
@@ -96,6 +96,11 @@ Conventions worth knowing before consuming `LmResult`:
 - **Failure is a value, not an exception.** `ok = false` with a populated
   `error` on `n ≤ k`, a singular/collinear design, or (for CR*) a missing
   cluster vector or fewer than two clusters. Callers branch on `ok`.
+- **The full covariance is exposed.** `cov` is the k×k matrix for the chosen
+  `vcov`, row-major (`cov[i*k + j]`), aligned to `terms`; its diagonal is
+  `std_error²`. `rank` equals `k` until rank-deficient fits land (#36).
+  `loglik` is the Gaussian MLE value `−n/2·(ln 2π + ln(RSS/n) + 1)`, which is
+  `+inf` at RSS = 0.
 
 ## `optimize.hpp` — derivative-free minimization
 

@@ -262,3 +262,70 @@ statement error
 SELECT lm_fit(y, [x1, x2], 'HC1', grp) FROM ds4
 ----
 cluster-robust
+
+# ═════ Increment A fields: rank (12), loglik (13), cov (14) ══════════════════
+# Goldens from statsmodels (.llf, .cov_params()) via test/cpp/gen_lm_fit_fixtures.py.
+# cov is row-major k×k in coefficient order; SQL lists are 1-based, so
+# cov[1] is var(β₀) and cov[i*k + j + 1] is cov(βᵢ, βⱼ).
+
+# DS3 classical: rank, loglik, and the 2×2 covariance.
+query TTTTTT
+SELECT m.rank, printf('%.4f', m.loglik), len(m.cov),
+       printf('%.4f', m.cov[1]), printf('%.4f', m.cov[2]), printf('%.4f', m.cov[4])
+FROM (SELECT lm_fit(y, [x1]) AS m FROM ds3)
+----
+2	3.5102	4	0.0197	-0.0035	0.0008
+
+# The diagonal of cov is the squared standard error.
+query T
+SELECT printf('%.6f', sqrt(m.cov[1])) = printf('%.6f', (m.coefficients[1]).std_error)
+FROM (SELECT lm_fit(y, [x1]) AS m FROM ds3)
+----
+true
+
+# DS1 HC1: the robust covariance is the one lin_hyp / emmeans consume.
+query TTTTT
+SELECT len(m.cov), printf('%.4f', m.cov[1]), printf('%.4f', m.cov[2]),
+       printf('%.4f', m.cov[6]), printf('%.4f', m.cov[9])
+FROM (SELECT lm_fit(y, [x1, x2], 'HC1') AS m FROM ds1)
+----
+9	5.3574	-0.1911	0.0106	0.1060
+
+# DS4 CR1: cluster-robust covariance; loglik does not depend on vcov.
+query TTTT
+SELECT len(m.cov), printf('%.4f', m.loglik), printf('%.4f', m.cov[5]), printf('%.4f', m.cov[9])
+FROM (SELECT lm_fit(y, [x1, x2], 'CR1', grp) AS m FROM ds4)
+----
+9	-32.9761	0.0070	0.0372
+
+# One cov list per group: each group's diagonal matches its own SEs, so the
+# per-group list offsets line up.
+query TTT
+SELECT g,
+       printf('%.6f', sqrt(m.cov[1])) = printf('%.6f', (m.coefficients[1]).std_error),
+       len(m.cov)
+FROM (SELECT g, lm_fit(y, [x1]) AS m
+      FROM (SELECT 'ds1' AS g, y, x1 FROM ds1 UNION ALL SELECT 'ds3', y, x1 FROM ds3)
+      GROUP BY g)
+ORDER BY g
+----
+ds1	true	4
+ds3	true	4
+
+# An exact fit drives loglik up without bound: +inf when the solve leaves RSS
+# at exactly 0 (only NaN maps to NULL, so +inf passes through), or a large
+# finite value when rounding leaves RSS at ~1e-30. Which one depends on the
+# platform's rounding, so the test accepts both. cov collapses to zero.
+query TTTT
+SELECT grp, isinf(m.loglik) OR m.loglik > 50, len(m.cov), printf('%.4f', m.cov[1])
+FROM (SELECT grp, lm_fit(y, [x]) AS m FROM grouped GROUP BY grp)
+ORDER BY grp
+----
+A	true	4	0.0000
+B	true	4	0.0000
+
+# A NULL group has a NULL cov, like every other field.
+query T
+SELECT (lm_fit(y, [x1])).cov FROM (SELECT 1.0 AS y, 2.0 AS x1)
+----
+NULL
