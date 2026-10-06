@@ -17,8 +17,8 @@ that name is preserved across releases for backward compatibility.
   with a second pass; plain loops, no Eigen). The earlier column of a
   dependent set wins, as in R's `dqrdc2`, so the later duplicate becomes
   the alias; the default tolerance is R's `lm.fit` tolerance. This is the
-  primitive the rank-deficient `lm_fit` path (#36) and `CholFactor` (#44)
-  build on (#33). Tested standalone in `test/cpp/test_linalg.cpp`: full
+  primitive the rank-deficient `lm_fit` path (#36, below) and `CholFactor`
+  (#44) build on (#33). Tested standalone in `test/cpp/test_linalg.cpp`: full
   rank, duplicate and scaled columns, the dummy-variable trap, zero
   columns, near-dependence inside and outside the tolerance, and a wide
   matrix.
@@ -49,6 +49,24 @@ that name is preserved across releases for backward compatibility.
 
 ### Changed
 
+- **A collinear design no longer returns NULL for the group: `lm_fit` now
+  fits it.** Dependent columns are dropped the way R drops them (selection
+  runs left to right, so the earlier column of a dependent set is kept and
+  the later one is aliased). The aliased term keeps its name but its
+  `estimate`, `std_error`, `t_statistic` and `p_value` are NULL, and so are
+  the `cov` entries in its row and column. `rank` reports the parameters
+  actually estimated, and every degrees-of-freedom formula now counts rank
+  rather than design columns: `df_residual = n − rank`, σ², adjusted R², the
+  HC1 factor `n/(n−rank)`, the CR1 factor `[G/(G−1)]·[(N−1)/(N−rank)]`, the
+  `t(n−rank)` reference, and the F numerator `rank − intercept`. A full-rank
+  fit has `rank == k`, so every existing result is unchanged — the test suite
+  keeps its goldens as the regression guard (#36, lm_fit Increment A #37).
+  A group is still NULL when nothing is estimable: no independent column at
+  all, no residual degrees of freedom (`n ≤ rank`), or fewer than two
+  clusters for CR0/CR1. Oracled by reduced-model equivalence against
+  statsmodels, which cannot validate the dropped fit directly because it
+  spreads the coefficient across the dependent set instead of aliasing one;
+  see the DS5 fixtures and `notes/engineering/`.
 - Reworded README, CITATION.cff, engineering notes, code comments, and the
   `visualize_mark_v1_*` function descriptions to plain English. Removed
   buzzwords and slang ("first-class", "seamlessly", "plumbing", "footgun");

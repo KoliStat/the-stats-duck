@@ -67,14 +67,21 @@ exception.
     `optimize::Result` in the kernel, which reports `converged = false`
     with its best point rather than failing.
 - **Covariance is a flat row-major `LIST<DOUBLE>`** of length k², with
-  `cov[i*k + j] = cov(βᵢ, βⱼ)`, in `coefficients` order. Aliased positions
-  are NaN, and so NULL, once rank-deficient fits land (#36).
+  `cov[i*k + j] = cov(βᵢ, βⱼ)`, in `coefficients` order. Every entry
+  involving an aliased term is NaN, and so NULL.
 - **Degrees of freedom follow the estimated rank.** A fitter reports
   `rank`, and every df formula uses it: σ², adjusted R², the HC and CR
   small-sample factors, and the t reference. `df_residual = n − rank` is a
   property of the fit. Cluster-robust inference uses a `t(G−1)` reference
   without changing `df_residual`. statsmodels does the same without saying
   so; this page says so.
+- **A rank-deficient design is a fit, not a failure.** Dependent columns
+  are dropped left to right, so the earlier column of a dependent set is
+  kept and the later one is aliased: NULL estimate, standard error, t and
+  p, and NULL covariance entries, while the term keeps its name. This is
+  R's convention, not the minimum-norm one — statsmodels spreads the
+  coefficient across the dependent set instead, so it cannot oracle a
+  dropped fit directly. Oracle the reduced design instead.
 - **p-values and confidence intervals come from the in-repo distribution
   kernels** (`src/include/distributions.hpp`). There is never a second CDF
   implementation.
@@ -91,7 +98,7 @@ Fields 0–14 are shipped; 12–14 landed with lm_fit Increment A (#34, #35).
 | 0 | `coefficients` | `LIST<STRUCT(term VARCHAR, estimate, std_error, t_statistic, p_value DOUBLE)>` | positional terms, `(Intercept)` first |
 | 1 | `n` | `BIGINT` | rows used, after the listwise drop |
 | 2 | `k` | `BIGINT` | design columns, intercept included |
-| 3 | `df_residual` | `BIGINT` | `n − k` today; `n − rank` once rank-deficient fits land (#36) |
+| 3 | `df_residual` | `BIGINT` | `n − rank` |
 | 4 | `r_squared` | `DOUBLE` | |
 | 5 | `adj_r_squared` | `DOUBLE` | |
 | 6 | `sigma` | `DOUBLE` | residual standard error |
@@ -100,9 +107,9 @@ Fields 0–14 are shipped; 12–14 landed with lm_fit Increment A (#34, #35).
 | 9 | `has_intercept` | `BOOLEAN` | |
 | 10 | `vcov_type` | `VARCHAR` | the canonical estimator name, echoed back |
 | 11 | `n_clusters` | `BIGINT` | NULL unless CR0/CR1 |
-| 12 | `rank` | `BIGINT` | equals `k` until rank-deficient fits land (#36) |
+| 12 | `rank` | `BIGINT` | parameters actually estimated; below `k` when dependent columns were dropped |
 | 13 | `loglik` | `DOUBLE` | Gaussian MLE value; `+inf` at RSS = 0 |
-| 14 | `cov` | `LIST<DOUBLE>` | row-major k², in `coefficients` order; the diagonal is `std_error²` |
+| 14 | `cov` | `LIST<DOUBLE>` | row-major k², in `coefficients` order; the diagonal is `std_error²`; NULL wherever an aliased term is involved |
 
 ## Numeric and portability discipline
 

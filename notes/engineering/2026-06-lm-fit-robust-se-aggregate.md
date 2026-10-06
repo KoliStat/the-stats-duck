@@ -122,3 +122,49 @@ integer `firm_id` is a bind error ("no function matches"). Users cast explicitly
 (`firm_id::VARCHAR`). One VARCHAR key type still covers every realistic cluster
 (string ids, composite `year||state`, integers via cast) without doubling the
 overload surface.
+
+## Addendum: rank-deficient fits, and how to oracle them without R
+
+Two things here were non-obvious.
+
+**statsmodels cannot oracle a dropped fit.** Faced with a dependent column, R
+drops it and reports the coefficient as NA. statsmodels keeps every column and
+solves with `pinv`, so the minimum-norm solution spreads the coefficient across
+the dependent set. On DS1 with `2*x1` inserted, dropping reports 2.0579 for x1
+and NA for the duplicate; statsmodels reports 0.4116 and 0.8232. Both fits have
+the same fitted values, so everything determined by those values agrees — RSS,
+sigma, R², adjusted R², F, the log-likelihood, and the residual df. Only the
+coefficients and their standard errors differ, and those are exactly what a
+regression test needs to pin.
+
+So the oracle is **reduced-model equivalence**: the dropped fit of a deficient
+design is definitionally the fit of that design with the dependent columns
+removed, and the reduced design is full rank, so statsmodels validates it
+directly. `gen_lm_fit_fixtures.py` emits the DS5 sections this way and asserts
+both halves on every run: the invariants the two conventions share, and the fact
+that the coefficients do not match. `test/cpp/test_lm_fit.cpp` goes one step
+further and compares the deficient fit against the reduced fit computed in the
+same test, so the goldens live in exactly one place and cannot drift.
+
+Choosing the column order in a fixture matters more than it looks. In
+`[x1, x1+x2, x2]` it is **x2** that is dependent, since `x2 = (x1+x2) − x1`, so
+selection keeps `[1, x1, x1+x2]` — a different basis for the same column space,
+whose coefficients are legitimately different (3.0366 for x1, which is
+2.0579 + 0.9787). Keeping the dependent column last is what makes the original
+coefficients the surviving ones. A test that gets this wrong looks like an
+implementation bug.
+
+**Every df formula counts estimated parameters, not design columns.** Once
+columns can be dropped, `k` and the number of estimated parameters diverge, and
+each one has exactly one right answer: `df_residual = n − rank`, `σ² =
+RSS/(n−rank)`, the HC1 factor `n/(n−rank)`, the CR1 factor
+`[G/(G−1)]·[(N−1)/(N−rank)]`, the t reference `t(n−rank)`, and R's F numerator
+`rank − intercept`. These are the numbers that make a deficient fit agree with
+its reduced model, so the DS5 tests catch a k-based factor immediately: on DS1,
+HC1 with `12/8` instead of `12/9` inflates every standard error by 6%.
+
+The fit itself stays on the same Cholesky path. `independent_columns`
+(`linalg.hpp`) picks the kept columns, a reference binds the design to either
+the kept subset or the original matrix, and the rest of `fit_lm` is unchanged —
+which is why a full-rank fit provably runs the code it ran before, and why the
+pre-existing goldens are the regression guard for this change.
