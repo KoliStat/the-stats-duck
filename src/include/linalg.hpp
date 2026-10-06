@@ -11,8 +11,8 @@
 //
 // Scope (Epic 0.1): Householder QR, Cholesky, SVD; tolerance-based rank;
 // Moore–Penrose pseudo-inverse; symmetric/SPD solve + inverse; the covariance
-// sandwich L·A·Lᵀ; rank-revealing column selection (independent_columns). Pure numerics — no statistics, no model assembly (that lives
-// in lm_fit / glm_fit / …).
+// sandwich L·A·Lᵀ; rank-revealing column selection. Pure numerics — no
+// statistics, no model assembly (that lives in lm_fit / glm_fit / …).
 
 #include <cstddef>
 #include <vector>
