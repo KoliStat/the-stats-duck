@@ -329,13 +329,16 @@ Interactions (`x1:x2`), wildcards (`*`, `^`, `.`) and inline expressions
 (`I(x^2)`, `log(x)`) are not supported in v0.6 — wrap into a CTE if you need
 transformed columns. `formula` and `y` / `x` are mutually exclusive.
 
-OLS via Cholesky decomposition of `X'X`. Rows with NULL in `y` or any `x` are
-dropped (complete-case). Term order follows the user-supplied predictor order,
-after the intercept. Calling `lm` and `lm_summary` with the same arguments
-fits the model twice — use a CTE if you need both shapes from a single fit.
-Errors on singular `X'X` (perfectly collinear predictors) or insufficient rows
-(`n ≤ k` parameters). When the intercept is removed, R²/adj-R² use the
-uncentered TSS = Σ y² to match R's `summary.lm` — interpret with care.
+Both functions run on the same OLS kernel as `lm_fit`, so the three cannot
+disagree. Rows with NULL in `y` or any `x` are dropped (complete-case). Term
+order follows the user-supplied predictor order, after the intercept. Calling
+`lm` and `lm_summary` with the same arguments fits the model twice — use a CTE
+if you need both shapes from a single fit. Collinear predictors do not fail:
+the later column of a dependent set is dropped and reported with a NULL
+estimate, standard error, t and p, so `df_residual` is `n − rank` and
+`df_model` counts the slopes actually estimated. Insufficient rows
+(`n ≤ rank`) is still an error. When the intercept is removed, R²/adj-R² use
+the uncentered TSS = Σ y² to match R's `summary.lm` — interpret with care.
 
 ### Linear regression aggregate with robust SEs (`lm_fit`)
 
