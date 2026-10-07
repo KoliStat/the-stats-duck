@@ -12,6 +12,16 @@ that name is preserved across releases for backward compatibility.
 
 ### Added
 
+- Kernel: `linalg::independent_columns(A, tol = 1e-7)` selects a maximal
+  linearly independent column subset left to right (modified Gram–Schmidt
+  with a second pass; plain loops, no Eigen). The earlier column of a
+  dependent set wins, as in R's `dqrdc2`, so the later duplicate becomes
+  the alias; the default tolerance is R's `lm.fit` tolerance. This is the
+  primitive the rank-deficient `lm_fit` path (#36) and `CholFactor` (#44)
+  build on (#33). Tested standalone in `test/cpp/test_linalg.cpp`: full
+  rank, duplicate and scaled columns, the dummy-variable trap, zero
+  columns, near-dependence inside and outside the tolerance, and a wide
+  matrix.
 - Every SQL function now registers `FunctionDescription` metadata —
   description, parameter names, and a runnable example — so
   `duckdb_functions()` and the community-extensions docs page's

@@ -7,6 +7,8 @@
 // this compiles to wasm_eh. See notes / the kernel roadmap (issue #16).
 #include <Eigen/Dense>
 
+#include <cmath>
+
 namespace statsduck {
 namespace linalg {
 
@@ -164,6 +166,61 @@ std::vector<double> matvec(const Mat &A, const std::vector<double> &x) {
 	}
 	VectorXd y = to_eigen(A) * to_eigen(x);
 	return to_std(y);
+}
+
+ColumnSelection independent_columns(const Mat &A, double tol) {
+	ColumnSelection sel;
+	if (A.rows == 0 || A.cols == 0) {
+		return sel;
+	}
+	const std::size_t n = A.rows;
+	std::vector<std::vector<double>> basis; // orthonormal vectors, each of length n
+	std::vector<double> v(n);
+	for (std::size_t j = 0; j < A.cols; j++) {
+		// n orthonormal vectors already span the column space, so every later
+		// column is dependent. Stopping here also pins rank <= rows exactly.
+		if (basis.size() == n) {
+			break;
+		}
+		double orig_sq = 0.0;
+		for (std::size_t r = 0; r < n; r++) {
+			v[r] = A(r, j);
+			orig_sq += v[r] * v[r];
+		}
+		if (orig_sq == 0.0) {
+			continue; // a zero column is never independent
+		}
+		// Two passes of modified Gram-Schmidt. The second pass removes the
+		// components rounding left behind in the first, which is what keeps the
+		// residual honest for nearly dependent columns.
+		for (int pass = 0; pass < 2; pass++) {
+			for (const auto &q : basis) {
+				double dot = 0.0;
+				for (std::size_t r = 0; r < n; r++) {
+					dot += q[r] * v[r];
+				}
+				for (std::size_t r = 0; r < n; r++) {
+					v[r] -= dot * q[r];
+				}
+			}
+		}
+		double resid_sq = 0.0;
+		for (std::size_t r = 0; r < n; r++) {
+			resid_sq += v[r] * v[r];
+		}
+		const double resid = std::sqrt(resid_sq);
+		// Relative to the column's own norm, as R's dqrdc2 does. A NaN column
+		// fails this comparison and is dropped.
+		if (resid > tol * std::sqrt(orig_sq)) {
+			for (std::size_t r = 0; r < n; r++) {
+				v[r] /= resid;
+			}
+			basis.push_back(v);
+			sel.keep.push_back(static_cast<int>(j));
+		}
+	}
+	sel.rank = static_cast<int>(sel.keep.size());
+	return sel;
 }
 
 } // namespace linalg
