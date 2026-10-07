@@ -49,6 +49,16 @@ that name is preserved across releases for backward compatibility.
 
 ### Changed
 
+- **`lm` and `lm_summary` now run on the shared `lm_core` kernel** instead of
+  their own Cholesky, so the table functions and the `lm_fit` aggregate cannot
+  drift apart and the duplicate solve is gone (#45). Output on a full-rank fit
+  is unchanged. Two deliberate consequences follow from the kernel's behavior:
+  a collinear design fits instead of raising `singular` (the dependent column
+  is dropped and reported with NULL estimate, standard error, t and p), and
+  `df_residual` and `df_model` count estimated parameters, so they read
+  `n − rank` and `rank − intercept`. Error messages now name the function that
+  was called rather than the kernel behind it, which also fixes `lm_summary`
+  reporting its runtime errors as `lm:`.
 - **A collinear design no longer returns NULL for the group: `lm_fit` now
   fits it.** Dependent columns are dropped the way R drops them (selection
   runs left to right, so the earlier column of a dependent set is kept and
