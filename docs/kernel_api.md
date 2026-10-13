@@ -90,15 +90,23 @@ Conventions worth knowing before consuming `LmResult`:
   invariant across `vcov`. HC* use the sandwich with leverage-weighted meat;
   CR0/CR1 use per-cluster score sums (CR1 with the
   `[G/(G−1)]·[(N−1)/(N−k)]` finite-sample factor).
-- **Inference df.** Classical/HC use `t(n−k)`; cluster-robust uses `t(G−1)`,
-  where `G = n_clusters`. `df_residual` is always reported as `n−k` regardless —
-  it is a property of the fit, not the SE estimator.
+- **Inference df.** Classical/HC use `t(n−rank)`; cluster-robust uses
+  `t(G−1)`, where `G = n_clusters`. `df_residual` is always reported as
+  `n−rank` regardless — it is a property of the fit, not the SE estimator.
+- **Rank deficiency is not an error.** A dependent column is dropped the way
+  R's `dqrdc2` drops it (the earlier column of a dependent set wins), the fit
+  runs on the kept columns, and the dropped coefficient is NaN in `beta`,
+  `std_error`, `t_statistic`, `p_value` and the matching row and column of
+  `cov`. `terms` still names it. Every df formula counts estimated parameters,
+  so `rank`: σ², adjusted R², the HC1 and CR1 finite-sample factors, the t
+  reference, and the F numerator. A full-rank fit has `rank == k`, so those
+  formulas are unchanged there.
 - **Failure is a value, not an exception.** `ok = false` with a populated
   `error` on `n ≤ k`, a singular/collinear design, or (for CR*) a missing
   cluster vector or fewer than two clusters. Callers branch on `ok`.
 - **The full covariance is exposed.** `cov` is the k×k matrix for the chosen
   `vcov`, row-major (`cov[i*k + j]`), aligned to `terms`; its diagonal is
-  `std_error²`. `rank` equals `k` until rank-deficient fits land (#36).
+  `std_error²`.
   `loglik` is the Gaussian MLE value `−n/2·(ln 2π + ln(RSS/n) + 1)`, which is
   `+inf` at RSS = 0.
 

@@ -391,33 +391,53 @@ FROM (SELECT unnest((lm_fit(ret, [mktrf, smb], 'CR1', firm_id::VARCHAR)).coeffic
 ```
 
 Cluster-robust inference uses a `t(G − 1)` reference (G = number of clusters,
-surfaced as `n_clusters`), so it differs from the `t(n − k)` used by classical /
-HC. `'cluster'` is accepted as an alias for `'CR1'`.
+surfaced as `n_clusters`), so it differs from the `t(n − rank)` used by
+classical / HC. `'cluster'` is accepted as an alias for `'CR1'`.
 
 `lm_fit` returns a single `STRUCT`:
 
 | Field                                                       | Type                | Notes |
 | ----------------------------------------------------------- | ------------------- | ----- |
 | `coefficients`                                              | `LIST<STRUCT>`      | one element per term: `term`, `estimate`, `std_error`, `t_statistic`, `p_value` |
-| `n`, `k`, `df_residual`                                     | `BIGINT`            | rows used, parameters (incl. intercept), `n − k` |
+| `n`, `k`, `df_residual`                                     | `BIGINT`            | rows used, design columns (incl. intercept), `n − rank` |
 | `r_squared`, `adj_r_squared`, `sigma`                       | `DOUBLE`            | classical model fit |
 | `f_statistic`, `f_p_value`                                  | `DOUBLE`            | classical overall-significance F (not robustified) |
 | `has_intercept`                                             | `BOOLEAN`           | |
 | `vcov_type`                                                 | `VARCHAR`           | the estimator actually used |
 | `n_clusters`                                                | `BIGINT`            | number of clusters G (CR0/CR1 only; NULL otherwise) |
-| `rank`                                                      | `BIGINT`            | estimated rank of the design; equals `k` until rank-deficient fits land (#36) |
+| `rank`                                                      | `BIGINT`            | parameters actually estimated; below `k` when dependent columns were dropped |
 | `loglik`                                                    | `DOUBLE`            | Gaussian log-likelihood at the fit (R `logLik`, statsmodels `.llf`); `+inf` for an exact fit |
-| `cov`                                                       | `LIST<DOUBLE>`      | full k×k coefficient covariance for the chosen `vcov`, row-major in coefficient order; SQL lists are 1-based, so `cov[i*k + j + 1]` is `cov(βᵢ, βⱼ)` and the diagonal is `std_error²` |
+| `cov`                                                       | `LIST<DOUBLE>`      | full k×k coefficient covariance for the chosen `vcov`, row-major in coefficient order; SQL lists are 1-based, so `cov[i*k + j + 1]` is `cov(βᵢ, βⱼ)` and the diagonal is `std_error²`; NULL wherever an aliased term is involved |
 
 A trailing constant `add_intercept := false` (positionally
 `lm_fit(y, x, 'const', false)`, or `lm_fit(y, x, 'CR1', cluster, false)` when
 clustered) drops the constant term — note aggregates take **positional**
 constants, not the `name := value` form `lm` uses. Rows with a NULL `y`, any NULL
 list element, or (when clustered) a NULL cluster key are dropped (complete-case).
-A group with too few rows (`n ≤ k`), a singular/collinear design, or — for CR0/CR1
-— fewer than two clusters yields a **NULL** result for that group rather than
-aborting the query. `t`/`p` use the t(n−k) distribution for classical/HC and
-t(G−1) for CR0/CR1 (matching Stata / statsmodels `use_t`). All numerics run on the
+A group with too few rows (`n ≤ rank`), no independent column at all, or — for
+CR0/CR1 — fewer than two clusters yields a **NULL** result for that group
+rather than aborting the query. `t`/`p` use the t(n−rank) distribution for
+classical/HC and t(G−1) for CR0/CR1 (matching Stata / statsmodels `use_t`).
+
+**Collinear predictors fit rather than fail.** A dependent column is dropped
+the way R drops it: selection runs left to right, so the earlier column of a
+dependent set is kept and the later one becomes an aliased term. The aliased
+term keeps its name in `coefficients` but its `estimate`, `std_error`,
+`t_statistic` and `p_value` are NULL, as are the `cov` entries in its row and
+column — R's "not defined because of singularities". `rank` reports how many
+parameters were estimated, and every degrees-of-freedom formula uses it
+(σ², adjusted R², the HC1 and CR1 finite-sample factors, the t reference, the
+F numerator), so a full-rank fit is unaffected:
+
+```sql
+-- x3 is x1 + x2, so it is dropped: rank 3 of k 4, df_residual = n − 3
+SELECT (u).term, (u).estimate
+FROM (SELECT unnest((lm_fit(y, [x1, x2, x1 + x2])).coefficients) AS u FROM t);
+--   (Intercept)  10.1206
+--   x1            2.0579
+--   x2           -0.9787
+--   x3            NULL     -- aliased
+``` All numerics run on the
 shared header-only linear-algebra kernel (`(X'X)⁻¹`, the robust sandwich),
 validated against statsmodels — see `test/cpp/test_lm_fit.cpp`. The bias-reduced
 CR2/CR3 cluster estimators are a planned follow-up.

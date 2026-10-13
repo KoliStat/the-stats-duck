@@ -83,11 +83,6 @@ LmResult fit_lm(const std::vector<double> &y, const linalg::Mat &X_pred, const L
 	if (k == 0) {
 		return Fail("lm_fit: model has no terms (need at least one predictor or an intercept)");
 	}
-	if (n <= k) {
-		return Fail("lm_fit: need n > k (" + std::to_string(k) + " params), got n = " +
-		            std::to_string(n) + " — not enough complete-case rows");
-	}
-
 	// Cluster-robust setup: the ids are required, must cover every row, be dense
 	// 0-based labels, and resolve to at least two clusters (G−1 ≥ 1 df).
 	const bool clustered = (opts.vcov == Vcov::kCR0 || opts.vcov == Vcov::kCR1);
@@ -111,42 +106,80 @@ LmResult fit_lm(const std::vector<double> &y, const linalg::Mat &X_pred, const L
 		}
 	}
 
-	// Materialize the full design matrix X (n × k), intercept first when present.
-	linalg::Mat X(n, k);
+	// Materialize the full design matrix (n × k), intercept first when present.
+	linalg::Mat X_all(n, k);
 	for (std::size_t r = 0; r < n; r++) {
 		std::size_t c = 0;
 		if (opts.intercept) {
-			X(r, 0) = 1.0;
+			X_all(r, 0) = 1.0;
 			c = 1;
 		}
 		for (std::size_t j = 0; j < p; j++) {
-			X(r, c + j) = X_pred(r, j);
+			X_all(r, c + j) = X_pred(r, j);
 		}
 	}
 
-	// Normal equations: XᵀX (k×k, SPD when full rank) and Xᵀy (k).
-	linalg::Mat XtX(k, k);
-	std::vector<double> Xty(k, 0.0);
+	// Rank-revealing column selection in R's dqrdc2 convention: the earlier
+	// column of a dependent set is kept, so the later one becomes the aliased
+	// term. The tolerance is independent_columns's default, R's lm.fit value.
+	const linalg::ColumnSelection sel = linalg::independent_columns(X_all);
+	const std::size_t rank = static_cast<std::size_t>(sel.rank);
+	if (rank == 0) {
+		return Fail("lm_fit: the design has no independent columns");
+	}
+	// A deficient design is still estimable as long as the reduced model has
+	// at least one residual degree of freedom. This replaces the old n ≤ k
+	// guard; a single-row group still fails here, with rank == n.
+	if (n <= rank) {
+		return Fail("lm_fit: need n > rank (rank " + std::to_string(rank) + " of " +
+		            std::to_string(k) + " columns), got n = " + std::to_string(n) +
+		            " — not enough complete-case rows");
+	}
+
+	// The fit runs on the independent columns only. The dropped columns lie in
+	// the span of the kept ones, so the residuals, RSS and every model
+	// statistic equal those of the reduced model, and the dropped coefficients
+	// are reported as NaN (R's "not defined because of singularities"). A
+	// full-rank design binds X to X_all, which leaves the code below running
+	// the identical full-rank path it ran before.
+	const bool deficient = rank < k;
+	linalg::Mat X_kept;
+	if (deficient) {
+		X_kept = linalg::Mat(n, rank);
+		for (std::size_t r = 0; r < n; r++) {
+			for (std::size_t j = 0; j < rank; j++) {
+				X_kept(r, j) = X_all(r, static_cast<std::size_t>(sel.keep[j]));
+			}
+		}
+	}
+	const linalg::Mat &X = deficient ? X_kept : X_all;
+
+	// Normal equations: XᵀX (rank×rank, SPD because the columns are
+	// independent) and Xᵀy (rank).
+	linalg::Mat XtX(rank, rank);
+	std::vector<double> Xty(rank, 0.0);
 	for (std::size_t r = 0; r < n; r++) {
-		for (std::size_t i = 0; i < k; i++) {
+		for (std::size_t i = 0; i < rank; i++) {
 			const double xi = X(r, i);
 			Xty[i] += xi * y[r];
-			for (std::size_t j = i; j < k; j++) {
+			for (std::size_t j = i; j < rank; j++) {
 				XtX(i, j) += xi * X(r, j);
 			}
 		}
 	}
-	for (std::size_t i = 0; i < k; i++) { // symmetrize (only upper triangle filled)
+	for (std::size_t i = 0; i < rank; i++) { // symmetrize (only upper triangle filled)
 		for (std::size_t j = 0; j < i; j++) {
 			XtX(i, j) = XtX(j, i);
 		}
 	}
 
-	// β via Cholesky on the SPD normal matrix. Not-SPD ⇒ collinear / singular.
+	// β via Cholesky on the reduced normal matrix. Collinearity was already
+	// removed by the selection above, so a failure here is numerical rather
+	// than structural — a design too ill-conditioned for the 1e-7 tolerance.
 	auto sol = linalg::cholesky_solve(XtX, Xty);
 	if (!sol.ok) {
-		return Fail("lm_fit: design matrix is singular (XᵀX not positive-definite); "
-		            "check for perfectly collinear predictors or a constant column");
+		return Fail("lm_fit: the reduced design is numerically singular (XᵀX not "
+		            "positive-definite after dropping dependent columns)");
 	}
 	const std::vector<double> &beta = sol.x;
 
@@ -154,7 +187,7 @@ LmResult fit_lm(const std::vector<double> &y, const linalg::Mat &X_pred, const L
 	bool inv_ok = false;
 	linalg::Mat XtXinv = linalg::inv_spd(XtX, &inv_ok);
 	if (!inv_ok) {
-		return Fail("lm_fit: failed to invert XᵀX (singular design)");
+		return Fail("lm_fit: failed to invert XᵀX (singular reduced design)");
 	}
 
 	// Residuals, RSS, and the sums reused by the model summary.
@@ -162,7 +195,7 @@ LmResult fit_lm(const std::vector<double> &y, const linalg::Mat &X_pred, const L
 	double rss = 0.0, y_sum = 0.0, y_sq_sum = 0.0;
 	for (std::size_t r = 0; r < n; r++) {
 		double yhat = 0.0;
-		for (std::size_t j = 0; j < k; j++) {
+		for (std::size_t j = 0; j < rank; j++) {
 			yhat += beta[j] * X(r, j);
 		}
 		const double e = y[r] - yhat;
@@ -172,14 +205,16 @@ LmResult fit_lm(const std::vector<double> &y, const linalg::Mat &X_pred, const L
 		y_sq_sum += y[r] * y[r];
 	}
 
-	const double df_resid = static_cast<double>(n - k);
+	// Estimated parameters, not design columns: for a full-rank fit rank == k,
+	// so this and every formula below it are unchanged there.
+	const double df_resid = static_cast<double>(n - rank);
 	const double sigma2 = rss / df_resid;
 
-	// ── Coefficient covariance V (k×k) per the chosen estimator ──────────────
-	linalg::Mat V(k, k);
+	// ── Coefficient covariance V (rank×rank) per the chosen estimator ────────
+	linalg::Mat V(rank, rank);
 	if (opts.vcov == Vcov::kConst) {
-		for (std::size_t i = 0; i < k; i++) {
-			for (std::size_t j = 0; j < k; j++) {
+		for (std::size_t i = 0; i < rank; i++) {
+			for (std::size_t j = 0; j < rank; j++) {
 				V(i, j) = sigma2 * XtXinv(i, j);
 			}
 		}
@@ -187,21 +222,21 @@ LmResult fit_lm(const std::vector<double> &y, const linalg::Mat &X_pred, const L
 		// Cluster-robust (Liang-Zeger) sandwich: V = (XᵀX)⁻¹ · M · (XᵀX)⁻¹ with
 		// the "meat" M = Σ_g s_g s_gᵀ, s_g = Σ_{i∈g} xᵢêᵢ the cluster-g score sum.
 		// One pass fills the per-cluster score sums; CR1 then applies the
-		// Stata/statsmodels finite-sample factor [G/(G−1)]·[(N−1)/(N−k)].
-		std::vector<double> score(G * k, 0.0); // G×k row-major: per-cluster s_g
+		// Stata/statsmodels finite-sample factor [G/(G−1)]·[(N−1)/(N−rank)].
+		std::vector<double> score(G * rank, 0.0); // G×rank row-major: per-cluster s_g
 		for (std::size_t r = 0; r < n; r++) {
-			double *sg = &score[static_cast<std::size_t>((*cluster_ids)[r]) * k];
+			double *sg = &score[static_cast<std::size_t>((*cluster_ids)[r]) * rank];
 			const double e = resid[r];
-			for (std::size_t j = 0; j < k; j++) {
+			for (std::size_t j = 0; j < rank; j++) {
 				sg[j] += e * X(r, j);
 			}
 		}
-		linalg::Mat meat(k, k);
+		linalg::Mat meat(rank, rank);
 		for (std::size_t gi = 0; gi < G; gi++) {
-			const double *sg = &score[gi * k];
-			for (std::size_t i = 0; i < k; i++) {
+			const double *sg = &score[gi * rank];
+			for (std::size_t i = 0; i < rank; i++) {
 				const double si = sg[i];
-				for (std::size_t j = 0; j < k; j++) {
+				for (std::size_t j = 0; j < rank; j++) {
 					meat(i, j) += si * sg[j];
 				}
 			}
@@ -210,7 +245,7 @@ LmResult fit_lm(const std::vector<double> &y, const linalg::Mat &X_pred, const L
 		if (opts.vcov == Vcov::kCR1) {
 			const double Gd = static_cast<double>(G);
 			const double nd = static_cast<double>(n);
-			const double kd = static_cast<double>(k);
+			const double kd = static_cast<double>(rank);
 			const double c = (Gd / (Gd - 1.0)) * ((nd - 1.0) / (nd - kd));
 			for (auto &v : V.data) {
 				v *= c;
@@ -220,17 +255,17 @@ LmResult fit_lm(const std::vector<double> &y, const linalg::Mat &X_pred, const L
 		// Heteroskedasticity-consistent sandwich: V = (XᵀX)⁻¹ · M · (XᵀX)⁻¹,
 		// M = Σᵢ wᵢ xᵢxᵢᵀ with wᵢ the squared residual, leverage-adjusted for
 		// HC2/HC3. Leverage hᵢᵢ = xᵢᵀ(XᵀX)⁻¹xᵢ.
-		linalg::Mat meat(k, k);
-		std::vector<double> xi(k, 0.0);
+		linalg::Mat meat(rank, rank);
+		std::vector<double> xi(rank, 0.0);
 		for (std::size_t r = 0; r < n; r++) {
-			for (std::size_t j = 0; j < k; j++) {
+			for (std::size_t j = 0; j < rank; j++) {
 				xi[j] = X(r, j);
 			}
 			double w = resid[r] * resid[r];
 			if (opts.vcov == Vcov::kHC2 || opts.vcov == Vcov::kHC3) {
 				const std::vector<double> hx = linalg::matvec(XtXinv, xi); // (XᵀX)⁻¹ xᵢ
 				double h = 0.0;
-				for (std::size_t j = 0; j < k; j++) {
+				for (std::size_t j = 0; j < rank; j++) {
 					h += xi[j] * hx[j];
 				}
 				double denom = 1.0 - h;
@@ -240,9 +275,9 @@ LmResult fit_lm(const std::vector<double> &y, const linalg::Mat &X_pred, const L
 				}
 				w /= (opts.vcov == Vcov::kHC3) ? (denom * denom) : denom;
 			}
-			for (std::size_t i = 0; i < k; i++) {
+			for (std::size_t i = 0; i < rank; i++) {
 				const double wi = w * xi[i];
-				for (std::size_t j = 0; j < k; j++) {
+				for (std::size_t j = 0; j < rank; j++) {
 					meat(i, j) += wi * xi[j];
 				}
 			}
@@ -261,8 +296,8 @@ LmResult fit_lm(const std::vector<double> &y, const linalg::Mat &X_pred, const L
 	res.ok = true;
 	res.n = n;
 	res.k = k;
-	res.df_residual = n - k;
-	res.rank = k; // Cholesky succeeded, so the design is full rank (#36 changes this)
+	res.df_residual = n - rank;
+	res.rank = rank;
 	res.n_clusters = clustered ? G : 0;
 	res.has_intercept = opts.intercept;
 	res.vcov = opts.vcov;
@@ -275,8 +310,6 @@ LmResult fit_lm(const std::vector<double> &y, const linalg::Mat &X_pred, const L
 		const double two_pi = 2.0 * 3.14159265358979323846;
 		res.loglik = -0.5 * nd * (std::log(two_pi) + std::log(rss / nd) + 1.0);
 	}
-	res.cov = V.data; // Mat is row-major, so this is already cov[i*k + j]
-
 	res.terms.reserve(k);
 	if (opts.intercept) {
 		res.terms.emplace_back("(Intercept)");
@@ -285,24 +318,34 @@ LmResult fit_lm(const std::vector<double> &y, const linalg::Mat &X_pred, const L
 		res.terms.emplace_back("x" + std::to_string(j + 1));
 	}
 
-	res.beta = beta;
-	res.std_error.assign(k, 0.0);
-	res.t_statistic.assign(k, 0.0);
-	res.p_value.assign(k, 0.0);
+	// Scatter the reduced fit back into k-space: a kept column carries its
+	// estimates, an aliased one stays NaN (which the SQL layer renders NULL).
+	// For a full-rank design sel.keep[a] == a, so this writes exactly what the
+	// full-rank path wrote before.
+	res.beta.assign(k, kNaN);
+	res.std_error.assign(k, kNaN);
+	res.t_statistic.assign(k, kNaN);
+	res.p_value.assign(k, kNaN);
+	res.cov.assign(k * k, kNaN);
 	// Cluster-robust inference uses a t(G−1) reference (G = #clusters); classical
-	// and HC use t(n−k). df_residual itself is always reported as n−k.
+	// and HC use t(n−rank). df_residual itself is always reported as n−rank.
 	const double df_infer = clustered ? static_cast<double>(G - 1) : df_resid;
-	for (std::size_t j = 0; j < k; j++) {
-		const double var = V(j, j);
+	for (std::size_t a = 0; a < rank; a++) {
+		const std::size_t ja = static_cast<std::size_t>(sel.keep[a]);
+		res.beta[ja] = beta[a];
+		const double var = V(a, a);
 		const double se = var > 0.0 ? std::sqrt(var) : 0.0;
-		res.std_error[j] = se;
+		res.std_error[ja] = se;
 		if (se > 0.0) {
-			const double t = beta[j] / se;
-			res.t_statistic[j] = t;
-			res.p_value[j] = 2.0 * (1.0 - stats_duck::StudentTCDF(std::fabs(t), df_infer));
+			const double t = beta[a] / se;
+			res.t_statistic[ja] = t;
+			res.p_value[ja] = 2.0 * (1.0 - stats_duck::StudentTCDF(std::fabs(t), df_infer));
 		} else {
-			res.t_statistic[j] = kNaN;
-			res.p_value[j] = kNaN;
+			res.t_statistic[ja] = kNaN;
+			res.p_value[ja] = kNaN;
+		}
+		for (std::size_t b = 0; b < rank; b++) {
+			res.cov[ja * k + static_cast<std::size_t>(sel.keep[b])] = V(a, b);
 		}
 	}
 
@@ -316,7 +359,9 @@ LmResult fit_lm(const std::vector<double> &y, const linalg::Mat &X_pred, const L
 		tss_centered += dy * dy;
 	}
 	const double tss = opts.intercept ? tss_centered : y_sq_sum;
-	const double df_model = static_cast<double>(p); // predictors excluding intercept
+	// R's summary.lm: numerator df = rank − intercept, denominator df = n − rank.
+	// Equals p for a full-rank fit.
+	const double df_model = static_cast<double>(rank) - (opts.intercept ? 1.0 : 0.0);
 
 	if (tss > 0.0) {
 		res.r_squared = 1.0 - rss / tss;

@@ -138,12 +138,79 @@ SELECT lm_fit(y, [x1]) FROM (SELECT 1.0 AS y, 2.0 AS x1)
 ----
 NULL
 
-# Perfectly collinear predictors (x2 = 2·x1) → singular design.
+# ── Rank-deficient designs: the dependent column is dropped, not fatal ──────
+# A collinear design used to NULL the whole group. It now fits the way R does:
+# the later column of a dependent set is aliased, with NULL estimate, standard
+# error, t and p; rank < k; and df_residual = n − rank. The kept coefficients
+# are those of the reduced design, so DS1's goldens above are the oracle here
+# (see DS5 in test/cpp/test_lm_fit.cpp and gen_lm_fit_fixtures.py).
+
+# DS1 plus a dependent column x3 = x1 + x2: rank 3 of k = 4, x3 aliased, and
+# df_residual is 9 (n − rank), not 8 (n − k).
+query TTTTTT
+SELECT m.k, m.rank, m.df_residual,
+       printf('%.4f', (m.coefficients[2]).estimate),
+       printf('%.4f', (m.coefficients[2]).std_error),
+       (m.coefficients[4]).estimate IS NULL
+FROM (SELECT lm_fit(y, [x1, x2, x1 + x2]) AS m FROM ds1)
+----
+4	3	9	2.0579	0.1303	true
+
+# The aliased term keeps its name, so unnest still lists every term — R's
+# summary shows the dropped row too.
+query TTTT
+SELECT (u).term, printf('%.4f', (u).estimate), (u).std_error IS NULL, (u).p_value IS NULL
+FROM (SELECT unnest((lm_fit(y, [x1, x2, x1 + x2])).coefficients) AS u FROM ds1)
+ORDER BY (u).term
+----
+(Intercept)	10.1206	false	false
+x1	2.0579	false	false
+x2	-0.9787	false	false
+x3	NULL	true	true
+
+# cov keeps its full k² shape; every entry touching the aliased term is NULL.
+query TTTT
+SELECT len(m.cov), printf('%.4f', m.cov[1]), m.cov[4] IS NULL, m.cov[16] IS NULL
+FROM (SELECT lm_fit(y, [x1, x2, x1 + x2]) AS m FROM ds1)
+----
+16	4.3020	true	true
+
+# A dependent column in the middle aliases in place: [x1, 2·x1, x2] keeps
+# positions 1, 2 and 4, so the surviving coefficients are not a prefix.
+query TTTT
+SELECT m.rank, (m.coefficients[3]).estimate IS NULL,
+       printf('%.4f', (m.coefficients[2]).estimate),
+       printf('%.4f', (m.coefficients[4]).estimate)
+FROM (SELECT lm_fit(y, [x1, 2 * x1, x2]) AS m FROM ds1)
+----
+3	true	2.0579	-0.9787
+
+# HC1's finite-sample factor is n/(n−rank) = 12/9, so the deficient fit's
+# standard errors equal DS1's HC1 ones. A k-based 12/8 would differ.
+query TT
+SELECT printf('%.4f', (a.coefficients[2]).std_error),
+       printf('%.4f', (b.coefficients[2]).std_error)
+FROM (SELECT lm_fit(y, [x1, x2], 'HC1') AS a,
+             lm_fit(y, [x1, x2, x1 + x2], 'HC1') AS b FROM ds1)
+----
+0.1450	0.1450
+
+# Without an intercept, a design whose only column is zero has no independent
+# column at all, so there is nothing to estimate and the group stays NULL.
 query T
-SELECT lm_fit(y, [x1, x2]) FROM (VALUES
-    (1.0, 1.0, 2.0), (2.0, 2.0, 4.0), (3.0, 3.0, 6.0), (4.0, 4.0, 8.0)) t(y, x1, x2)
+SELECT lm_fit(y, [z], 'const', false) FROM (VALUES
+    (1.0, 0.0), (2.0, 0.0), (3.0, 0.0), (4.0, 0.0)) t(y, z)
 ----
 NULL
+
+# With an intercept the same zero predictor simply aliases, and the fit is the
+# intercept-only model: rank 1 of k = 2, estimate = mean(y).
+query TTT
+SELECT m.rank, m.k, printf('%.4f', (m.coefficients[1]).estimate)
+FROM (SELECT lm_fit(y, [z]) AS m FROM (VALUES
+    (1.0, 0.0), (2.0, 0.0), (3.0, 0.0), (4.0, 0.0)) t(y, z))
+----
+1	2	2.5000
 
 # ── Bad vcov → bind error ────────────────────────────────────────────────────
 statement error
@@ -329,3 +396,16 @@ query T
 SELECT (lm_fit(y, [x1])).cov FROM (SELECT 1.0 AS y, 2.0 AS x1)
 ----
 NULL
+
+# A rank-deficient CLUSTERED fit: DS4's design with x2 duplicated. CR1 scales
+# by [G/(G−1)]·[(N−1)/(N−rank)], so the deficient fit reproduces DS4's CR1
+# standard errors; a k-based factor would not.
+query TTT
+SELECT printf('%.4f', (a.coefficients[2]).std_error),
+       printf('%.4f', (b.coefficients[2]).std_error),
+       b.rank
+FROM (SELECT lm_fit(y, [x1, x2], 'CR1', grp) AS a,
+             lm_fit(y, [x1, x2, x2], 'CR1', grp) AS b FROM ds4)
+----
+0.0836	0.0836	3
+
