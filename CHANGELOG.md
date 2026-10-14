@@ -12,6 +12,20 @@ that name is preserved across releases for backward compatibility.
 
 ### Added
 
+- **`lin_hyp(L, beta, cov, sigma2, df)` — the general linear hypothesis
+  L·β = 0** (#20). One row of `L` per constraint, several rows for a joint
+  test. Returns the per-constraint estimates with their standard errors, t and
+  p, plus the joint test as a sum of squares, an F and a chi-square. It is
+  stateless — coefficients and covariance in, no data — so it works with any
+  fit, and it computes what SAS's CONTRAST and ESTIMATE compute, as well as
+  Type III sums of squares when the caller builds `L` to select a term's
+  columns. `df_num` is the rank of `L·cov·Lᵀ`, so redundant constraints count
+  once, matching statsmodels' `wald_test`. A hypothesis that touches a
+  rank-deficient fit's aliased coefficient is reported NULL, SAS's
+  "non-estimable", while one that avoids it is evaluated normally. Validated
+  against statsmodels' `t_test` and `wald_test`; the numerics live in the
+  DuckDB-free `src/include/lin_hyp.hpp`. Type I and II sums of squares need
+  nested refits and are not part of this function.
 - Kernel: `linalg::independent_columns(A, tol = 1e-7)` selects a maximal
   linearly independent column subset left to right (modified Gram–Schmidt
   with a second pass; plain loops, no Eigen). The earlier column of a

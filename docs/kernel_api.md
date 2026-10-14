@@ -141,6 +141,40 @@ Conventions:
 - **Failure is a value**: degenerate input (empty `x0`, `max_eval ≤ 0`) returns
   `converged = false` with `fx = NaN`, never throws.
 
+## `lin_hyp.hpp` — general linear hypothesis
+
+Tests `L·β = 0` for q constraints at once, given a fit's coefficients and their
+covariance. Header-only API over `linalg`; it does **not** depend on
+`lm_core.hpp`, so the same function serves any fit.
+
+```cpp
+LinHypResult lin_hyp(const linalg::Mat &L,          // q × k, one row per constraint
+                     const std::vector<double> &beta,
+                     const linalg::Mat &V,          // k × k covariance of beta
+                     double sigma2, double df);
+```
+
+| Symbol | Kind | Notes |
+| --- | --- | --- |
+| `LinHypResult` | struct | `ok`/`error`; `estimable`; per-row `estimate`/`std_error`/`t_statistic`/`p_value`; joint `ss`, `df_num`, `df_den`, `f_statistic`, `f_p_value`, `chisq`, `chisq_p_value` |
+
+Conventions worth knowing:
+
+- **Three outcomes, not two.** `ok = false` is misuse (a dimension mismatch, a
+  non-positive `df`). `ok = true` with `estimable = false` means the hypothesis
+  cannot be evaluated, and callers should report NULL. Only then is the rest of
+  the struct filled in.
+- **`df_num` is the rank of `L·V·Lᵀ`**, not `L`'s row count, so redundant
+  constraints count once. One `pinv` call yields both the pseudo-inverse and
+  that rank.
+- **Aliased coefficients do not spread.** A rank-deficient fit carries NaN in
+  the rows and columns of its dropped coefficients. A hypothesis putting
+  non-zero weight there is not estimable; one that avoids them is evaluated
+  normally, with those rows and columns zeroed in a working copy first, because
+  IEEE makes `0 · NaN = NaN`.
+- **`ss` = `chisq` · `sigma2`** is a sum of squares only under the classical
+  covariance; with a robust `V` the F and chi-square are a Wald test.
+
 ## Testing & validation
 
 All three layers are unit-tested directly, standalone (no DuckDB), against

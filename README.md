@@ -442,6 +442,57 @@ shared header-only linear-algebra kernel (`(X'X)⁻¹`, the robust sandwich),
 validated against statsmodels — see `test/cpp/test_lm_fit.cpp`. The bias-reduced
 CR2/CR3 cluster estimators are a planned follow-up.
 
+### General linear hypothesis (`lin_hyp`)
+
+`lin_hyp` tests **L·β = 0** against a fit you already have. One row of `L` per
+constraint, each as wide as `beta`; several rows means a joint test. It is
+stateless — it takes the coefficients and their covariance, not the data — so
+it works with any fit, and it is what SAS's CONTRAST and ESTIMATE compute.
+
+```sql
+-- Is x1's coefficient zero? (a Type III test of one term)
+SELECT (h).df_num, (h).f_statistic, (h).f_p_value
+FROM (SELECT lin_hyp([[0, 1, 0]],
+                     list_transform(m.coefficients, c -> c.estimate),
+                     m.cov, m.sigma * m.sigma, m.df_residual) AS h
+      FROM (SELECT lm_fit(y, [x1, x2]) AS m FROM ds1));
+--   df_num  f_statistic  f_p_value
+--   1       249.4064     7.21e-08
+
+-- A contrast: is x1 − x2 zero? The estimate comes back with its standard error.
+SELECT (h).estimates[1].estimate, (h).estimates[1].std_error
+FROM (SELECT lin_hyp([[0, 1, -1]], …) AS h FROM …);
+--   3.0366  0.3370
+```
+
+| Field | Type | Notes |
+| ----- | ---- | ----- |
+| `estimates` | `LIST<STRUCT>` | one element per row of `L`: `estimate`, `std_error`, `t_statistic`, `p_value` |
+| `ss` | `DOUBLE` | the hypothesis sum of squares, `chisq · sigma2` |
+| `df_num` | `BIGINT` | the rank of `L·cov·Lᵀ`, so redundant constraints count once |
+| `df_den` | `DOUBLE` | the `df` argument, echoed |
+| `f_statistic`, `f_p_value` | `DOUBLE` | referenced to F(`df_num`, `df_den`) |
+| `chisq`, `chisq_p_value` | `DOUBLE` | the Wald statistic, referenced to χ²(`df_num`) |
+
+Pass `cov` exactly as `lm_fit` returns it: flat, row-major, k² elements. `df`
+is a DOUBLE so a fractional denominator df fits; `lm_fit`'s `df_residual` casts
+in on its own.
+
+**`ss` is a sum of squares only when `cov` is the classical σ²(XᵀX)⁻¹.** With an
+HC or CR covariance the F and the chi-square are a Wald test — the same thing
+statsmodels' `wald_test` reports — and `ss` is not a partition of variance.
+
+The whole result is **NULL** when the hypothesis cannot be evaluated: when it
+puts weight on a coefficient the fit could not estimate (a rank-deficient fit's
+aliased terms, SAS's "non-estimable"), or when it carries no information at all.
+A hypothesis that merely avoids those aliased terms is fine. A dimension
+mismatch — an `L` row that is not as wide as `beta`, or a `cov` that is not k²
+long — raises instead.
+
+Type I and II sums of squares are not computable this way: they need nested
+refits and the term-to-column mapping. Only Type III reduces to a hypothesis on
+the full model, which is what this function tests.
+
 ### Multiple-testing correction (scalar)
 
 | Function                                | Description                                                                |
