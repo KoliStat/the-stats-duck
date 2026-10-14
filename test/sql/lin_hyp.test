@@ -114,6 +114,26 @@ SELECT lin_hyp(NULL, [1.0, 2.0], [1.0,0,0,1.0], 1.0, 9.0) IS NULL
 ----
 true
 
+# ── Multi-row chunk: the output-list offset walk ─────────────────────────────
+# Three rows in one chunk, with a different number of constraints each (one,
+# then two), and a non-estimable row in the middle (a NULL inside beta is the
+# simplest way to get one). A single-row file cannot tell a correct per-row
+# list-offset walk from a broken one; this is the only test with more than one
+# row in the chunk, so it is the one that would catch an offset bug.
+query TTTT
+SELECT grp, (h).df_num, len((h).estimates), printf('%.4f', (h).estimates[1].estimate)
+FROM (SELECT grp, lin_hyp(L, beta, cov, 1.0, 10.0) AS h
+      FROM (VALUES
+          (1, [[1.0, 0.0]],             [2.0, 5.0],  [1.0, 0.0, 0.0, 1.0]),
+          (2, [[1.0, 0.0]],             [1.0, NULL], [1.0, 0.0, 0.0, 1.0]),
+          (3, [[1.0, 0.0], [0.0, 1.0]], [3.0, 4.0],  [1.0, 0.0, 0.0, 1.0])
+      ) AS t(grp, L, beta, cov))
+ORDER BY grp
+----
+1	1	1	2.0000
+2	NULL	NULL	NULL
+3	2	2	3.0000
+
 # ── Misuse raises ───────────────────────────────────────────────────────────
 # An L row that is not as wide as beta. The wrapper checks each row's width
 # against beta before the kernel ever sees L, so this raises from the wrapper
@@ -146,3 +166,18 @@ statement error
 SELECT lin_hyp([[0, 1]], [1.0, 2.0], [1.0,0,0,1.0], 1.0, 0.0)
 ----
 df must be positive
+
+# A NULL row inside L — not a NULL element inside a row, but the row itself
+# missing. A NULL row carries no width, so it cannot be read as k NaNs
+# without inventing k: it is a malformed matrix, not a missing value, so it
+# raises rather than becoming NULL.
+statement error
+SELECT lin_hyp([[0, 1, 0], NULL], [1.0, 2.0, 3.0], [1.0,0,0, 0,1.0,0, 0,0,1.0], 1.0, 9.0)
+----
+NULL row
+
+# beta itself is empty.
+statement error
+SELECT lin_hyp([[0, 1]], [], [], 1.0, 9.0)
+----
+beta is empty
