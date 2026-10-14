@@ -55,10 +55,22 @@ static void check_rel(double a, double b, double rtol, const char *label, int li
 #define CHECK(cond) check((cond), #cond, __LINE__)
 #define CHECK_CLOSE(a, b, tol) check_close((a), (b), (tol), #a " ~= " #b, __LINE__)
 
-// Same bands as test_lm_fit.cpp, for the same reasons.
+// Same bands as test_lm_fit.cpp. The reason, which that file does not give and
+// docs/fitter_conventions.md asks new fitters to state: the bands are set by
+// how many digits the oracle value was transcribed with, not by how far this
+// implementation drifts. It agrees with statsmodels to about 1e-10 on F, so
+// 1e-3 absolute on an F of order 100 and 1e-2 relative on a p-value are both
+// far looser than needed; they would catch a real formula error and will not
+// fail on a compiler's last-bit difference or on a statsmodels release that
+// changes its printed digits.
 static const double TOL = 1e-6;    // estimates, standard errors
 static const double TOL_F = 1e-3;  // F statistics
 static const double RTOL_P = 1e-2; // p-values, relative
+// Chi-square p-values get a tighter band on purpose. The F and chi-square
+// references differ by only about 0.4% on the weak case below, so a 1e-2
+// relative band would not tell them apart, and telling them apart is the whole
+// point of asserting chisq_p_value at all.
+static const double RTOL_CHISQ_P = 1e-6;
 
 // Build a row-major Mat from a flat value list.
 static Mat mat(std::size_t r, std::size_t c, std::vector<double> vals) {
@@ -256,6 +268,149 @@ static void test_review_focus() {
 	}
 }
 
+// ───────────────── Scale invariance of the rank decision ───────────────────
+// Rescaling a predictor by s divides its coefficient and that row and column
+// of the covariance by s. The joint test of "both slopes are zero" is the same
+// hypothesis either way, so df_num and F must not move. They did: pinv decides
+// the numerical rank with a tolerance relative to C's largest singular value,
+// and C's diagonal holds the constraints' variances, so two constraints whose
+// variances were more than about 1e12 apart read as redundant. The joint test
+// then came back with df_num 1 and F 9.4662513 instead of 2 and 132.5324744.
+// See notes/engineering/2026-10-lin-hyp-rank-tolerance-and-scale.md.
+//
+// No new constants: the rescaled fit is derived from DS1's own beta and cov,
+// and the answer is DS1's own model F.
+static void test_scale_invariance() {
+	std::printf("scale_invariance (a change of units must not move df_num)\n");
+	const Mat L = mat(2, 3, {0, 1, 0, 0, 0, 1});
+
+	// x1 in thousands and x2 as a proportion: the variances of the two
+	// constraints end up 6e12 apart, which is an ordinary modelling choice.
+	const double scales[][2] = {{1.0, 1.0}, {1e3, 1e-3}, {1e6, 1.0}};
+	for (const auto &s : scales) {
+		const double f[3] = {1.0, s[0], s[1]};
+		std::vector<double> beta_s(3);
+		Mat cov_s(3, 3);
+		for (std::size_t i = 0; i < 3; i++) {
+			beta_s[i] = kBeta[i] / f[i];
+			for (std::size_t j = 0; j < 3; j++) {
+				cov_s(i, j) = kCov(i, j) / (f[i] * f[j]);
+			}
+		}
+		auto r = lin_hyp(L, beta_s, cov_s, kSigma2, kDf);
+		CHECK(r.ok && r.estimable);
+		CHECK(r.df_num == 2);
+		CHECK_CLOSE(r.f_statistic, 132.532474368046, TOL_F);
+		check_rel(r.f_p_value, 2.10741740745106e-07, RTOL_P, "invariance.f_p", __LINE__);
+	}
+}
+
+// ───────────────── chisq_p_value, against the oracle ───────────────────────
+static void test_chisq_p_value() {
+	std::printf("chisq_p_value (the chi-square reference, not the F one)\n");
+
+	// A hypothesis DS1 does not reject: beta1 + 2*beta2 is about 0.1. The
+	// strong cases above all have a chi-square tail below 1e-16, where
+	// `1 - CDF` returns exactly 0, so the golden has to come from a weak one.
+	// statsmodels wald_test(use_f=False), via gen_lin_hyp_fixtures.py.
+	{
+		auto r = lin_hyp(mat(1, 3, {0, 1, 2}), kBeta, kCov, kSigma2, kDf);
+		CHECK(r.ok && r.estimable);
+		CHECK(r.df_num == 1);
+		CHECK_CLOSE(r.chisq, 0.0235007235544264, TOL);
+		check_rel(r.chisq_p_value, 0.878162128767579, RTOL_CHISQ_P, "weak.chisq_p", __LINE__);
+		// The F reference gives 0.88154425571221 on the same statistic. The two
+		// are only 0.4% apart, which is why the band above is tight.
+		check_rel(r.f_p_value, 0.88154425571221, RTOL_P, "weak.f_p", __LINE__);
+	}
+
+	// df_num = 2, on a hand-built C. Every full-rank two-row hypothesis on
+	// DS1's slopes reproduces the model F, so DS1 has no weak q = 2 case; C = I
+	// with theta = (1, 1) gives W = 2 exactly. Oracle: scipy chi2.sf(2, 2).
+	{
+		auto r = lin_hyp(mat(2, 2, {1, 0, 0, 1}), {1.0, 1.0}, mat(2, 2, {1, 0, 0, 1}), 1.0, 9.0);
+		CHECK(r.ok && r.estimable);
+		CHECK(r.df_num == 2);
+		CHECK_CLOSE(r.chisq, 2.0, TOL);
+		check_rel(r.chisq_p_value, 0.367879441171442, RTOL_CHISQ_P, "identity.chisq_p", __LINE__);
+		// The same W read against df_den (9) would give 0.991467606628814. The
+		// assertion above is what keeps the chi-square reference on df_num.
+		CHECK(std::fabs(r.chisq_p_value - 0.991467606628814) > 0.1);
+	}
+
+	// The far tail underflows to exactly 0, because chisq_p_value is 1 − CDF
+	// and the tail is lost below about 1e-16. statsmodels reports 2.766e-58 for
+	// this one. Inherited from distributions.hpp, which lm_core shares, so it
+	// is pinned here rather than fixed; the README says so too.
+	{
+		auto r = lin_hyp(mat(2, 3, {0, 1, 0, 0, 0, 1}), kBeta, kCov, kSigma2, kDf);
+		CHECK(r.ok && r.estimable);
+		CHECK_CLOSE(r.chisq, 265.064948736093, TOL_F);
+		CHECK(r.chisq_p_value == 0.0);
+		CHECK(r.f_p_value > 0.0); // the F tail survives: 2.107e-07
+	}
+}
+
+// ───────────────── A supplied covariance that is not one ───────────────────
+// The kernel is a public API and the spec invites a hand-built covariance, so
+// the input is not always a positive semi-definite matrix. Each of these is a
+// data-shaped failure, so the answer is "not estimable" — a NULL result in SQL
+// — rather than a raise, which would abort a whole GROUP BY for one bad group.
+static void test_not_a_covariance() {
+	std::printf("not_a_covariance (indefinite, negative variance, asymmetric)\n");
+
+	// Indefinite with a positive diagonal: eigenvalues 3 and −1. The Wald
+	// statistic comes out negative, which is the proof.
+	{
+		auto r = lin_hyp(mat(2, 2, {1, 0, 0, 1}), {1.0, 0.0}, mat(2, 2, {1, 2, 2, 1}), 1.0, 9.0);
+		CHECK(r.ok);
+		CHECK(!r.estimable); // was chisq = ss = −0.333
+	}
+
+	// A negative variance on the diagonal. This is the dangerous one: it used
+	// to give df_num 2, chisq 3, F 1.5 and p 0.274, none of which looks wrong.
+	{
+		auto r = lin_hyp(mat(2, 2, {1, 0, 0, 1}), {1.0, 2.0}, mat(2, 2, {-1, 0, 0, 1}), 1.0, 9.0);
+		CHECK(r.ok);
+		CHECK(!r.estimable);
+	}
+
+	// A zero variance is NOT in the same class: a zero row of L legitimately
+	// produces one, so C(i, i) == 0 stays estimable (test_review_focus pins the
+	// surrounding behavior). Repeated here so the boundary is explicit.
+	{
+		auto r = lin_hyp(mat(2, 2, {1, 0, 0, 1}), {5.0, 1.0}, mat(2, 2, {0, 0, 0, 4}), 1.0, 9.0);
+		CHECK(r.ok && r.estimable);
+		CHECK(r.df_num == 1);
+	}
+
+	// An asymmetric cov. The quadratic form only has a meaning for the
+	// symmetric part, so C is symmetrized and the answer is the symmetrized
+	// one — deterministic, rather than whichever half the matrix product
+	// happened to favour. This used to report F = 0.55 for the asymmetric
+	// matrix and 0.6896 for its symmetrized form.
+	{
+		auto r = lin_hyp(mat(2, 2, {1, 0, 0, 1}), {1.0, 1.0}, mat(2, 2, {1, 0.9, 0, 1}), 1.0, 9.0);
+		auto sym = lin_hyp(mat(2, 2, {1, 0, 0, 1}), {1.0, 1.0}, mat(2, 2, {1, 0.45, 0.45, 1}), 1.0,
+		                   9.0);
+		CHECK(r.ok && r.estimable);
+		CHECK(sym.ok && sym.estimable);
+		CHECK_CLOSE(r.f_statistic, sym.f_statistic, 1e-12);
+		CHECK_CLOSE(r.f_statistic, 0.689655172413793, TOL);
+	}
+
+	// An off-diagonal NaN with finite diagonals — the case the design spec
+	// calls out by name and nothing reached before. It is not an aliased
+	// column, so the aliased-set logic does not see it; the non-finite check on
+	// C is what catches it.
+	{
+		const double nan = std::numeric_limits<double>::quiet_NaN();
+		auto r = lin_hyp(mat(1, 2, {1, 1}), {1.0, 2.0}, mat(2, 2, {1, nan, nan, 1}), 1.0, 9.0);
+		CHECK(r.ok);
+		CHECK(!r.estimable);
+	}
+}
+
 // ───────────────── Misuse paths ─────────────────────────────────────────────
 static void test_errors() {
 	std::printf("errors (dimensions, df, sigma2)\n");
@@ -284,6 +439,9 @@ int main() {
 	test_hc1();
 	test_aliased();
 	test_review_focus();
+	test_scale_invariance();
+	test_chisq_p_value();
+	test_not_a_covariance();
 	test_errors();
 
 	std::printf("\n%d checks, %d failures\n", g_checks, g_fail);

@@ -41,18 +41,67 @@ FROM (SELECT lin_hyp([[0, 1, -1]],
 3.0366	0.3370	81.1925
 
 # A joint test of both slopes reproduces the model's own F, and every row still
-# reports its own estimate.
-query TTTTT
+# reports its own estimate. Every remaining struct child is read here too —
+# `ss`, `f_p_value` and `chisq_p_value` — so a mis-indexed child write shows up
+# as a wrong number rather than passing unnoticed. `chisq_p_value` reads as
+# 0.0000 because the chi-square tail at W = 265 is about 1e-58, which `1 − CDF`
+# cannot represent; statsmodels reports 2.766e-58. See the README.
+query TTTTTTTT
 SELECT (h).df_num, len((h).estimates),
        printf('%.4f', (h).f_statistic),
        printf('%.4f', m.f_statistic),
-       printf('%.4f', (h).chisq)
+       printf('%.4f', (h).chisq),
+       printf('%.4f', (h).ss),
+       printf('%.3e', (h).f_p_value),
+       printf('%.4f', (h).chisq_p_value)
 FROM (SELECT lin_hyp([[0, 1, 0], [0, 0, 1]],
                      list_transform(m.coefficients, c -> c.estimate),
                      m.cov, m.sigma * m.sigma, m.df_residual) AS h, m
       FROM (SELECT lm_fit(y, [x1, x2]) AS m FROM ds1))
 ----
-2	2	132.5325	132.5325	265.0649
+2	2	132.5325	132.5325	265.0649	1978.4892	2.107e-07	0.0000
+
+# ── Finding 1: a change of units must not move the test ─────────────────────
+# One predictor in thousands and another as a proportion is an ordinary
+# modelling choice. It rescales the two constraints' variances 6e12 apart, and
+# pinv decides the numerical rank with a tolerance relative to C's largest
+# singular value, so the smaller constraint used to be read as redundant: this
+# query returned df_num 1 and F 9.4662513. It must give the same answer as the
+# unscaled fit above, which is also the model's own F.
+# See notes/engineering/2026-10-lin-hyp-rank-tolerance-and-scale.md.
+query TTTT
+SELECT (h).df_num, printf('%.4f', (h).f_statistic),
+       printf('%.4f', m.f_statistic), printf('%.3e', (h).f_p_value)
+FROM (SELECT lin_hyp([[0, 1, 0], [0, 0, 1]],
+                     list_transform(m.coefficients, c -> c.estimate),
+                     m.cov, m.sigma * m.sigma, m.df_residual) AS h, m
+      FROM (SELECT lm_fit(y, [x1 * 1e3, x2 * 1e-3]) AS m FROM ds1))
+----
+2	132.5325	132.5325	2.107e-07
+
+# The same, with one predictor rescaled by 1e6 and the other left alone.
+query TTTT
+SELECT (h).df_num, printf('%.4f', (h).f_statistic),
+       printf('%.4f', m.f_statistic), printf('%.3e', (h).f_p_value)
+FROM (SELECT lin_hyp([[0, 1, 0], [0, 0, 1]],
+                     list_transform(m.coefficients, c -> c.estimate),
+                     m.cov, m.sigma * m.sigma, m.df_residual) AS h, m
+      FROM (SELECT lm_fit(y, [x1 * 1e6, x2]) AS m FROM ds1))
+----
+2	132.5325	132.5325	2.107e-07
+
+# ── Finding 2: a cov that is not a covariance gives NULL, not a number ──────
+# A hand-built covariance is an invited use, so the input is not always
+# positive semi-definite. A negative variance on the diagonal, or an
+# indefinite matrix (eigenvalues 3 and −1, which gives a negative Wald
+# statistic), means the hypothesis cannot be evaluated. That is a data-shaped
+# failure, so the result is NULL for that row rather than an error that would
+# abort the whole query.
+query TT
+SELECT lin_hyp([[1.0, 0.0], [0.0, 1.0]], [1.0, 2.0], [-1.0,0,0,1.0], 1.0, 9.0) IS NULL,
+       lin_hyp([[1.0, 0.0], [0.0, 1.0]], [1.0, 0.0], [1.0,2.0,2.0,1.0], 1.0, 9.0) IS NULL
+----
+true	true
 
 # Redundant constraints reduce to their rank, so df_num is 1 and the test is
 # the contrast the two rows duplicate.
@@ -108,7 +157,9 @@ SELECT lin_hyp([[0, 1, 0]], [1.0, NULL, 3.0], [1.0,0,0, 0,1.0,0, 0,0,1.0], 1.0, 
 ----
 true	true	true
 
-# A top-level NULL argument gives a NULL result through default null handling.
+# A top-level NULL argument gives a NULL result. DuckDB does not mask runtime
+# NULLs for a scalar function, so this comes from the wrapper's own per-argument
+# validity check, not from the declaration.
 query T
 SELECT lin_hyp(NULL, [1.0, 2.0], [1.0,0,0,1.0], 1.0, 9.0) IS NULL
 ----

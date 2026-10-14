@@ -26,9 +26,10 @@ namespace statsduck {
 //   ok = false                  → misuse; `error` says what. Callers raise.
 //   ok = true, estimable = false → the hypothesis cannot be evaluated (it puts
 //                                  weight on a coefficient the fit could not
-//                                  estimate, or it carries no information).
-//                                  Callers report SQL NULL, per the
-//                                  failure-is-a-value rule in
+//                                  estimate, it carries no information, or the
+//                                  supplied covariance is not a covariance —
+//                                  see below). Callers report SQL NULL, per
+//                                  the failure-is-a-value rule in
 //                                  docs/fitter_conventions.md.
 //   ok = true, estimable = true  → the full result below.
 struct LinHypResult {
@@ -62,6 +63,16 @@ struct LinHypResult {
 // coefficients. A hypothesis that puts no weight there is still estimable, so
 // those rows and columns are zeroed in a working copy before the product rather
 // than being allowed to poison it (IEEE makes 0 · NaN = NaN).
+//
+// V need not come from lm_fit, so it is not assumed to be a covariance. C is
+// symmetrized, because only the symmetric part has a meaning in a quadratic
+// form, and then scaled to unit diagonal before the pseudo-inverse, because
+// pinv's rank tolerance is relative to the largest singular value and C's
+// diagonal holds variances: without the scaling a change of units alone can
+// move the reported rank. A strictly negative C_ii, or a negative Wald
+// statistic, means V is not a covariance and the result is not estimable;
+// C_ii = 0 stays estimable, since a zero row of L produces one. See
+// notes/engineering/2026-10-lin-hyp-rank-tolerance-and-scale.md.
 LinHypResult lin_hyp(const linalg::Mat &L, const std::vector<double> &beta, const linalg::Mat &V,
                      double sigma2, double df);
 

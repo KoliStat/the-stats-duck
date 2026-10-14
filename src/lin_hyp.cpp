@@ -100,24 +100,73 @@ LinHypResult lin_hyp(const linalg::Mat &L, const std::vector<double> &beta, cons
 		}
 	}
 
+	// A caller may hand us something that is not a covariance: the kernel is a
+	// public API and the covariance may be hand-built. A strictly negative
+	// variance on C's diagonal is proof that it is not one. That is a
+	// data-shaped failure, so the hypothesis is reported not estimable rather
+	// than raising, which would abort a whole GROUP BY for one bad group. A
+	// zero diagonal entry stays estimable: a zero row of L produces one.
+	for (std::size_t i = 0; i < q; i++) {
+		if (C(i, i) < 0.0) {
+			return r;
+		}
+	}
+
+	// Scale C to unit diagonal before pinv. pinv's rank tolerance is relative
+	// to the largest singular value, and C's diagonal holds the constraints'
+	// variances, so without this a constraint whose variance is about 1e12
+	// smaller than another's is read as redundant and dropped from the test.
+	// A change of units alone reaches that, and it moves both df_num and the F
+	// statistic with no signal to the caller. See
+	// notes/engineering/2026-10-lin-hyp-rank-tolerance-and-scale.md.
+	//
+	// Symmetrize in the same pass. The quadratic form only has a meaning for
+	// the symmetric part, and the matrix product leaves a ~1e-17 asymmetry
+	// behind even for a symmetric V.
+	//
+	// D = diag(1/√C_ii) makes D·C·D a correlation matrix, so
+	// C⁻ = D·(D·C·D)⁻·D and W is unchanged when C has full rank.
+	std::vector<double> d(q, 1.0);
+	for (std::size_t i = 0; i < q; i++) {
+		if (C(i, i) > 0.0) {
+			d[i] = 1.0 / std::sqrt(C(i, i));
+		}
+	}
+	linalg::Mat Cs(q, q);
+	for (std::size_t i = 0; i < q; i++) {
+		for (std::size_t j = 0; j < q; j++) {
+			Cs(i, j) = 0.5 * (C(i, j) + C(j, i)) * d[i] * d[j];
+		}
+	}
+	std::vector<double> theta_s(q);
+	for (std::size_t i = 0; i < q; i++) {
+		theta_s[i] = theta[i] * d[i];
+	}
+
 	// pinv returns the pseudo-inverse together with the numerical rank, so one
 	// call covers both the full-rank and the redundant case and df_num is the
 	// rank rather than the row count. statsmodels' wald_test agrees: given a
 	// redundant hypothesis it reports the rank too.
-	const linalg::Pinv pi = linalg::pinv(C);
+	const linalg::Pinv pi = linalg::pinv(Cs);
 	const std::size_t rank = pi.rank > 0 ? static_cast<std::size_t>(pi.rank) : 0;
 	if (rank == 0) {
 		return r; // a hypothesis with no information, such as a zero L
 	}
-	r.estimable = true;
-	r.df_num = rank;
 
-	// The Wald statistic W = θᵀ C⁻ θ.
-	const std::vector<double> c_inv_theta = linalg::matvec(pi.value, theta);
+	// The Wald statistic W = θᵀ C⁻ θ, computed on the scaled matrix.
+	const std::vector<double> c_inv_theta = linalg::matvec(pi.value, theta_s);
 	double w = 0.0;
 	for (std::size_t i = 0; i < q; i++) {
-		w += theta[i] * c_inv_theta[i];
+		w += theta_s[i] * c_inv_theta[i];
 	}
+	// A negative W is the other proof that the supplied covariance is not one:
+	// an indefinite C can pass the diagonal check and still give a negative
+	// quadratic form. Not estimable, for the same reason as above.
+	if (!(w >= 0.0)) {
+		return r;
+	}
+	r.estimable = true;
+	r.df_num = rank;
 	const double rank_d = static_cast<double>(rank);
 	r.chisq = w;
 	r.chisq_p_value = 1.0 - stats_duck::ChiSquareCDF(w, rank_d);
