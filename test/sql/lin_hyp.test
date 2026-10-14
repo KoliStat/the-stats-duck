@@ -1,0 +1,148 @@
+# name: test/sql/lin_hyp.test
+# description: lin_hyp — the general linear hypothesis L·β = 0 against a fit
+# group: [stats_duck]
+
+require stats_duck
+
+# DS1, the dataset test/cpp/test_lm_fit.cpp and test/sql/lm_fit_agg.test use.
+statement ok
+CREATE TABLE ds1 AS SELECT * FROM (VALUES
+    (9.0, 1.0, 5.0), (8.0, 2.0, 3.0), (7.0, 3.0, 8.0), (14.0, 4.0, 2.0),
+    (12.0, 5.0, 7.0), (20.0, 6.0, 4.0), (15.0, 7.0, 9.0), (28.0, 8.0, 1.0),
+    (22.0, 9.0, 6.0), (31.0, 10.0, 3.0), (29.0, 11.0, 8.0), (55.0, 25.0, 4.0)
+) AS t(y, x1, x2);
+
+# The documented call: a Type III test on x1, straight off an lm_fit result.
+# The estimate and standard error are x1's own, which is what a one-row
+# hypothesis on a single coefficient means.
+query TTTTTT
+SELECT (h).df_num, printf('%.1f', (h).df_den),
+       printf('%.4f', (h).estimates[1].estimate),
+       printf('%.4f', (h).estimates[1].std_error),
+       printf('%.4f', (h).estimates[1].t_statistic),
+       printf('%.4f', (h).f_statistic)
+FROM (SELECT lin_hyp([[0, 1, 0]],
+                     list_transform(m.coefficients, c -> c.estimate),
+                     m.cov, m.sigma * m.sigma, m.df_residual) AS h
+      FROM (SELECT lm_fit(y, [x1, x2]) AS m FROM ds1))
+----
+1	9.0	2.0579	0.1303	15.7926	249.4064
+
+# A contrast, SAS's ESTIMATE: x1 − x2 with its own standard error.
+query TTT
+SELECT printf('%.4f', (h).estimates[1].estimate),
+       printf('%.4f', (h).estimates[1].std_error),
+       printf('%.4f', (h).f_statistic)
+FROM (SELECT lin_hyp([[0, 1, -1]],
+                     list_transform(m.coefficients, c -> c.estimate),
+                     m.cov, m.sigma * m.sigma, m.df_residual) AS h
+      FROM (SELECT lm_fit(y, [x1, x2]) AS m FROM ds1))
+----
+3.0366	0.3370	81.1925
+
+# A joint test of both slopes reproduces the model's own F, and every row still
+# reports its own estimate.
+query TTTTT
+SELECT (h).df_num, len((h).estimates),
+       printf('%.4f', (h).f_statistic),
+       printf('%.4f', m.f_statistic),
+       printf('%.4f', (h).chisq)
+FROM (SELECT lin_hyp([[0, 1, 0], [0, 0, 1]],
+                     list_transform(m.coefficients, c -> c.estimate),
+                     m.cov, m.sigma * m.sigma, m.df_residual) AS h, m
+      FROM (SELECT lm_fit(y, [x1, x2]) AS m FROM ds1))
+----
+2	2	132.5325	132.5325	265.0649
+
+# Redundant constraints reduce to their rank, so df_num is 1 and the test is
+# the contrast the two rows duplicate.
+query TT
+SELECT (h).df_num, printf('%.4f', (h).f_statistic)
+FROM (SELECT lin_hyp([[0, 1, -1], [0, -1, 1]],
+                     list_transform(m.coefficients, c -> c.estimate),
+                     m.cov, m.sigma * m.sigma, m.df_residual) AS h
+      FROM (SELECT lm_fit(y, [x1, x2]) AS m FROM ds1))
+----
+1	81.1925
+
+# A robust covariance carries through: the HC1 standard error of x1.
+query TT
+SELECT printf('%.4f', (h).estimates[1].std_error), printf('%.4f', (h).f_statistic)
+FROM (SELECT lin_hyp([[0, 1, 0]],
+                     list_transform(m.coefficients, c -> c.estimate),
+                     m.cov, m.sigma * m.sigma, m.df_residual) AS h
+      FROM (SELECT lm_fit(y, [x1, x2], 'HC1') AS m FROM ds1))
+----
+0.1450	201.5620
+
+# ── Rank-deficient fits (#36) ────────────────────────────────────────────────
+# x3 = x1 + x2 is dropped, so its coefficient and its row and column of cov are
+# NULL. A hypothesis ON the aliased term is not estimable, so the whole result
+# is NULL.
+query T
+SELECT lin_hyp([[0, 0, 0, 1]],
+               list_transform(m.coefficients, c -> c.estimate),
+               m.cov, m.sigma * m.sigma, m.df_residual)
+FROM (SELECT lm_fit(y, [x1, x2, x1 + x2]) AS m FROM ds1)
+----
+NULL
+
+# A hypothesis that avoids the aliased term is still estimable, and gives the
+# same answer as the full-rank fit — 0 · NULL must not poison the product.
+query TT
+SELECT (h).df_num, printf('%.4f', (h).estimates[1].estimate)
+FROM (SELECT lin_hyp([[0, 1, 0, 0]],
+                     list_transform(m.coefficients, c -> c.estimate),
+                     m.cov, m.sigma * m.sigma, m.df_residual) AS h
+      FROM (SELECT lm_fit(y, [x1, x2, x1 + x2]) AS m FROM ds1))
+----
+1	2.0579
+
+# ── Review Focus: a NULL element inside a list argument ──────────────────────
+# NULL is read as NaN, so the hypothesis is not estimable and the result is
+# NULL rather than a garbage number.
+query TTT
+SELECT lin_hyp([[0, 1, 0]], [1.0, NULL, 3.0], [1.0,0,0, 0,1.0,0, 0,0,1.0], 1.0, 9.0) IS NULL,
+       lin_hyp([[0, 1, 0]], [1.0, 2.0, 3.0], [1.0,0,0, 0,NULL,0, 0,0,1.0], 1.0, 9.0) IS NULL,
+       lin_hyp([[0, NULL, 0]], [1.0, 2.0, 3.0], [1.0,0,0, 0,1.0,0, 0,0,1.0], 1.0, 9.0) IS NULL
+----
+true	true	true
+
+# A top-level NULL argument gives a NULL result through default null handling.
+query T
+SELECT lin_hyp(NULL, [1.0, 2.0], [1.0,0,0,1.0], 1.0, 9.0) IS NULL
+----
+true
+
+# ── Misuse raises ───────────────────────────────────────────────────────────
+# An L row that is not as wide as beta. The wrapper checks each row's width
+# against beta before the kernel ever sees L, so this raises from the wrapper
+# itself rather than the kernel's own L.cols-vs-k check.
+statement error
+SELECT lin_hyp([[0, 1]], [1.0, 2.0, 3.0], [1.0,0,0, 0,1.0,0, 0,0,1.0], 1.0, 9.0)
+----
+same width as beta
+
+# A cov whose length is not k².
+statement error
+SELECT lin_hyp([[0, 1, 0]], [1.0, 2.0, 3.0], [1.0, 0.0, 0.0, 1.0], 1.0, 9.0)
+----
+covariance
+
+# A ragged L.
+statement error
+SELECT lin_hyp([[0, 1, 0], [0, 1]], [1.0, 2.0, 3.0], [1.0,0,0, 0,1.0,0, 0,0,1.0], 1.0, 9.0)
+----
+same width
+
+# An empty L.
+statement error
+SELECT lin_hyp([], [1.0, 2.0], [1.0,0,0,1.0], 1.0, 9.0)
+----
+no rows
+
+# A non-positive df.
+statement error
+SELECT lin_hyp([[0, 1]], [1.0, 2.0], [1.0,0,0,1.0], 1.0, 0.0)
+----
+df must be positive
