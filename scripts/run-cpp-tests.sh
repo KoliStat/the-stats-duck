@@ -6,6 +6,7 @@
 # no extension build:
 #   - linalg kernel        (Epic 0.1): test_linalg.cpp + linalg.cpp
 #   - lm_fit regression core (Epic 1.1): test_lm_fit.cpp + lm_core.cpp + linalg.cpp
+#   lin_hyp general linear hypothesis (#20): test_lin_hyp.cpp + lin_hyp.cpp + linalg.cpp
 #   - optimize kernel      (Nelder-Mead): test_optimize.cpp (header-only)
 # The first two link Eigen (via linalg.cpp); lm_core also pulls in the
 # header-only distributions.hpp. Each suite returns 0 on all-pass.
@@ -50,6 +51,11 @@ build_and_run test_linalg \
 build_and_run test_lm_fit \
   "$ROOT/test/cpp/test_lm_fit.cpp" \
   "$ROOT/src/lm_core.cpp" \
+  "$ROOT/src/linalg.cpp"
+
+build_and_run test_lin_hyp \
+  "$ROOT/test/cpp/test_lin_hyp.cpp" \
+  "$ROOT/src/lin_hyp.cpp" \
   "$ROOT/src/linalg.cpp"
 
 build_and_run test_optimize \
