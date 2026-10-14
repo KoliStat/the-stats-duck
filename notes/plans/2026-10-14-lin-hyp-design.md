@@ -117,13 +117,29 @@ inside every list argument; that is not worth its weight until a caller asks.
 
 Three outcomes, distinguished because SQL must treat them differently.
 
-**Not estimable → NULL STRUCT.** If any element of θ or C is not finite, the
-hypothesis cannot be evaluated and the whole STRUCT is NULL. This is SAS's
-"non-estimable", and it is the case that matters most in practice now that #36
-has landed: a rank-deficient fit carries NaN in the aliased rows and columns of
-`cov`, so an `L` touching an aliased coefficient lands here. A fully zero `L`
-(rank(C) = 0) is also reported as not estimable. Per the fitter standard, a
-data-shaped failure is a value, never an exception.
+**Not estimable → NULL STRUCT.** If the hypothesis cannot be evaluated, the
+whole STRUCT is NULL. This is SAS's "non-estimable", and per the fitter standard
+a data-shaped failure is a value, never an exception. Three cases reach it: an
+`L` that puts non-zero weight on a coefficient the fit could not estimate, a
+non-finite entry surviving in θ or C for any other reason, and a fully zero `L`
+(rank(C) = 0, a hypothesis carrying no information).
+
+The first case needs care, and it is the one that matters in practice now that
+#36 has landed. A rank-deficient fit carries NaN in the rows and columns of its
+aliased coefficients. A hypothesis that puts **no** weight on an aliased
+coefficient is still perfectly estimable — testing x1 in a fit where x3 was
+dropped is an ordinary test — but IEEE arithmetic makes `0 · NaN = NaN`, so a
+naive `L·V·Lᵀ` would poison every such product and report the whole
+rank-deficient fit untestable. So the aliased set is identified first, as
+`{j : V(j,j) is not finite}`, and:
+
+- if any `L(i,j) ≠ 0` for an aliased j, the hypothesis is not estimable;
+- otherwise those rows and columns of `V`, and those entries of `β`, are zeroed
+  in a working copy before the product. They carry zero weight by construction,
+  so zeroing changes no result and keeps the arithmetic finite.
+
+θ and C are then checked for non-finite entries anyway, which catches a NaN
+arriving from anywhere else, such as an off-diagonal NaN with finite diagonals.
 
 **NULL list elements are read as NaN**, so they reach the same check and produce
 a NULL result. One rule covers both, with no separate validity handling.
