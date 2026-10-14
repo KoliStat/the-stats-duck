@@ -116,6 +116,12 @@ static void LinHypExec(DataChunk &args, ExpressionState &, Vector &result) {
 		const auto cov_idx = cov_fmt.sel->get_index(i);
 		const auto s2_idx = s2_fmt.sel->get_index(i);
 		const auto df_idx = df_fmt.sel->get_index(i);
+		// This check is what produces the NULL result for a NULL argument, and
+		// it must not be removed. DuckDB does not mask runtime NULLs for a
+		// scalar function: the default null handling on the declaration only
+		// lets the binder fold a NULL that is constant at bind time. A NULL
+		// arriving in a column still reaches the executor, so every argument
+		// is tested per row here.
 		if (!l_fmt.validity.RowIsValid(l_idx) || !beta_fmt.validity.RowIsValid(beta_idx) ||
 		    !cov_fmt.validity.RowIsValid(cov_idx) || !s2_fmt.validity.RowIsValid(s2_idx) ||
 		    !df_fmt.validity.RowIsValid(df_idx)) {

@@ -87,12 +87,41 @@ With θ = `L·β` and C = `L·V·Lᵀ` (q × q, the covariance of θ):
 - `chisq_p_value` from χ²(`df_num`);
 - `ss` = W · `sigma2`.
 
-**C is inverted with `pinv`, always, on one code path.** `linalg::pinv` returns
-the pseudo-inverse together with the numerical rank, so a single call yields both
-C⁻ and `df_num`, and redundant constraints need no special case. For a full-rank
-C the pseudo-inverse is the inverse, so nothing is lost. `inv_spd` is
-deliberately unused here: a second path would have to be tested for no gain at
-these sizes.
+**C is equilibrated, then inverted with `pinv`, always, on one code path.**
+`linalg::pinv` returns the pseudo-inverse together with the numerical rank, so a
+single call yields both C⁻ and `df_num`, and redundant constraints need no
+special case. For a full-rank C the pseudo-inverse is the inverse, so nothing is
+lost. `inv_spd` is deliberately unused here: a second path would have to be
+tested for no gain at these sizes.
+
+The equilibration is not optional, and this spec got it wrong first: the
+sentence above originally said "inverted with `pinv`, always", and said nothing
+about conditioning. `linalg::pinv` decides the numerical rank by comparing each
+singular value against `1e-12 · σ_max`, a tolerance relative to the *largest*
+singular value. C's diagonal holds the constraints' variances, so two
+constraints whose variances are more than about 1e12 apart — standard errors
+more than about 1e6 apart — make a genuinely full-rank C look rank-deficient. A
+real direction is then dropped, and both `df_num` and the F statistic come back
+wrong with nothing to tell the caller. A change of units alone reaches that: on
+DS1 the joint test of both slopes gives `df_num` 2 and F 132.5324744, and the
+same test on `y ~ x1·1e3 + x2·1e-3` gave `df_num` 1 and F 9.4662513. So, before
+the `pinv` call, with D = diag(1/√C_ii):
+
+- C is symmetrized — only the symmetric part has a meaning in a quadratic form,
+  and the matrix product leaves a ~1e-17 asymmetry behind anyway;
+- C is scaled to unit diagonal, giving a correlation matrix D·C·D, and
+  C⁻ = D·(D·C·D)⁻·D, which is exact when C has full rank;
+- θ is scaled to match, so W = (Dθ)ᵀ(D·C·D)⁻(Dθ).
+
+Both the rank and W are then invariant to a per-row rescaling of `L`. Where
+C_ii ≤ 0 the scale factor is left at 1, so a zero row of `L` still behaves: that
+row and column of C are zero, and `pinv` drops the direction as it should. The
+per-row `std_error` keeps reading the **unscaled** C_ii, because √C_ii is the
+reported standard error of that constraint.
+
+**`emmeans` (#21) reaches for the same `pinv` on the same kind of matrix and
+needs the same step.** The postmortem is
+`notes/engineering/2026-10-lin-hyp-rank-tolerance-and-scale.md`.
 
 This matches the oracle, verified rather than assumed (probe run 2026-10-14 on
 DS1): statsmodels' `wald_test` given the redundant `L` = `[[0,1,-1],[0,-1,1]]`
@@ -119,10 +148,11 @@ Three outcomes, distinguished because SQL must treat them differently.
 
 **Not estimable → NULL STRUCT.** If the hypothesis cannot be evaluated, the
 whole STRUCT is NULL. This is SAS's "non-estimable", and per the fitter standard
-a data-shaped failure is a value, never an exception. Three cases reach it: an
+a data-shaped failure is a value, never an exception. Five cases reach it: an
 `L` that puts non-zero weight on a coefficient the fit could not estimate, a
-non-finite entry surviving in θ or C for any other reason, and a fully zero `L`
-(rank(C) = 0, a hypothesis carrying no information).
+non-finite entry surviving in θ or C for any other reason, a fully zero `L`
+(rank(C) = 0, a hypothesis carrying no information), a strictly negative C_ii,
+and a negative Wald statistic W.
 
 The first case needs care, and it is the one that matters in practice now that
 #36 has landed. A rank-deficient fit carries NaN in the rows and columns of its
@@ -141,6 +171,25 @@ rank-deficient fit untestable. So the aliased set is identified first, as
 θ and C are then checked for non-finite entries anyway, which catches a NaN
 arriving from anywhere else, such as an off-diagonal NaN with finite diagonals.
 
+**A `cov` that is not a covariance is also not estimable.** This spec invites a
+hand-built covariance and the kernel is a public API a sibling repository can
+consume, so the input is not always `lm_fit`'s positive semi-definite output.
+Two guards, in the same spirit as the non-finite rule above:
+
+- a strictly negative C_ii is a negative variance, so the hypothesis cannot be
+  evaluated. C_ii = 0 stays estimable: a zero row of `L` legitimately produces
+  one;
+- a negative W is the other proof. An indefinite C can pass the diagonal check
+  and still give a negative quadratic form. `cov` = [[−1,0],[0,1]] with `L` = I
+  and `beta` = [1,2] used to report `df_num` 2, `chisq` 3, F 1.5 and p 0.274 —
+  nothing in that output looks wrong, and it came from a negative variance.
+
+Neither raises. By the taxonomy here "this is not a covariance" is data-shaped,
+and raising would abort a whole `GROUP BY` for one bad group. An asymmetric
+`cov` is not a third case: the symmetrization described under Numerics means the
+symmetric part is what is tested, deterministically, rather than whichever half
+the matrix product happened to favour.
+
 **NULL list elements are read as NaN**, so they reach the same check and produce
 a NULL result. One rule covers both, with no separate validity handling.
 
@@ -151,8 +200,12 @@ only knowable per row at execution time, so this cannot be a bind-time error;
 that is the one place this function departs from the standard's
 "misuse is a bind-time error", and the reason is recorded here.
 
-A top-level NULL argument yields a NULL result through DuckDB's default null
-handling; the function does not declare `SPECIAL_HANDLING`.
+A top-level NULL argument yields a NULL result, but **not** through DuckDB's
+default null handling: that only lets the binder fold a NULL which is constant
+at bind time. A NULL arriving in a column still reaches the executor, so the
+wrapper tests every argument's validity per row and skips the row. The function
+does not declare `SPECIAL_HANDLING`, and that per-row check is what produces the
+NULL; removing it would read whatever the invalid slot happens to hold.
 
 ## Structure
 
@@ -195,10 +248,12 @@ target compiling `test_lin_hyp.cpp` + `lin_hyp.cpp` + `linalg.cpp`.
 
 ## Validation
 
-statsmodels is the oracle and has exactly these two calls:
-`OLSResults.t_test(R)` for the per-row table and
-`OLSResults.wald_test(R, use_f=True)` for the joint test. The generator runs
-offline in a throwaway virtualenv and is never a build or CI dependency.
+statsmodels is the oracle and has exactly these three calls:
+`OLSResults.t_test(R)` for the per-row table,
+`OLSResults.wald_test(R, use_f=True)` for the joint F and
+`OLSResults.wald_test(R, use_f=False)` for the same W read against chi-square,
+which is where `chisq_p_value`'s golden comes from. The generator runs offline
+in a throwaway virtualenv and is never a build or CI dependency.
 
 Fixtures, all on DS1 (`test/cpp/test_lm_fit.cpp`), whose fit is already validated
 so only the hypothesis layer is under test:
@@ -210,6 +265,7 @@ so only the hypothesis layer is under test:
 | joint | `[[0,1,0],[0,0,1]]` | q = 2; spanning all slopes must reproduce the model F | F = 132.5324744, which **is DS1's existing `f_statistic` golden** |
 | redundant | `[[0,1,-1],[0,-1,1]]` | `df_num` = 1 from the rank of C, not 2 | F = 81.19250894, equal to the single contrast |
 | robust | `[[0,1,0]]` with the HC1 covariance | the sandwich carries through unchanged | F = 201.5619805 |
+| weak | `[[0,1,2]]` | `chisq_p_value` against the chi-square oracle. Every case above has a chi-square tail below 1e-16, where `1 − CDF` returns 0, so the golden needs a hypothesis the data does not reject | `chisq` = 0.02350072355, `chisq_p_value` = 0.8781621288 |
 
 Two of these tie back to numbers already in `test/cpp/test_lm_fit.cpp`, which is
 deliberate: if the hypothesis layer is right, a single-coefficient test must
@@ -218,16 +274,24 @@ spanning every slope must reproduce the model F. Those two cases need no new
 constants at all.
 
 Generator self-checks, asserted on every run so a statsmodels upgrade that moved
-a convention fails loudly: `chisq` = `f_statistic` · `df_num`; for q = 1 the
-joint F equals t²; and for the classical covariance `ss` = `chisq` · σ².
+a convention fails loudly: `chisq` = `f_statistic` · `df_num`; the chi-square
+call reports the same W the F call scales; for q = 1 the joint F equals t²; for
+the classical covariance `ss` = `chisq` · σ²; and rescaling a predictor by 1e3
+or 1e6 moves neither `df_num` nor the joint F, which makes the invariance an
+oracle fact rather than our own claim.
 
 C++ tests add the structural cases a numeric oracle cannot express: a `cov`
-carrying NaN in an aliased row is not estimable; a ragged `L` and a mis-sized
-`cov` are errors; a zero `L` is not estimable.
+carrying NaN in an aliased row is not estimable; an off-diagonal NaN with finite
+diagonals is not estimable; a ragged `L` and a mis-sized `cov` are errors; a
+zero `L` is not estimable; a negative variance, an indefinite `cov` and an
+asymmetric `cov` behave as the failure section says; and the joint test is
+unchanged when the predictors are rescaled 1e3 and 1e-3.
 
 SQL tests cover the worked call above against a real `lm_fit` result, the
 aliased-coefficient NULL (using a collinear design, which fits since #36 — this
-doubles as an integration test of the two features), and one error case.
+doubles as an integration test of the two features), one error case, every field
+of the result STRUCT read at least once, and the rescaled joint test through
+`lm_fit` — which is the path the scale bug was found on.
 
 ## Documentation
 

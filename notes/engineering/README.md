@@ -36,6 +36,16 @@ that has been written down than to re-derive it.
   `LIST<STRUCT>` aggregate output, and why aggregates take positional constants
   (not `:=` named params) — which is what makes its coefficients by-position.
 
+- [`2026-10-lin-hyp-rank-tolerance-and-scale.md`](2026-10-lin-hyp-rank-tolerance-and-scale.md)
+  — `lin_hyp`'s joint test reported `df_num` 1 instead of 2, and an F of 9.47
+  instead of 132.53, when one predictor was rescaled by 1e3 and another by
+  1e-3. `linalg::pinv` decides the numerical rank against `1e-12 · σ_max`, and
+  the matrix it was given carries variances on its diagonal, so widely
+  different constraint scales read as redundant. Fix: equilibrate C by its
+  diagonal first, `C⁻ = D·(D·C·D)⁻·D`. The design spec had mandated the
+  unconditioned call. Applies to any kernel that inverts a covariance with
+  `pinv`, `emmeans` (#21) included.
+
 - [`2026-06-duckdb-version-must-match-duckdb-wasm.md`](2026-06-duckdb-version-must-match-duckdb-wasm.md)
   — `table_one()` crashed in `@duckdb/duckdb-wasm` with `r/t is not a function`.
   Overturned two hypotheses (the DuckDB version retarget and the `-sWASM_BIGINT`

@@ -169,6 +169,19 @@ Conventions worth knowing:
 - **`df_num` is the rank of `L·V·Lᵀ`**, not `L`'s row count, so redundant
   constraints count once. One `pinv` call yields both the pseudo-inverse and
   that rank.
+- **C is scaled to unit diagonal before `pinv`, and symmetrized.** `pinv`
+  decides the numerical rank against a tolerance relative to the largest
+  singular value, and C's diagonal holds the constraints' variances, so
+  without the scaling two constraints whose variances are more than about
+  1e12 apart read as redundant — a change of units is enough to reach that.
+  With `D = diag(1/√C_ii)`, `C⁻ = D·(D·C·D)⁻·D`, which leaves the Wald
+  statistic unchanged when C has full rank. Any kernel that inverts a
+  covariance with `pinv` needs the same step.
+- **A supplied covariance that is not one gives `estimable = false`.** A
+  strictly negative `C_ii`, or a negative Wald statistic, means the input is
+  not a covariance. That is a data-shaped failure, so it is a NULL result
+  rather than an error. `C_ii = 0` stays estimable: a zero row of `L`
+  produces one.
 - **Aliased coefficients do not spread.** A rank-deficient fit carries NaN in
   the rows and columns of its dropped coefficients. A hypothesis putting
   non-zero weight there is not estimable; one that avoids them is evaluated
@@ -179,8 +192,8 @@ Conventions worth knowing:
 
 ## Testing & validation
 
-All three layers are unit-tested directly, standalone (no DuckDB), against
+All four layers are unit-tested directly, standalone (no DuckDB), against
 golden values — `test/cpp/test_linalg.cpp`, `test/cpp/test_lm_fit.cpp`
-(statsmodels oracle), and `test/cpp/test_optimize.cpp` (classic optimization
-test functions). Build and run them with `scripts/run-cpp-tests.sh` (or
-`make test_cpp`).
+(statsmodels oracle), `test/cpp/test_lin_hyp.cpp` (statsmodels oracle), and
+`test/cpp/test_optimize.cpp` (classic optimization test functions). Build and
+run them with `scripts/run-cpp-tests.sh` (or `make test_cpp`).

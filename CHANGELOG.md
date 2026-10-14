@@ -22,9 +22,14 @@ that name is preserved across releases for backward compatibility.
   columns. `df_num` is the rank of `L·cov·Lᵀ`, so redundant constraints count
   once, matching statsmodels' `wald_test`. A hypothesis that touches a
   rank-deficient fit's aliased coefficient is reported NULL, SAS's
-  "non-estimable", while one that avoids it is evaluated normally. Validated
-  against statsmodels' `t_test` and `wald_test`; the API boundary is the
-  DuckDB-free header `src/include/lin_hyp.hpp`, with implementation in
+  "non-estimable", while one that avoids it is evaluated normally, and so is a
+  `cov` that is not a covariance — a negative variance or an indefinite matrix
+  gives NULL for that row rather than a plausible-looking number. The rank
+  decision is scale invariant: `L·cov·Lᵀ` is scaled to unit diagonal before the
+  pseudo-inverse, so a change of units does not move `df_num` or the F
+  (see `notes/engineering/2026-10-lin-hyp-rank-tolerance-and-scale.md`).
+  Validated against statsmodels' `t_test` and `wald_test`; the API boundary is
+  the DuckDB-free header `src/include/lin_hyp.hpp`, with implementation in
   `src/lin_hyp.cpp`. Type I and II sums of squares need nested refits and are
   not part of this function.
 - Kernel: `linalg::independent_columns(A, tol = 1e-7)` selects a maximal
