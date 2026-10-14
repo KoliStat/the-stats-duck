@@ -23,9 +23,10 @@ that name is preserved across releases for backward compatibility.
   once, matching statsmodels' `wald_test`. A hypothesis that touches a
   rank-deficient fit's aliased coefficient is reported NULL, SAS's
   "non-estimable", while one that avoids it is evaluated normally. Validated
-  against statsmodels' `t_test` and `wald_test`; the numerics live in the
-  DuckDB-free `src/include/lin_hyp.hpp`. Type I and II sums of squares need
-  nested refits and are not part of this function.
+  against statsmodels' `t_test` and `wald_test`; the API boundary is the
+  DuckDB-free header `src/include/lin_hyp.hpp`, with implementation in
+  `src/lin_hyp.cpp`. Type I and II sums of squares need nested refits and are
+  not part of this function.
 - Kernel: `linalg::independent_columns(A, tol = 1e-7)` selects a maximal
   linearly independent column subset left to right (modified Gram–Schmidt
   with a second pass; plain loops, no Eigen). The earlier column of a

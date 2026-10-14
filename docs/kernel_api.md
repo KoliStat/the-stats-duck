@@ -16,18 +16,19 @@ standard, validation discipline).
 This page is the orientation map. **The headers are the source of truth** — each
 function's preconditions, tolerances, and result semantics live in the
 doc-comments of [`src/include/linalg.hpp`](../src/include/linalg.hpp),
-[`src/include/lm_core.hpp`](../src/include/lm_core.hpp), and
+[`src/include/lm_core.hpp`](../src/include/lm_core.hpp),
+[`src/include/lin_hyp.hpp`](../src/include/lin_hyp.hpp), and
 [`src/include/optimize.hpp`](../src/include/optimize.hpp).
 
 ## Consuming the core from a sibling repo
 
 The API boundary is header-only, but the implementation is not: `linalg.cpp`
-uses Eigen (confined to that one translation unit) and `lm_core.cpp` builds on
-it. So a consumer:
+uses Eigen (confined to that one translation unit), and `lm_core.cpp` and
+`lin_hyp.cpp` build on it. So a consumer:
 
 1. adds `src/include` to its include path → `#include "linalg.hpp"`,
-   `#include "lm_core.hpp"`;
-2. compiles `src/linalg.cpp` and `src/lm_core.cpp` into its own build;
+   `#include "lm_core.hpp"`, `#include "lin_hyp.hpp"`;
+2. compiles `src/linalg.cpp`, `src/lm_core.cpp`, and `src/lin_hyp.cpp` into its own build;
 3. makes the Eigen headers (`third_party/eigen`) available **when compiling
    `linalg.cpp`** — that is the only Eigen dependency, and it never leaks past
    that TU.
@@ -162,8 +163,9 @@ Conventions worth knowing:
 
 - **Three outcomes, not two.** `ok = false` is misuse (a dimension mismatch, a
   non-positive `df`). `ok = true` with `estimable = false` means the hypothesis
-  cannot be evaluated, and callers should report NULL. Only then is the rest of
-  the struct filled in.
+  cannot be evaluated, and callers should report NULL. The rest of the struct —
+  `estimate`, `ss`, `df_num`, `chisq` and the others — is filled in only when
+  both `ok` and `estimable` are true.
 - **`df_num` is the rank of `L·V·Lᵀ`**, not `L`'s row count, so redundant
   constraints count once. One `pinv` call yields both the pseudo-inverse and
   that rank.
