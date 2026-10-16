@@ -7,7 +7,15 @@
 [submodule "third_party/readstat"]
 	path = third_party/readstat
 	url = https://github.com/WizardMac/ReadStat.git
+# Eigen is hosted on GitLab, and GitLab sheds load from GitHub Actions
+# runners. On 2026-10-15 six consecutive clone attempts failed with
+# "GitLab is currently unable to handle this request due to load", which
+# broke every CI job that checks out submodules. So we fetch Eigen from a
+# KoliStat mirror of gitlab.com/libeigen/eigen instead. The pinned commit
+# is unchanged: 3147391d, tag 3.4.0. Refresh the mirror from upstream
+# before bumping the pin.
+# See notes/engineering/2026-10-eigen-submodule-mirror.md.
 [submodule "third_party/eigen"]
 	path = third_party/eigen
-	url = https://gitlab.com/libeigen/eigen.git
+	url = https://github.com/KoliStat/eigen.git
 	shallow = true
