@@ -175,19 +175,54 @@ SELECT * FROM lm('mixed', y := 'x', x := ['y'])
 ----
 not numeric
 
-# Singular X'X (perfectly collinear predictors).
+# Collinear predictors (x2 = 2·x1) used to raise "singular". Since lm moved
+# onto the shared kernel they fit the way R does: the later column of a
+# dependent set is dropped, so x2 is aliased and the surviving coefficients
+# are exactly those of the x1-only model. The checks below compare the two
+# fits against each other, so they need no hand-written constants.
 statement ok
 CREATE TABLE collinear AS SELECT * FROM (VALUES
-    (1.0, 1.0, 2.0), (2.0, 2.0, 4.0), (3.0, 3.0, 6.0),
-    (4.0, 4.0, 8.0), (5.0, 5.0, 10.0), (6.0, 6.0, 12.0)
+    (1.2, 1.0, 2.0), (1.9, 2.0, 4.0), (3.4, 3.0, 6.0),
+    (3.8, 4.0, 8.0), (5.3, 5.0, 10.0), (5.9, 6.0, 12.0)
 ) AS t(y, x1, x2);
 
-statement error
-SELECT * FROM lm('collinear', y := 'y', x := ['x1', 'x2'])
+# Every term is listed, and only the aliased one is NULL.
+query TTTT
+SELECT term, estimate IS NULL, std_error IS NULL, p_value IS NULL
+FROM lm('collinear', y := 'y', x := ['x1', 'x2'])
+ORDER BY term
 ----
-singular
+(Intercept)	false	false	false
+x1	false	false	false
+x2	true	true	true
 
-# n ≤ p + 1 — not enough rows.
+# The kept coefficients and their standard errors match the reduced model.
+query TTT
+SELECT a.term,
+       printf('%.9f', a.estimate) = printf('%.9f', b.estimate),
+       printf('%.9f', a.std_error) = printf('%.9f', b.std_error)
+FROM lm('collinear', y := 'y', x := ['x1', 'x2']) a,
+     lm('collinear', y := 'y', x := ['x1']) b
+WHERE a.term = b.term
+ORDER BY a.term
+----
+(Intercept)	true	true
+x1	true	true
+
+# So does the model summary, and df_residual is n − rank = 6 − 2 = 4 while
+# df_model counts the one estimated slope.
+query TTTTTT
+SELECT a.df_model, a.df_residual,
+       a.df_model = b.df_model, a.df_residual = b.df_residual,
+       printf('%.9f', a.r_squared) = printf('%.9f', b.r_squared),
+       printf('%.9f', a.sigma) = printf('%.9f', b.sigma)
+FROM lm_summary('collinear', y := 'y', x := ['x1', 'x2']) a,
+     lm_summary('collinear', y := 'y', x := ['x1']) b
+----
+1	4	true	true	true	true
+
+# Too few rows is still an error, and the message now names the function
+# that was called rather than the kernel behind it.
 statement ok
 CREATE TABLE too_small AS SELECT * FROM (VALUES (1.0, 1.0), (2.0, 2.0))
 AS t(y, x1);
@@ -196,6 +231,12 @@ statement error
 SELECT * FROM lm('too_small', y := 'y', x := ['x1'])
 ----
 not enough complete-case rows
+
+# lm_summary used to report its runtime errors with an "lm:" prefix.
+statement error
+SELECT * FROM lm_summary('too_small', y := 'y', x := ['x1'])
+----
+lm_summary: need n > rank
 
 # ── R-style formula DSL ───────────────────────────────────────────────────
 #
