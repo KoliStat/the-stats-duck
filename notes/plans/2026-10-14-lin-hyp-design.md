@@ -171,10 +171,11 @@ rank-deficient fit untestable. So the aliased set is identified first, as
 θ and C are then checked for non-finite entries anyway, which catches a NaN
 arriving from anywhere else, such as an off-diagonal NaN with finite diagonals.
 
-**A `cov` that is not a covariance is also not estimable.** This spec invites a
-hand-built covariance and the kernel is a public API a sibling repository can
-consume, so the input is not always `lm_fit`'s positive semi-definite output.
-Two guards, in the same spirit as the non-finite rule above:
+**A `cov` caught not being a covariance is also not estimable.** This spec
+invites a hand-built covariance and the kernel is a public API a sibling
+repository can consume, so the input is not always `lm_fit`'s positive
+semi-definite output. Two guards, in the same spirit as the non-finite rule
+above, neither of them a full positive-definiteness test:
 
 - a strictly negative C_ii is a negative variance, so the hypothesis cannot be
   evaluated. C_ii = 0 stays estimable: a zero row of `L` legitimately produces
@@ -185,7 +186,12 @@ Two guards, in the same spirit as the non-finite rule above:
   nothing in that output looks wrong, and it came from a negative variance.
 
 Neither raises. By the taxonomy here "this is not a covariance" is data-shaped,
-and raising would abort a whole `GROUP BY` for one bad group. An asymmetric
+and raising would abort a whole `GROUP BY` for one bad group. The two guards
+are sufficient conditions, not a complete test: an indefinite C whose diagonal
+is non-negative and whose quadratic form still comes out positive is evaluated
+normally. Catching every such matrix needs an eigendecomposition, which this
+spec does not ask for, so a consumer needing the stronger guarantee should
+check its own input. An asymmetric
 `cov` is not a third case: the symmetrization described under Numerics means the
 symmetric part is what is tested, deterministically, rather than whichever half
 the matrix product happened to favour.

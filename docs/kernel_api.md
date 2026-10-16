@@ -177,11 +177,13 @@ Conventions worth knowing:
   With `D = diag(1/√C_ii)`, `C⁻ = D·(D·C·D)⁻·D`, which leaves the Wald
   statistic unchanged when C has full rank. Any kernel that inverts a
   covariance with `pinv` needs the same step.
-- **A supplied covariance that is not one gives `estimable = false`.** A
-  strictly negative `C_ii`, or a negative Wald statistic, means the input is
-  not a covariance. That is a data-shaped failure, so it is a NULL result
-  rather than an error. `C_ii = 0` stays estimable: a zero row of `L`
-  produces one.
+- **Two covariance checks, not a positive-definiteness test.** A strictly
+  negative `C_ii`, or a Wald statistic that is not `>= 0`, proves the input is
+  not a covariance, and either one gives `estimable = false`. That is a
+  data-shaped failure, so it is a NULL result rather than an error. The pair
+  is not exhaustive: an indefinite `C` that passes both is evaluated normally,
+  because catching every such matrix needs an eigendecomposition. `C_ii = 0`
+  stays estimable: a zero row of `L` produces one.
 - **Aliased coefficients do not spread.** A rank-deficient fit carries NaN in
   the rows and columns of its dropped coefficients. A hypothesis putting
   non-zero weight there is not estimable; one that avoids them is evaluated

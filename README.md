@@ -249,7 +249,7 @@ Output columns (fixed schema):
 | `corr_matrix(data, variables [, method])`         | Long-format pairwise correlation matrix (`pearson` / `spearman` / `kendall`) |
 | `lm(data, y, x)` / `lm_summary(data, y, x)`       | OLS regression — `lm` returns per-term coefficients, `lm_summary` returns model R² / F / σ |
 | `lm_fit(y, x [, vcov [, cluster] [, add_intercept]])` | OLS regression **aggregate** (one model per `GROUP BY`) with classical, HC0–HC3, or CR0/CR1 cluster-robust standard errors |
-| `lin_hyp(L, beta, cov, sigma2, df)`               | General linear hypothesis L·β = 0 against a fit — per-constraint estimates with standard errors, plus the joint sum of squares, F and chi-square |
+| `lin_hyp(L, beta, cov, sigma2, df)`               | General linear hypothesis L·β = 0 against a fit — **scalar**; per-constraint estimates with standard errors, plus the joint sum of squares, F and chi-square |
 
 ```sql
 SELECT * FROM table_one(
@@ -494,15 +494,18 @@ statsmodels' `wald_test` reports — and `ss` is not a partition of variance.
 The whole result is **NULL** when the hypothesis cannot be evaluated: when it
 puts weight on a coefficient the fit could not estimate (a rank-deficient fit's
 aliased terms, SAS's "non-estimable"), when it carries no information at all, or
-when the supplied `cov` is not a covariance. A hypothesis that merely avoids
-those aliased terms is fine. A dimension mismatch — an `L` row that is not as
-wide as `beta`, or a `cov` that is not k² long — raises instead.
+when the supplied `cov` fails one of the two covariance checks below. A
+hypothesis that merely avoids those aliased terms is fine. A dimension mismatch
+— an `L` row that is not as wide as `beta`, or a `cov` that is not k² long —
+raises instead.
 
-"Not a covariance" matters because `cov` may be hand-built rather than
-`lm_fit`'s own output. A negative variance among the constraints, or a negative
-Wald statistic from an indefinite `cov`, gives NULL for that row rather than a
-plausible-looking number. An asymmetric `cov` is read as its symmetric part,
-which is the only part a quadratic form uses.
+Those checks matter because `cov` may be hand-built rather than `lm_fit`'s own
+output. A negative variance among the constraints, or a Wald statistic that is
+not `>= 0`, gives NULL for that row rather than a plausible-looking number.
+Neither is a positive-definiteness test: an indefinite `cov` that passes both is
+evaluated normally, because catching every such matrix needs an
+eigendecomposition. An asymmetric `cov` is read as its symmetric part, which is
+the only part a quadratic form uses.
 
 Type I and II sums of squares are not computable this way: they need nested
 refits and the term-to-column mapping. Only Type III reduces to a hypothesis on
