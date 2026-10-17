@@ -8,6 +8,8 @@
 #   - lm_fit regression core (Epic 1.1): test_lm_fit.cpp + lm_core.cpp + linalg.cpp
 #   - lin_hyp general linear hypothesis (#20): test_lin_hyp.cpp + lin_hyp.cpp + linalg.cpp
 #   - optimize kernel      (Nelder-Mead): test_optimize.cpp (header-only)
+#   - estimability, the aliased-coefficient rule (#21): test_estimability.cpp
+#     (header-only)
 # The first three link Eigen (via linalg.cpp); lm_core and lin_hyp also pull
 # in the header-only distributions.hpp. Each suite returns 0 on all-pass.
 #
@@ -60,6 +62,9 @@ build_and_run test_lin_hyp \
 
 build_and_run test_optimize \
   "$ROOT/test/cpp/test_optimize.cpp"
+
+build_and_run test_estimability \
+  "$ROOT/test/cpp/test_estimability.cpp"
 
 if [[ $rc -ne 0 ]]; then
   echo "C++ unit tests FAILED." >&2
