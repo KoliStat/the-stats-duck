@@ -157,7 +157,10 @@ struct EmmeansResult {
 // a zero standard error and a NaN t and p; past the tolerance the element is
 // not estimable. When no positive scale exists the tolerance is zero, so any
 // negative value is not estimable. A variance of exactly zero stays estimable:
-// two identical grid rows produce one, and so does a zero row of L.
+// two identical grid rows produce one, and so does a zero row of L. Its
+// interval is the estimate itself, at every confidence level — including an
+// alpha so small that the critical value is infinite, where multiplying would
+// give NaN.
 //
 // The adjustment, with m the pairs that have a p-value to adjust and
 // k_compare the estimable means:

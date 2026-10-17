@@ -175,6 +175,11 @@ static void test_ds1_hand_values() {
 	CHECK_MSG(r.means.size() == 3, "three means");
 	CHECK_MSG(r.diffs.size() == 3, "three pairs from three means");
 	CHECK_MSG(r.k_compare == 3, "all three means are estimable");
+	// The same two counts the generator computed its adjustments with. If the
+	// kernel and the generator ever disagree about the family size, every
+	// adjusted p below is being compared against the wrong oracle.
+	CHECK_MSG(r.diffs.size() == kDs1NumPairs, "the family the generator adjusted over");
+	CHECK_MSG(r.k_compare == kDs1KCompare, "and the k the generator gave ptukey");
 	CHECK_MSG(r.df_den == 6.0, "df is echoed exactly");
 	CHECK_MSG(r.alpha == 0.05, "alpha is echoed exactly");
 	CHECK_MSG(r.adjust == EmmAdjust::TUKEY, "the method is echoed");
@@ -187,6 +192,12 @@ static void test_ds1_hand_values() {
 	CHECK_CLOSE(mean_at(r, 2).estimate, 6.0, 1e-10);
 	CHECK_CLOSE(mean_at(r, 0).std_error, 0.9428090416, 1e-9);
 	CHECK_CLOSE(diff_at(r, 0).std_error, 1.3333333333, 1e-9);
+	// The same two standard errors in their algebraic form, sqrt(s²/n) and
+	// sqrt(2s²/n), against the s² the fit itself reported. This catches a
+	// regenerated fixture whose residual variance moved while the hand-written
+	// decimals above stayed put.
+	CHECK_CLOSE(mean_at(r, 0).std_error, std::sqrt(kDs1Sigma2 / 3.0), 1e-12);
+	CHECK_CLOSE(diff_at(r, 0).std_error, std::sqrt(2.0 * kDs1Sigma2 / 3.0), 1e-12);
 	CHECK_CLOSE(diff_at(r, 0).estimate, -4.0, 1e-10);
 	CHECK_MSG(diff_at(r, 0).i == 0 && diff_at(r, 0).j == 1, "pairs are 0-based in the kernel");
 	CHECK_MSG(diff_at(r, 1).i == 0 && diff_at(r, 1).j == 2, "and enumerated row-major");
@@ -234,6 +245,12 @@ static void test_ds1_against_oracle() {
 		// And the Tukey limits, estimate ± q(1-alpha; k, df)/sqrt(2) · se.
 		check_close(p.lower_cl, w.tukey_lower, TOL_CL, lbl("ds1 pair tukey lower", d), __LINE__);
 		check_close(p.upper_cl, w.tukey_upper, TOL_CL, lbl("ds1 pair tukey upper", d), __LINE__);
+		// The multiplier on its own. Pair 2 has a zero estimate, so reading the
+		// multiplier off its limits would not separate the quantile from the
+		// division by sqrt(2); this does. The band is 1e-9 because the ratio
+		// carries only the quantile's own error, measured at 7e-12 here.
+		check_close((p.upper_cl - p.lower_cl) / (2.0 * p.std_error), kDs1TukeyCrit, 1e-9,
+		            lbl("ds1 tukey multiplier is qtukey/sqrt(2)", d), __LINE__);
 	}
 }
 
@@ -258,11 +275,14 @@ static void test_ds1_other_adjustments() {
 		// The raw p is reported unchanged alongside the adjusted one.
 		check_p(p.p_value, w.p_value, RTOL_P, ATOL_P, lbl("ds1 pair raw p under bonferroni", d),
 		        __LINE__);
+		// And the multiplier on its own: t(1 - alpha/(2m), df), not t(1-alpha/2).
+		check_close((p.upper_cl - p.lower_cl) / (2.0 * p.std_error), kDs1BonfCrit, 1e-9,
+		            lbl("ds1 bonferroni multiplier splits alpha over m", d), __LINE__);
 	}
 
 	// Holm is a step-down method, so it needs the ranks of the whole family.
-	// Its limits stay at the unadjusted t quantile, which is what the mean
-	// limits use, so the goldens for those are kDs1Means' own limits.
+	// Its limits stay at the unadjusted t quantile, so the goldens for them are
+	// kDs1Diffs' own lower_cl and upper_cl.
 	const auto rh = emmeans(L, kBetaDs1, kCovDs1, kDs1Df, kEmmAlpha, EmmAdjust::HOLM);
 	CHECK(rh.ok);
 	CHECK_MSG(std::string(statsduck::emm_adjust_name(rh.adjust)) == "holm",
@@ -279,6 +299,111 @@ static void test_ds1_other_adjustments() {
 		check(p.lower_cl > w.bonf_lower && p.upper_cl < w.bonf_upper,
 		      lbl("holm limits are narrower than bonferroni's", d), __LINE__);
 	}
+}
+
+// ──────────────── hochberg, BH and BY: the EmmAdjust to AdjustMethod map ─────
+static void test_ds1_step_methods() {
+	std::printf("ds1_step_methods (hochberg, BH, BY)\n");
+	const Mat L = ds1_grid();
+	// The remaining three methods reach statsduck::adjust_p through one enum
+	// mapping, and test_p_adjust.cpp already tests the methods themselves. What
+	// is untested without this is the MAPPING: BH and BY swapped, or hochberg
+	// wired to holm, would pass every other assertion in this file. So each is
+	// pinned by a relation only that method satisfies.
+	const auto rholm = emmeans(L, kBetaDs1, kCovDs1, kDs1Df, kEmmAlpha, EmmAdjust::HOLM);
+	const auto rhoch = emmeans(L, kBetaDs1, kCovDs1, kDs1Df, kEmmAlpha, EmmAdjust::HOCHBERG);
+	const auto rbh = emmeans(L, kBetaDs1, kCovDs1, kDs1Df, kEmmAlpha, EmmAdjust::BH);
+	const auto rby = emmeans(L, kBetaDs1, kCovDs1, kDs1Df, kEmmAlpha, EmmAdjust::BY);
+	CHECK(rhoch.ok && rbh.ok && rby.ok);
+	CHECK_MSG(std::string(statsduck::emm_adjust_name(rhoch.adjust)) == "hochberg", "hochberg echoes");
+	CHECK_MSG(std::string(statsduck::emm_adjust_name(rbh.adjust)) == "BH", "BH echoes as BH");
+	CHECK_MSG(std::string(statsduck::emm_adjust_name(rby.adjust)) == "BY", "BY echoes as BY");
+
+	// H_3, the harmonic number BY multiplies BH's threshold by. With three
+	// pairs the cumulative minimum lands on the same rank for both methods, so
+	// BY's adjusted p is exactly H_3 times BH's wherever BH is below 1.
+	const double h3 = 1.0 + 1.0 / 2.0 + 1.0 / 3.0;
+	for (std::size_t d = 0; d < 3; d++) {
+		const double holm = diff_at(rholm, d).p_adjusted;
+		const double hoch = diff_at(rhoch, d).p_adjusted;
+		const double bh = diff_at(rbh, d).p_adjusted;
+		const double by = diff_at(rby, d).p_adjusted;
+		// Hochberg steps up where holm steps down, so it is never the larger.
+		check(hoch <= holm, lbl("hochberg is no more conservative than holm", d), __LINE__);
+		// BH controls the false discovery rate, so it is never larger than the
+		// familywise step-down value.
+		check(bh <= holm, lbl("BH is no more conservative than holm", d), __LINE__);
+		check(by >= bh, lbl("BY is no less conservative than BH", d), __LINE__);
+		if (bh < 1.0) {
+			// The band is arithmetic noise: both sides are the same raw p times a
+			// constant, grouped differently.
+			check_close(by, h3 * bh, 1e-12 * h3 * bh, lbl("BY is BH times H_3", d), __LINE__);
+		}
+		// None of the three gives an interval, so all three report the
+		// unadjusted limits.
+		check_close(diff_at(rhoch, d).lower_cl, kDs1Diffs[d].lower_cl, TOL_CL,
+		            lbl("hochberg limits are unadjusted", d), __LINE__);
+		check_close(diff_at(rbh, d).lower_cl, kDs1Diffs[d].lower_cl, TOL_CL,
+		            lbl("BH limits are unadjusted", d), __LINE__);
+		check_close(diff_at(rby, d).upper_cl, kDs1Diffs[d].upper_cl, TOL_CL,
+		            lbl("BY limits are unadjusted", d), __LINE__);
+	}
+}
+
+// ─────────────── a V that is not a covariance: the two sides of the tol ──────
+static void test_negative_variance() {
+	std::printf("negative_variance (both sides of the 1e-12 relative tolerance)\n");
+	const Mat L = ds1_grid();
+
+	// A strictly negative variance proves the supplied V is not a covariance.
+	// That is a data-shaped failure, so the row is reported not estimable
+	// rather than raising, which would abort a whole GROUP BY for one group.
+	const auto rbad = emmeans(L, kBetaDs1, mat(3, 3, {-1.0, 0, 0, 0, 1.0, 0, 0, 0, 1.0}), 6.0, 0.05,
+	                          EmmAdjust::TUKEY);
+	CHECK_MSG(rbad.ok, "a V that is not a covariance is not misuse");
+	CHECK_MSG(!mean_at(rbad, 0).estimable, "the negative-variance row is not estimable");
+	CHECK_MSG(mean_at(rbad, 1).estimable && mean_at(rbad, 2).estimable, "the other rows still are");
+	CHECK_MSG(rbad.k_compare == 2, "and k_compare counts only those");
+	CHECK_MSG(diff_at(rbad, 2).estimable, "the pair between the two good rows is estimable");
+
+	// Just inside the tolerance, whose scale for a mean is max_j C_jj = 1 here,
+	// so the tolerance is 1e-12 and -1e-14 is a rounding artefact. The row
+	// keeps its estimate with a zero standard error.
+	const auto rtiny = emmeans(L, kBetaDs1, mat(3, 3, {-1e-14, 0, 0, 0, 1.0, 0, 0, 0, 1.0}), 6.0, 0.05,
+	                           EmmAdjust::TUKEY);
+	CHECK_MSG(mean_at(rtiny, 0).estimable, "a negative variance inside the tolerance is estimable");
+	CHECK_MSG(mean_at(rtiny, 0).std_error == 0.0, "with a zero standard error");
+	CHECK_CLOSE(mean_at(rtiny, 0).estimate, kDs1Beta[0], 0.0);
+	CHECK_MSG(std::isnan(mean_at(rtiny, 0).t_statistic) && std::isnan(mean_at(rtiny, 0).p_value),
+	          "and no t and no p");
+	CHECK_MSG(mean_at(rtiny, 0).lower_cl == mean_at(rtiny, 0).estimate &&
+	              mean_at(rtiny, 0).upper_cl == mean_at(rtiny, 0).estimate,
+	          "its interval is the point itself");
+
+	// The same -1e-14 against a much smaller scale is NOT inside the tolerance.
+	// This is what makes the tolerance relative rather than a constant: the
+	// same number is noise next to a variance of 1 and real next to 1e-20.
+	const auto rscale = emmeans(L, kBetaDs1, mat(3, 3, {-1e-14, 0, 0, 0, 1e-20, 0, 0, 0, 1e-20}), 6.0,
+	                            0.05, EmmAdjust::TUKEY);
+	CHECK_MSG(!mean_at(rscale, 0).estimable,
+	          "the same negative variance is real against a tiny scale");
+	CHECK_MSG(rscale.k_compare == 2, "so only two means remain");
+
+	// A pair can fail on its own, with both its means estimable: C_01 larger
+	// than the average of the two variances makes the difference's variance
+	// negative. This is the only path to a non-estimable pair that is not
+	// inherited from a mean.
+	Mat L2(2, 2);
+	L2(0, 0) = 1.0;
+	L2(1, 1) = 1.0;
+	const auto rpair =
+	    emmeans(L2, {1.0, 2.0}, mat(2, 2, {1.0, 2.0, 2.0, 1.0}), 6.0, 0.05, EmmAdjust::NONE);
+	CHECK_MSG(rpair.ok, "an indefinite V is not misuse either");
+	CHECK_MSG(mean_at(rpair, 0).estimable && mean_at(rpair, 1).estimable,
+	          "both means have positive variance");
+	CHECK_MSG(rpair.k_compare == 2, "so both count toward the family");
+	CHECK_MSG(!diff_at(rpair, 0).estimable, "but their difference has negative variance");
+	CHECK_MSG(diff_at(rpair, 0).i == 0 && diff_at(rpair, 0).j == 1, "and it keeps its indices");
 }
 
 // ────────────────────────── the misuse cases ─────────────────────────────────
@@ -366,6 +491,17 @@ static void test_adjust_names() {
 // ───────────────── DS2: a rank-deficient fit, per-row estimability ───────────
 static void test_ds2_aliased_column() {
 	std::printf("ds2_aliased_column (rank deficient, per-row estimability)\n");
+	// First the fixture's own premises, so a regenerated fixture that moved the
+	// dropped column fails here rather than silently testing nothing: the
+	// aliased column carries NaN on cov's diagonal, and grid row 2 is the one
+	// row that puts weight on it.
+	CHECK_MSG(std::isnan(kCovDs2(kDs2AliasedColumn, kDs2AliasedColumn)),
+	          "the aliased column is NaN on cov's diagonal");
+	CHECK_MSG(std::isnan(kBetaDs2[kDs2AliasedColumn]), "and NaN in beta");
+	CHECK_MSG(kLDs2(0, kDs2AliasedColumn) == 0.0 && kLDs2(1, kDs2AliasedColumn) == 0.0,
+	          "grid rows 0 and 1 avoid it");
+	CHECK_MSG(kLDs2(2, kDs2AliasedColumn) != 0.0, "and row 2 does not");
+
 	// DS2 is rank deficient: its last column is the sum of two others, so
 	// lm_fit drops it and cov carries NaN in that row and column. A grid row
 	// avoiding the aliased column is evaluated; one touching it is not.
@@ -598,6 +734,24 @@ static void test_extreme_df_and_alpha() {
 		      lbl("and they are the right way round", d), __LINE__);
 	}
 
+	// An alpha below about 2.2e-16 makes 1 - alpha/2 round to exactly 1, where
+	// StudentTQuantile returns +infinity by design. An element with a zero
+	// standard error then has its limits formed from infinity times zero, which
+	// IEEE makes NaN. The right answer is that the interval of a point estimate
+	// with no variance is that point, at every confidence level.
+	Mat Ld(2, 3);
+	Ld(0, 0) = 1.0;
+	Ld(1, 0) = 1.0; // identical rows: zero pairwise variance
+	const auto ri = emmeans(Ld, kBetaDs1, kCovDs1, 6.0, 1e-16, EmmAdjust::NONE);
+	CHECK_MSG(ri.ok, "an alpha of 1e-16 is still inside (0, 1)");
+	CHECK_MSG(diff_at(ri, 0).std_error == 0.0, "the identical pair still has no variance");
+	CHECK_MSG(diff_at(ri, 0).lower_cl == 0.0 && diff_at(ri, 0).upper_cl == 0.0,
+	          "and a zero-width interval, not NaN, at an infinite critical value");
+	// The means have a real standard error here, so an infinite multiplier is
+	// the honest answer for them.
+	CHECK_MSG(std::isinf(mean_at(ri, 0).lower_cl) && std::isinf(mean_at(ri, 0).upper_cl),
+	          "a mean with real variance gets infinite limits there");
+
 	// df at the boundary is misuse, not a very wide interval.
 	const auto rz = emmeans(L, kBetaDs1, kCovDs1, 0.0, 0.05, EmmAdjust::NONE);
 	CHECK_MSG(!rz.ok, "df = 0 is misuse");
@@ -617,6 +771,8 @@ int main() {
 	test_ds1_hand_values();
 	test_ds1_against_oracle();
 	test_ds1_other_adjustments();
+	test_ds1_step_methods();
+	test_negative_variance();
 	test_ds2_aliased_column();
 	test_duplicated_rows();
 	test_scale_invariance();

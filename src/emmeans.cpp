@@ -1,6 +1,6 @@
 #include "emmeans.hpp"
 
-#include "distributions.hpp" // stats_duck::StudentTCDF / StudentTQuantile
+#include "distributions.hpp" // stats_duck::StudentT* and StudentizedRange*
 #include "estimability.hpp"
 #include "p_adjust.hpp"
 
@@ -51,6 +51,16 @@ void MarkNotEstimable(EmmDiff &d) {
 	d.p_adjusted = kNaN;
 	d.lower_cl = kNaN;
 	d.upper_cl = kNaN;
+}
+
+// Half the width of a confidence interval. A zero standard error gives a
+// zero-width interval at every confidence level, and saying that outright
+// rather than multiplying is what keeps an INFINITE critical value from
+// turning a point estimate's limits into NaN. An alpha below about 2.2e-16
+// reaches that: 1 − alpha/2 then rounds to exactly 1, and StudentTQuantile
+// returns +infinity there by design. IEEE makes infinity · 0 = NaN.
+double HalfWidth(double crit, double std_error) {
+	return std_error > 0.0 ? crit * std_error : 0.0;
 }
 
 // The six methods statsduck::adjust_p can compute, mapped one to one. TUKEY is
@@ -210,8 +220,9 @@ EmmeansResult emmeans(const linalg::Mat &L, const std::vector<double> &beta, con
 		}
 		// A mean's limits are never adjusted for multiplicity, whatever the
 		// pairwise method is.
-		m.lower_cl = m.estimate - t_crit * m.std_error;
-		m.upper_cl = m.estimate + t_crit * m.std_error;
+		const double half = HalfWidth(t_crit, m.std_error);
+		m.lower_cl = m.estimate - half;
+		m.upper_cl = m.estimate + half;
 	}
 
 	// Pairs: i < j, row-major. EVERY pair is emitted, including one that
@@ -321,8 +332,9 @@ EmmeansResult emmeans(const linalg::Mat &L, const std::vector<double> &beta, con
 	}
 	for (EmmDiff &d : r.diffs) {
 		if (d.estimable) {
-			d.lower_cl = d.estimate - pair_crit * d.std_error;
-			d.upper_cl = d.estimate + pair_crit * d.std_error;
+			const double half = HalfWidth(pair_crit, d.std_error);
+			d.lower_cl = d.estimate - half;
+			d.upper_cl = d.estimate + half;
 		}
 	}
 
