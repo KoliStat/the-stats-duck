@@ -464,6 +464,58 @@ static void test_duplicated_rows() {
 	          "the echoed name is canonical");
 }
 
+// ──────────────── the tolerance decision does not depend on scale ───────────
+static void test_scale_invariance() {
+	std::printf("scale_invariance (cov x 1e12)\n");
+	const Mat L = ds1_grid();
+	const auto r = emmeans(L, kBetaDs1, kCovDs1, 6.0, 0.05, EmmAdjust::TUKEY);
+
+	// Scaling cov by a constant scales every variance by it, so the estimates
+	// do not move, the standard errors scale by its square root, and the t
+	// statistics, p-values and k_compare do not move at all. In #20 a units
+	// change silently moved df_num and the F, so this is pinned rather than
+	// assumed.
+	Mat Vbig = kCovDs1;
+	for (double &v : Vbig.data) {
+		v *= 1e12;
+	}
+	const auto rb = emmeans(L, kBetaDs1, Vbig, 6.0, 0.05, EmmAdjust::TUKEY);
+	CHECK_MSG(rb.ok && rb.k_compare == 3, "k_compare is unaffected by scale");
+	CHECK_MSG(rb.diffs.size() == 3, "and so is the number of pairs");
+	for (std::size_t i = 0; i < 3; i++) {
+		check_close(mean_at(rb, i).estimate, mean_at(r, i).estimate, 1e-10,
+		            lbl("estimates do not depend on cov's scale", i), __LINE__);
+		// 1e-4 absolute on a standard error of 9.4e5 is 1e-10 relative, which
+		// is a few ULP of the product and the square root.
+		check_close(mean_at(rb, i).std_error, mean_at(r, i).std_error * 1e6, 1e-4,
+		            lbl("standard errors scale by the square root", i), __LINE__);
+		// The t statistic shrinks by exactly the same factor, so the p-value
+		// it feeds moves too; what must not move is the estimability decision.
+		check(mean_at(rb, i).estimable, lbl("every mean is still estimable", i), __LINE__);
+	}
+	// 1e-6 absolute on a t of 3 is 3e-7 relative, which covers the 1e6 the
+	// comparison multiplies the smaller side by.
+	CHECK_CLOSE(diff_at(rb, 0).t_statistic * 1e6, diff_at(r, 0).t_statistic, 1e-6);
+	for (std::size_t d = 0; d < 3; d++) {
+		check(diff_at(rb, d).estimable, lbl("every pair is still estimable", d), __LINE__);
+		check_close(diff_at(rb, d).estimate, diff_at(r, d).estimate, 1e-10,
+		            lbl("pair estimates do not depend on cov's scale", d), __LINE__);
+	}
+
+	// The other direction. A tiny covariance must not read as a negative one,
+	// which is the failure mode an absolute tolerance would have.
+	Mat Vtiny = kCovDs1;
+	for (double &v : Vtiny.data) {
+		v *= 1e-12;
+	}
+	const auto rt = emmeans(L, kBetaDs1, Vtiny, 6.0, 0.05, EmmAdjust::TUKEY);
+	CHECK_MSG(rt.ok && rt.k_compare == 3, "a tiny covariance is still a covariance");
+	for (std::size_t d = 0; d < 3; d++) {
+		check(diff_at(rt, d).estimable, lbl("and its pairs are still estimable", d), __LINE__);
+	}
+	CHECK_CLOSE(diff_at(rt, 0).t_statistic / 1e6, diff_at(r, 0).t_statistic, 1e-6);
+}
+
 int main() {
 	std::printf("=== test_emmeans ===\n");
 	test_ds1_hand_values();
@@ -471,6 +523,7 @@ int main() {
 	test_ds1_other_adjustments();
 	test_ds2_aliased_column();
 	test_duplicated_rows();
+	test_scale_invariance();
 	test_misuse();
 	test_adjust_names();
 	std::printf("%s: %d checks, %d failures\n", g_fail == 0 ? "PASS" : "FAIL", g_checks, g_fail);
