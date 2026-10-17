@@ -99,14 +99,22 @@ static void LinHypExec(DataChunk &args, ExpressionState &, Vector &result) {
 			    static_cast<unsigned long long>(cov_buf.size()));
 		}
 
-		const std::size_t q = l_reader.Rows(i);
-		if (q == 0) {
-			throw InvalidInputException("lin_hyp: the hypothesis matrix has no rows");
-		}
 		statsduck::linalg::Mat L;
-		std::string read_error;
-		if (!l_reader.Read(i, k, L, read_error)) {
-			throw InvalidInputException("lin_hyp: " + read_error);
+		idx_t bad_row = 0;
+		std::size_t bad_width = 0;
+		switch (l_reader.Read(i, k, L, bad_row, bad_width)) {
+		case ListMatrixReader::Status::kOk:
+			break;
+		case ListMatrixReader::Status::kNoRows:
+			throw InvalidInputException("lin_hyp: the hypothesis matrix has no rows");
+		case ListMatrixReader::Status::kNullRow:
+			throw InvalidInputException("lin_hyp: the hypothesis matrix has a NULL row");
+		case ListMatrixReader::Status::kWidthMismatch:
+			throw InvalidInputException(
+			    "lin_hyp: every hypothesis row must have the same width as beta (%llu); row %llu "
+			    "has %llu",
+			    static_cast<unsigned long long>(k), static_cast<unsigned long long>(bad_row + 1),
+			    static_cast<unsigned long long>(bad_width));
 		}
 
 		statsduck::linalg::Mat V(k, k);

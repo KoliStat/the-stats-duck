@@ -26,7 +26,6 @@
 
 #include <cstddef>
 #include <limits>
-#include <string>
 #include <vector>
 
 namespace duckdb {
@@ -81,6 +80,7 @@ struct ListMatrixReader {
 	UnifiedVectorFormat row_fmt;
 	const list_entry_t *row_entries = nullptr;
 	UnifiedVectorFormat val_fmt;
+	std::vector<double> buf; // scratch for one sub-row, reused across Read() calls
 
 	ListMatrixReader(Vector &v, idx_t count) {
 		v.ToUnifiedFormat(count, outer_fmt);
@@ -105,44 +105,61 @@ struct ListMatrixReader {
 		return outer_entries[outer_fmt.sel->get_index(row)].length;
 	}
 
+	// What Read() found. kOk means it filled out. Every other value means
+	// out was left unfilled, and each one names a different reason. The
+	// caller reports its own message from that reason. It also picks its
+	// own policy from it: raise, or report a NULL result. It does not need
+	// to re-read row itself to make either choice.
+	enum class Status {
+		kOk,
+		kNoRows,        // row's own list has no sub-lists
+		kNullRow,       // the sub-list at bad_row is itself NULL
+		kWidthMismatch, // the sub-list at bad_row has length bad_width, not expected_width
+	};
+
 	// Reads row's nested list into out, a Rows(row) x expected_width matrix.
-	// Returns false, with error set, when a sub-list is NULL. Also returns
-	// false when a sub-list's length is not expected_width. A rectangular
-	// matrix cannot hold either shape. A NULL scalar inside a sub-list is
-	// not one of these failures: ReadDoubles reads it as NaN, the same way
-	// ListVectorReader::Read does.
 	//
-	// error names the failing sub-list as a 1-based index. For a width
-	// mismatch it also names both widths. The wording matches what lin_hyp
-	// has always reported: beta is the argument every row's width is
-	// compared against, for every caller this header has today. A caller
-	// that needs different wording can ignore error. It already has
-	// Rows(row) and expected_width, enough to write its own message.
-	bool Read(idx_t row, std::size_t expected_width, statsduck::linalg::Mat &out,
-	          std::string &error) const {
+	// On kNullRow or kWidthMismatch, bad_row names the first offending
+	// sub-list, as a 0-based index. On kWidthMismatch, bad_width is also
+	// set, to that sub-list's own length. Both are left untouched on kOk
+	// and kNoRows.
+	//
+	// Every sub-list's length is checked against expected_width directly,
+	// in the loop order sub-lists appear in. It is not checked against the
+	// first sub-list's own length instead. This matters: if the first
+	// sub-list happened to match expected_width, comparing every later
+	// sub-list only to the first one would miss a mismatch the first
+	// sub-list does not happen to share.
+	//
+	// A NULL scalar inside a sub-list does not produce kNullRow or
+	// kWidthMismatch: ReadDoubles reads it as NaN, the same way
+	// ListVectorReader::Read does.
+	Status Read(idx_t row, std::size_t expected_width, statsduck::linalg::Mat &out, idx_t &bad_row,
+	            std::size_t &bad_width) {
 		const auto outer_entry = outer_entries[outer_fmt.sel->get_index(row)];
 		const idx_t q = outer_entry.length;
+		if (q == 0) {
+			return Status::kNoRows;
+		}
 		out = statsduck::linalg::Mat(q, expected_width);
-		std::vector<double> buf;
 		for (idx_t a = 0; a < q; a++) {
 			const auto r_idx = row_fmt.sel->get_index(outer_entry.offset + a);
 			if (!row_fmt.validity.RowIsValid(r_idx)) {
-				error = "the hypothesis matrix has a NULL row";
-				return false;
+				bad_row = a;
+				return Status::kNullRow;
 			}
 			const auto r_entry = row_entries[r_idx];
 			if (r_entry.length != expected_width) {
-				error = "every hypothesis row must have the same width as beta (" +
-				        std::to_string(expected_width) + "); row " + std::to_string(a + 1) +
-				        " has " + std::to_string(r_entry.length);
-				return false;
+				bad_row = a;
+				bad_width = r_entry.length;
+				return Status::kWidthMismatch;
 			}
 			ReadDoubles(val_fmt, r_entry, buf);
 			for (std::size_t b = 0; b < expected_width; b++) {
 				out(a, b) = buf[b];
 			}
 		}
-		return true;
+		return Status::kOk;
 	}
 };
 
