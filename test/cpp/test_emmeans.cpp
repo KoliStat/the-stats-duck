@@ -363,11 +363,114 @@ static void test_adjust_names() {
 	}
 }
 
+// ───────────────── DS2: a rank-deficient fit, per-row estimability ───────────
+static void test_ds2_aliased_column() {
+	std::printf("ds2_aliased_column (rank deficient, per-row estimability)\n");
+	// DS2 is rank deficient: its last column is the sum of two others, so
+	// lm_fit drops it and cov carries NaN in that row and column. A grid row
+	// avoiding the aliased column is evaluated; one touching it is not.
+	const auto r2 = emmeans(kLDs2, kBetaDs2, kCovDs2, kDs2Df, kEmmAlpha, EmmAdjust::NONE);
+	CHECK_MSG(r2.ok, "a rank-deficient fit is not misuse");
+	CHECK_MSG(mean_at(r2, 0).estimable, "a row avoiding the aliased column is estimable");
+	CHECK_MSG(mean_at(r2, 1).estimable, "and so is the second such row");
+	CHECK_MSG(!mean_at(r2, 2).estimable, "a row touching it is not");
+	CHECK_MSG(r2.k_compare == 2, "k_compare counts only the estimable means");
+	CHECK_MSG(r2.diffs.size() == 3, "every pair is still present");
+	CHECK_MSG(!diff_at(r2, 1).estimable, "a pair touching the aliased mean is not estimable");
+	CHECK_MSG(!diff_at(r2, 2).estimable, "and so is the other such pair");
+	CHECK_MSG(diff_at(r2, 0).estimable, "a pair between two good means still is");
+	CHECK_MSG(std::isfinite(mean_at(r2, 0).estimate), "no NaN leaks from the aliased column");
+	CHECK_MSG(std::isfinite(mean_at(r2, 0).std_error), "nor into its standard error");
+	// Positions stay stable even though pair 1 and pair 2 carry no values, so
+	// the indices still name the rows they came from.
+	CHECK_MSG(diff_at(r2, 1).i == 0 && diff_at(r2, 1).j == 2, "a dropped pair keeps its indices");
+
+	// The two estimable rows against the oracle. This is the only fixture here
+	// whose covariance has off-diagonal entries, so the pair below is the one
+	// case where the cross term in C_ii + C_jj - 2·C_ij actually contributes.
+	for (std::size_t g = 0; g < 2; g++) {
+		const EmmMean m = mean_at(r2, g);
+		const EmmMeanCase &w = kDs2Means[g];
+		check_close(m.estimate, w.estimate, TOL, lbl("ds2 mean estimate", g), __LINE__);
+		check_close(m.std_error, w.std_error, TOL, lbl("ds2 mean std_error", g), __LINE__);
+		check_close(m.t_statistic, w.t_statistic, TOL_T, lbl("ds2 mean t", g), __LINE__);
+		check_p(m.p_value, w.p_value, RTOL_P, ATOL_P, lbl("ds2 mean p", g), __LINE__);
+		check_close(m.lower_cl, w.lower_cl, TOL_CL, lbl("ds2 mean lower_cl", g), __LINE__);
+		check_close(m.upper_cl, w.upper_cl, TOL_CL, lbl("ds2 mean upper_cl", g), __LINE__);
+	}
+	const EmmDiff p = diff_at(r2, 0);
+	CHECK_CLOSE(p.estimate, kDs2Diff01.estimate, TOL);
+	CHECK_CLOSE(p.std_error, kDs2Diff01.std_error, TOL);
+	CHECK_CLOSE(p.t_statistic, kDs2Diff01.t_statistic, TOL_T);
+	check_p(p.p_value, kDs2Diff01.p_value, RTOL_P, ATOL_P, "ds2 pair p", __LINE__);
+	CHECK_CLOSE(p.lower_cl, kDs2Diff01.lower_cl, TOL_CL);
+	CHECK_CLOSE(p.upper_cl, kDs2Diff01.upper_cl, TOL_CL);
+	CHECK_MSG(p.p_adjusted == p.p_value, "under none the adjusted p is the raw p");
+
+	// The pairwise standard error must not be reachable from the two means'
+	// standard errors alone. Here it is not: with a cross term of 0.382 the
+	// independent-sum formula is off by 18%, so a kernel that forgot C_ij
+	// would fail this.
+	const double naive = std::sqrt(mean_at(r2, 0).std_error * mean_at(r2, 0).std_error +
+	                               mean_at(r2, 1).std_error * mean_at(r2, 1).std_error);
+	CHECK_MSG(std::fabs(naive - p.std_error) > 0.1, "the cross term moves the pairwise SE");
+}
+
+// ──────────────── identical grid rows, and the easiest adjustments ───────────
+static void test_duplicated_rows() {
+	std::printf("duplicated_rows (zero variance by cancellation)\n");
+	// Two identical grid rows. C_ii = C_jj = C_ij, so the pairwise variance is
+	// exactly zero by cancellation. A user who repeats a level reaches this, so
+	// it must not be mistaken for a negative variance.
+	Mat Ld(2, 3);
+	Ld(0, 0) = 1.0;
+	Ld(0, 1) = 0.0;
+	Ld(0, 2) = 0.0;
+	Ld(1, 0) = 1.0;
+	Ld(1, 1) = 0.0;
+	Ld(1, 2) = 0.0;
+	const auto rd = emmeans(Ld, kBetaDs1, kCovDs1, 6.0, 0.05, EmmAdjust::NONE);
+	CHECK_MSG(rd.ok && rd.diffs.size() == 1, "one pair from two rows");
+	CHECK_MSG(diff_at(rd, 0).estimable, "an identical pair is estimable, not NULL");
+	CHECK_MSG(diff_at(rd, 0).estimate == 0.0, "the difference is exactly zero");
+	CHECK_MSG(diff_at(rd, 0).std_error == 0.0, "and so is its standard error");
+	CHECK_MSG(std::isnan(diff_at(rd, 0).t_statistic), "t is NaN at a zero standard error");
+	CHECK_MSG(std::isnan(diff_at(rd, 0).p_value), "and so is p");
+	CHECK_MSG(std::isnan(diff_at(rd, 0).p_adjusted), "an unrankable pair has no adjusted p either");
+	CHECK_MSG(mean_at(rd, 0).estimate == mean_at(rd, 1).estimate,
+	          "identical rows give identical means");
+	// The interval of a point estimate with no variance is that point.
+	CHECK_MSG(diff_at(rd, 0).lower_cl == 0.0 && diff_at(rd, 0).upper_cl == 0.0,
+	          "a zero standard error gives a zero-width interval");
+	CHECK_MSG(rd.k_compare == 2, "both identical rows count as estimable means");
+
+	// With one comparison, bonferroni multiplies by one and changes nothing.
+	Mat L_two_rows(2, 3);
+	L_two_rows(0, 0) = 1.0;
+	L_two_rows(1, 1) = 1.0;
+	const auto rb1 = emmeans(L_two_rows, kBetaDs1, kCovDs1, 6.0, 0.05, EmmAdjust::BONFERRONI);
+	CHECK_MSG(rb1.diffs.size() == 1, "two means give one pair");
+	CHECK_MSG(diff_at(rb1, 0).p_adjusted == diff_at(rb1, 0).p_value,
+	          "bonferroni over one pair leaves p alone");
+
+	// Under none, every adjusted p equals its raw p exactly, for every pair.
+	const auto rn = emmeans(ds1_grid(), kBetaDs1, kCovDs1, 6.0, 0.05, EmmAdjust::NONE);
+	CHECK(rn.diffs.size() == 3);
+	for (std::size_t d = 0; d < rn.diffs.size(); d++) {
+		check(diff_at(rn, d).p_adjusted == diff_at(rn, d).p_value, lbl("none leaves every p alone", d),
+		      __LINE__);
+	}
+	CHECK_MSG(std::string(statsduck::emm_adjust_name(rn.adjust)) == "none",
+	          "the echoed name is canonical");
+}
+
 int main() {
 	std::printf("=== test_emmeans ===\n");
 	test_ds1_hand_values();
 	test_ds1_against_oracle();
 	test_ds1_other_adjustments();
+	test_ds2_aliased_column();
+	test_duplicated_rows();
 	test_misuse();
 	test_adjust_names();
 	std::printf("%s: %d checks, %d failures\n", g_fail == 0 ? "PASS" : "FAIL", g_checks, g_fail);
