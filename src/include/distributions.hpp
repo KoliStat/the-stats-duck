@@ -950,9 +950,16 @@ inline double HyperGeomQuantile(double p, double m, double n, double k) {
 // it.
 //
 // Both integrals are panelled Gauss-Legendre with fixed node and panel counts,
-// and the quantile is bisection with a fixed step count, so identical inputs
-// give identical results on every platform, as docs/fitter_conventions.md
-// requires. There is no adaptive stopping rule anywhere in this section.
+// the quantile bisects a fixed number of times, the summation order is fixed,
+// and no branch is chosen by a tolerance on a computed value. So the algorithm
+// contributes no platform dependence of its own: given the same results from
+// the library functions it calls, it returns the same bits.
+//
+// That is less than bit-identical results everywhere, and deliberately so.
+// std::erfc, std::exp, std::pow and std::cos are not bit-identical across libm
+// implementations, and the wasm build uses a different one from the desktop
+// build, so results can differ in the last places between platforms. The
+// quadrature does not add to that.
 //
 // Unlike the rest of this header these two functions return NaN for an
 // argument outside the domain instead of throwing. They are called per row
@@ -1134,11 +1141,12 @@ constexpr double kStudentizedTailMass = 1e-12;
 //! limit W(q; k), the normal-range probability.
 //!
 //! The jump at the switch, measured at the last df below this cutoff over k in
-//! {2,3,6,20} and q in [1, 8], is 1.877e-10. That is the number the cutoff was
-//! chosen against: the target was below 1e-9. The gap falls off as C/df, which
-//! the measurement bears out at 1.876e-06 for df = 1e6, 1.876e-07 at 1e7,
-//! 1.876e-08 at 1e8 and 1.877e-09 at 1e9, always at k = 20 and q = 4, so a
-//! cutoff of 1e9 would have left 1.9e-09, above the target.
+//! {2,3,6,20} and q from 1 to 8 in steps of 0.25, is 2.304e-10, at k = 20 and
+//! q = 4.5. That is the number the cutoff was chosen against: the target was
+//! below 1e-9. The gap falls off as C/df with C = 2.304, which the measurement
+//! bears out at 2.3036e-06 for df = 1e6, 2.3036e-07 at 1e7, 2.3036e-08 at 1e8
+//! and 2.3038e-09 at 1e9, at that same k and q throughout, so a cutoff of 1e9
+//! would have left 2.3e-09, above the target.
 //!
 //! Replacing the integral this late asks the quadrature to stay accurate at
 //! df = 1e10, which is why the density below is written in shape form. Two
@@ -1153,7 +1161,12 @@ constexpr double kStudentizedNormalLimit = 1e10;
 //! Measured against scipy's chi2.ppf, ChiSquareQuantile at 1e-12 is exact to
 //! 5.2e-15 relative at df = 2000 and 5.2e-14 at df = 1e4, then drifts: 6.7e-07
 //! at 1e5 and 2.7e-05 at 1e6. The switch sits at 2000, well before the drift
-//! matters, and the measured jump in the CDF across it is 6.2e-14 at k = 20.
+//! matters, and the measured jump in the CDF across it is 9.1e-14, over k in
+//! {2,3,6,20} and q from 1 to 8 in steps of 0.25, at k = 20 and q = 4.5.
+//!
+//! test_tukey asserts the branch above the switch through the k = 2 identity at
+//! df = 2000.5, 2500 and 1e4, so it is covered by a test and not only by this
+//! measurement.
 constexpr double kStudentizedChiSquareLimit = 2000.0;
 
 //! The integration range in s = sqrt(chi-squared_df / df).
@@ -1229,7 +1242,7 @@ inline const std::vector<RangeGridPoint> &RangeGrid() {
 
 //! W(w; k): the probability that the range of k independent standard normals
 //! is at most w. w <= 0 gives 0, w at or beyond the flat point gives exactly 1,
-//! and k < 2 or any NaN argument gives NaN.
+//! and k < 2, an infinite k, or any NaN argument gives NaN.
 //!
 //! This is the inner integral of StudentizedRangeCDF below, and on its own it
 //! is that distribution's limit as df grows, which is how the test pins it
@@ -1240,7 +1253,11 @@ inline double NormalRangeCDF(double w, double k) {
 	if (std::isnan(w) || std::isnan(k)) {
 		return std::numeric_limits<double>::quiet_NaN();
 	}
-	if (!(k >= 2.0)) {
+	// k is a finite count of at least 2. The isinf check is there on purpose:
+	// without it an infinite k still reaches the integral, where the power
+	// underflows to zero at every node and k times zero is NaN. That is the
+	// same answer by accident, and an accident is not a contract.
+	if (!(k >= 2.0) || std::isinf(k)) {
 		return std::numeric_limits<double>::quiet_NaN();
 	}
 	if (!(w > 0.0)) {
@@ -1274,15 +1291,19 @@ inline double NormalRangeCDF(double w, double k) {
 }
 
 //! P(Q <= q; k, df) for the studentized range of k means on df degrees of
-//! freedom. q <= 0 gives 0, k < 2 or df <= 0 or any NaN argument gives NaN.
+//! freedom. q <= 0 gives 0, and k < 2, an infinite k, df <= 0 or any NaN
+//! argument gives NaN. An infinite df is the normal-range limit, which is what
+//! the whole outer integral converges to, so it is a value and not an error.
 //!
 //! Accuracy, measured against scipy.stats.studentized_range: 9.9e-13 over the
 //! whole committed grid, which is every integer df from 1 to 1000 and k from 2
 //! to 20, and 5e-12 or better for any real df of 4 or more.
 //!
 //! k is a count of means, so it is not held to a band beyond the grid's 20. It
-//! stays sensible to about 1e6; above that [Phi(z) - Phi(z-w)]^(k-1) underflows
-//! to zero at every node and the CDF reports 0.
+//! stays sensible to about 1e6. Above that [Phi(z) - Phi(z-w)]^(k-1) underflows
+//! to zero at every node and the CDF reports 0, which is the right limit for a
+//! fixed q as k grows but stops being a useful number; an infinite k is
+//! rejected as NaN rather than left to that underflow.
 //!
 //! A df that is not an integer and is below 4 is less accurate than that, and
 //! the error grows as df falls: 6.4e-10 at df = 3.5, 1.0e-07 at 2.5, 2.0e-05 at
@@ -1361,9 +1382,12 @@ inline double StudentizedRangeCDF(double q, double k, double df) {
 	// same order.
 	//
 	// den is a positive density over a range of positive width, so it is
-	// positive for every df this quadrature can represent. Below about
-	// df = 1e-300 the shape underflows to zero at every node, and NaN is the
-	// honest answer there rather than whatever 0/0 produces.
+	// positive for every df this quadrature can represent. At a df it cannot,
+	// about 1e-300 and below, either the integration range collapses or the
+	// shape underflows: at df = 1e-300 ChiSquareQuantile returns the same value
+	// at 1e-12 and at 1 - 1e-12, so s_lo == s_hi and both panelled integrals
+	// return 0 through their own empty-interval guard. NaN is the honest answer
+	// there rather than whatever 0/0 produces.
 	if (!(den > 0.0)) {
 		return std::numeric_limits<double>::quiet_NaN();
 	}
@@ -1400,6 +1424,11 @@ inline double StudentizedRangeQuantile(double p, double k, double df) {
 	// A NaN from the CDF is reported as NaN. Without that, every comparison
 	// below would be false, the bracket would collapse to its lower end and the
 	// function would return a number near 0 for an input it cannot compute.
+	//
+	// Each doubling also moves the lower end up: the CDF at the old hi was below
+	// p, so the root is above it. Without that the bisection would start over a
+	// bracket half of which is already known not to hold the root, and would
+	// spend its first step finding that out again.
 	const int kMaxDoublings = 100;
 	double lo = 0.0;
 	double hi = 8.0;
@@ -1414,14 +1443,26 @@ inline double StudentizedRangeQuantile(double p, double k, double df) {
 		if (i >= kMaxDoublings) {
 			return std::numeric_limits<double>::infinity();
 		}
+		lo = hi;
 		hi *= 2.0;
 	}
-	// A fixed step count, so the result never depends on an adaptive stopping
-	// rule that could differ between platforms. 100 steps shrink the bracket
-	// by 2^-100, far below the accuracy of the CDF itself, so the CDF is the
-	// limiting factor and not the bisection.
+	// A fixed step count, so the result never depends on a tolerance that could
+	// be met at a different step on a different platform. 100 steps shrink the
+	// bracket by 2^-100, far below the accuracy of the CDF itself, so the CDF is
+	// the limiting factor and not the bisection.
+	//
+	// The one early exit is not a tolerance. When the midpoint equals one end,
+	// lo and hi are adjacent doubles and no further step can narrow the
+	// bracket: every remaining step would compute the same midpoint and leave
+	// 0.5*(lo + hi) where it is. So the returned value is the same with the exit
+	// as without it, bit for bit, and the CDF is not evaluated 40-odd more times
+	// for nothing. That is exhaustion of the floating-point grid, which is a
+	// property of IEEE doubles and not of the platform's libm.
 	for (int i = 0; i < 100; i++) {
 		const double mid = 0.5 * (lo + hi);
+		if (mid == lo || mid == hi) {
+			break;
+		}
 		if (StudentizedRangeCDF(mid, k, df) < p) {
 			lo = mid;
 		} else {

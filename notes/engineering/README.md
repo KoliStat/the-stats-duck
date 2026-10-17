@@ -63,5 +63,6 @@ that has been written down than to re-derive it.
   the check that found it, why nodes beat panels for an entire integrand
   (48 x 2 is 2.3e-15 and 10 x 10 is 1.8e-9 at the same cost), and the branch
   point in `s^(df-1)` that leaves a non-integer df below 4 less accurate than
-  the band. Also: `GammaP` stops after 200 terms, so `ChiSquareQuantile` drifts
-  above about df = 1e4.
+  the band. Also: `GammaP` stops after 200 terms, and an offline measurement
+  against scipy's `chi2.ppf` puts the resulting drift in `ChiSquareQuantile`
+  above about df = 1e4. Nothing in the repository tests that second claim.

@@ -45,8 +45,20 @@ static void test_identities() {
 	// Identity 1: at k = 2 the studentized range is the t distribution exactly.
 	// Q = sqrt(2)*|T|, so P(Q <= q) = 2*F_t(q/sqrt(2)) - 1. This anchors the
 	// whole double integral against StudentTCDF, which is already validated.
+	//
+	// 2000.5, 2500 and 1e4 are here because the implementation switches at
+	// df = 2000 from the chi-squared quantile to a normal approximation for its
+	// integration range, and the committed fixture grid stops at df = 1000.
+	// Without these three the whole interval from 2000 to 1e9 would rest on an
+	// offline measurement in a comment rather than on a test.
+	//
+	// The list stops at 1e4 on purpose. Above that StudentTCDF is itself the
+	// less accurate of the two: its BetaIncomplete stops after 200 terms, and
+	// it is 2.9e-11 off this identity at df = 1e5 and 2.2e-08 off at 1e8, so a
+	// 1e-8 band there would fail for a reason that is not this code's. Identity
+	// 2 covers the far end instead, against NormalCDF.
 	double worst_t = 0.0;
-	const double nus[] = {1.0, 2.0, 5.0, 10.0, 30.0, 120.0, 1000.0};
+	const double nus[] = {1.0, 2.0, 5.0, 10.0, 30.0, 120.0, 1000.0, 2000.5, 2500.0, 1e4};
 	for (const double nu : nus) {
 		for (const double q : {0.5, 1.0, 2.0, 3.0, 5.0, 8.0}) {
 			const double want = 2.0 * stats_duck::StudentTCDF(q / std::sqrt(2.0), nu) - 1.0;
@@ -177,17 +189,30 @@ static void test_non_integer_df() {
 	// Below 4 it does not, and that is a known limitation of this quadrature,
 	// recorded in the comment on StudentizedRangeCDF: the density carries
 	// s^(df-1), whose branch point at s = 0 sits against the lower end of the
-	// integration range unless df is an integer. The deviation is printed
-	// rather than asserted against a band, because a band here would be a
-	// record of the defect and not a target. What is asserted below holds
-	// whatever the quadrature error is.
-	for (const double nu : {0.5, 1.5, 2.5, 3.5}) {
+	// integration range unless df is an integer.
+	//
+	// The bands below are characterization values and not targets. They are
+	// today's measured deviation with about a factor of five of slack, so they
+	// say "this is how inaccurate it is" rather than "this is how inaccurate it
+	// may be". They are here because the properties asserted further down are
+	// too weak on their own: a regression that took df = 1.5 from 2.0e-05 to
+	// 0.3 would still return a probability, still increase in q and still
+	// invert, and would pass. If one of these fails, the question to ask is
+	// whether the quadrature changed, not whether the band is too tight.
+	struct Characterization {
+		double nu;
+		double band;
+	};
+	const Characterization known[] = {{0.5, 5e-2}, {1.5, 1e-4}, {2.5, 1e-6}, {3.5, 1e-8}};
+	for (const Characterization &c : known) {
 		double worst = 0.0;
 		for (const double q : {0.5, 1.0, 2.0, 3.0, 5.0, 8.0}) {
-			const double want = 2.0 * stats_duck::StudentTCDF(q / std::sqrt(2.0), nu) - 1.0;
-			worst = std::fmax(worst, std::fabs(stats_duck::StudentizedRangeCDF(q, 2.0, nu) - want));
+			const double want = 2.0 * stats_duck::StudentTCDF(q / std::sqrt(2.0), c.nu) - 1.0;
+			worst = std::fmax(worst, std::fabs(stats_duck::StudentizedRangeCDF(q, 2.0, c.nu) - want));
 		}
-		std::printf("  df = %4g: worst deviation from the t identity %.3e\n", nu, worst);
+		std::printf("  df = %4g: worst deviation from the t identity %.3e (characterized at %.0e)\n",
+		            c.nu, worst, c.band);
+		check(worst <= c.band, "a df below 4 that is not an integer is no worse than characterized");
 	}
 
 	// A probability, increasing in q, invertible: these hold at every df and
@@ -212,6 +237,53 @@ static void test_non_integer_df() {
 }
 
 // ── Domain and edge values ──────────────────────────────────────────────────
+
+static void test_normal_range_domain() {
+	std::printf("NormalRangeCDF, the inner integral, and its documented edge values\n");
+
+	const double nan = std::numeric_limits<double>::quiet_NaN();
+	const double inf = std::numeric_limits<double>::infinity();
+
+	// The three edge values its comment documents, at every k on the grid
+	// rather than at k = 2 alone: the whole point of this function's history is
+	// that k = 2 certifies nothing about k = 20.
+	for (const double k : {2.0, 3.0, 6.0, 20.0, 1000.0}) {
+		check(stats_duck::NormalRangeCDF(0.0, k) == 0.0, "range CDF: w = 0 gives 0");
+		check(stats_duck::NormalRangeCDF(-1.0, k) == 0.0, "range CDF: negative w gives 0");
+		// 25 is past the flat point for every k here, which is 18.0 at k = 2 and
+		// 20.9 at k = 1e6, so the answer is 1.0 exactly and not 1 minus an
+		// epsilon. The bound behind that is on NormalRangeFlatPoint.
+		check(stats_duck::NormalRangeCDF(25.0, k) == 1.0, "range CDF: w past the flat point is 1");
+		check(stats_duck::NormalRangeCDF(inf, k) == 1.0, "range CDF: infinite w is 1");
+		check(std::isnan(stats_duck::NormalRangeCDF(nan, k)), "range CDF: NaN w is NaN");
+		// A probability, and not decreasing, at every k. Not strictly
+		// increasing: W(w; k) goes as w^(k-1) for small w, so at k = 1000 the
+		// lower tail underflows and two neighbouring w are both exactly 0.
+		// Identity 4 makes the strict check over the k the grid covers.
+		double prev = -1.0;
+		for (const double w : {0.25, 0.5, 1.0, 2.0, 4.0, 8.0, 16.0}) {
+			const double p = stats_duck::NormalRangeCDF(w, k);
+			check(p >= 0.0 && p <= 1.0, "range CDF: a probability");
+			check(p >= prev, "range CDF: not decreasing in w");
+			prev = p;
+		}
+	}
+	check(std::isnan(stats_duck::NormalRangeCDF(2.0, 1.0)), "range CDF: k < 2 is NaN");
+	check(std::isnan(stats_duck::NormalRangeCDF(2.0, 1.9999)), "range CDF: k just under 2 is NaN");
+	check(std::isnan(stats_duck::NormalRangeCDF(2.0, nan)), "range CDF: NaN k is NaN");
+	check(std::isnan(stats_duck::NormalRangeCDF(2.0, inf)), "range CDF: infinite k is NaN");
+
+	// At k = 2 the range of two normals is sqrt(2)*|Z|, so the closed form is
+	// 2*Phi(w/sqrt(2)) - 1. This is the one k with an exact answer, which is
+	// why the node count was not chosen from it.
+	double worst = 0.0;
+	for (double w = 0.05; w < 18.0; w += 0.05) {
+		const double want = 2.0 * stats_duck::NormalCDF(w / std::sqrt(2.0)) - 1.0;
+		worst = std::fmax(worst, std::fabs(stats_duck::NormalRangeCDF(w, 2.0) - want));
+	}
+	check(worst <= 1e-12, "range CDF at k = 2 matches the closed form");
+	std::printf("  worst |W(w,2) - (2*pnorm(w/sqrt(2)) - 1)| over w in [0.05, 18) = %.3e\n", worst);
+}
 
 static void test_domain() {
 	std::printf("domain (q <= 0, k < 2, df <= 0, NaN, saturation, p at the ends)\n");
@@ -242,10 +314,13 @@ static void test_domain() {
 	check(std::isnan(stats_duck::StudentizedRangeCDF(2.0, 3.0, nan)), "CDF: NaN df is NaN");
 	check(std::isnan(stats_duck::StudentizedRangeCDF(2.0, 3.0, -5.0)), "CDF: negative df is NaN");
 
-	// An infinite df is the normal range: s is then 1 with probability 1.
+	// An infinite df must take the normal-range branch rather than fall into
+	// the NaN path or the quadrature, where the integration range would be a
+	// single point. This checks which branch it lands in, not how accurate
+	// that branch is; identity 2 does the accuracy.
 	const double inf = std::numeric_limits<double>::infinity();
 	check(stats_duck::StudentizedRangeCDF(3.0, 3.0, inf) == stats_duck::NormalRangeCDF(3.0, 3.0),
-	      "an infinite df is the normal range exactly");
+	      "an infinite df takes the normal-range branch");
 
 	// An argument the CDF cannot compute must not come back from the quantile as
 	// a number. Both of these make the CDF NaN, and without the NaN check in
@@ -262,6 +337,7 @@ int main() {
 	test_identities();
 	test_fixtures();
 	test_non_integer_df();
+	test_normal_range_domain();
 	test_domain();
 
 	std::printf("\n%d checks, %d failures\n", g_checks, g_fail);

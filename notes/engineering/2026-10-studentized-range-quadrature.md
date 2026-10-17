@@ -142,9 +142,11 @@ the denominator are then the same sum in the same order.
 
 **`GammaP` stops after 200 terms, and a chi-squared near its mode needs about
 sqrt(df/2) of them.** `ChiSquareQuantile` is therefore not trustworthy for a
-large df, and nothing says so. Measured against scipy's `chi2.ppf`, its 1e-12
-quantile is exact to 5.2e-15 relative at df = 2000 and 5.2e-14 at 1e4, then
-drifts to 6.7e-07 at 1e5 and 2.7e-05 at 1e6. The studentized range switches to a
-normal approximation for its integration range above df = 2000 for that reason.
-Any other caller of `ChiSquareQuantile` with a df in the tens of thousands has
-the same problem.
+large df, and nothing says so. This is one offline measurement against scipy's
+`chi2.ppf` rather than a tested property of the repository: its 1e-12 quantile
+came out exact to 5.2e-15 relative at df = 2000 and 5.2e-14 at 1e4, then
+drifting to 6.7e-07 at 1e5 and 2.7e-05 at 1e6. The studentized range switches to
+a normal approximation for its integration range above df = 2000 for that
+reason, and `test_tukey` covers the branch above the switch. Any other caller of
+`ChiSquareQuantile` with a df in the tens of thousands probably has the same
+problem, and would need its own measurement to say so.
