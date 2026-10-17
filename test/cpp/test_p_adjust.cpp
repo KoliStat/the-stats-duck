@@ -41,7 +41,7 @@ static double at(const std::vector<double> &v, std::size_t i) {
 }
 
 static void test_adjust_p_against_released_values() {
-	std::printf("adjust_p (bonferroni, holm, the valid mask)\n");
+	std::printf("adjust_p (bonferroni, holm, hochberg, BH, BY, the valid mask)\n");
 
 	const std::vector<double> p = {0.001, 0.008, 0.039, 0.041, 0.042, 0.06, 0.074, 0.205};
 	const std::vector<bool> all_valid(8, true);
@@ -56,6 +56,40 @@ static void test_adjust_p_against_released_values() {
 	const double holm[8] = {0.008, 0.056, 0.234, 0.234, 0.234, 0.234, 0.234, 0.234};
 	for (std::size_t i = 0; i < 8; i++)
 		check(close(at(out, i), holm[i], 1e-4), "holm matches the released value");
+
+	// hochberg, BH and BY below get a 1e-4 band, not bonferroni's 1e-12: like
+	// holm above, test/sql/adjust_p.test rounds them to four places before
+	// pinning them, so a tighter band would fail on the oracle's own rounding
+	// rather than on a real disagreement.
+	statsduck::adjust_p(p, all_valid, statsduck::AdjustMethod::HOCHBERG, out);
+	const double hochberg[8] = {0.008, 0.056, 0.148, 0.148, 0.148, 0.148, 0.148, 0.205};
+	for (std::size_t i = 0; i < 8; i++)
+		check(close(at(out, i), hochberg[i], 1e-4), "hochberg matches the released value");
+
+	statsduck::adjust_p(p, all_valid, statsduck::AdjustMethod::BENJAMINI_HOCHBERG, out);
+	const double bh[8] = {0.008, 0.032, 0.0672, 0.0672, 0.0672, 0.08, 0.0846, 0.205};
+	for (std::size_t i = 0; i < 8; i++)
+		check(close(at(out, i), bh[i], 1e-4), "BH matches the released value");
+
+	// The alias claim end to end: "fdr" and "BH" must parse to methods whose
+	// adjust_p output is identical, not merely to the same enum value (the
+	// other test function only checks the latter).
+	statsduck::AdjustMethod m_bh = statsduck::AdjustMethod::NONE;
+	statsduck::AdjustMethod m_fdr = statsduck::AdjustMethod::NONE;
+	check(statsduck::parse_adjust("BH", m_bh) && statsduck::parse_adjust("fdr", m_fdr),
+	      "both BH and fdr parse");
+	std::vector<double> out_bh, out_fdr;
+	statsduck::adjust_p(p, all_valid, m_bh, out_bh);
+	statsduck::adjust_p(p, all_valid, m_fdr, out_fdr);
+	bool identical = out_bh.size() == 8 && out_fdr.size() == 8;
+	for (std::size_t i = 0; i < 8; i++)
+		identical = identical && at(out_bh, i) == at(out_fdr, i);
+	check(identical, "fdr and BH give identical adjust_p output, not just the same enum");
+
+	statsduck::adjust_p(p, all_valid, statsduck::AdjustMethod::BENJAMINI_YEKUTIELI, out);
+	const double by[8] = {0.0217, 0.087, 0.1826, 0.1826, 0.1826, 0.2174, 0.2299, 0.5572};
+	for (std::size_t i = 0; i < 8; i++)
+		check(close(at(out, i), by[i], 1e-4), "BY matches the released value");
 
 	// The valid mask: an invalid slot comes back NaN and does not change the ranks.
 	std::vector<bool> mask(8, true);
