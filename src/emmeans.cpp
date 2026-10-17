@@ -294,8 +294,12 @@ EmmeansResult emmeans(const linalg::Mat &L, const std::vector<double> &beta, con
 	double pair_crit = kNaN;
 	if (adjust == EmmAdjust::TUKEY) {
 		// The studentized range is undefined below two means, so neither
-		// function is called there. k_compare < 2 also means no pair has two
-		// estimable ends, so there is nothing to adjust and nothing to bound.
+		// function is called there. Defence in depth, not the load-bearing
+		// protection: what actually keeps a NaN out of the output is the
+		// structural invariant that an estimable pair needs two estimable
+		// means, so k_compare >= 2 holds whenever any pair is written and the
+		// loop below reads pair_crit. Removing this guard leaves the output
+		// bit-identical, which is why no test can catch its absence.
 		if (r.k_compare >= 2) {
 			const double k_d = static_cast<double>(r.k_compare);
 			pair_crit = stats_duck::StudentizedRangeQuantile(1.0 - alpha, k_d, df) / std::sqrt(2.0);

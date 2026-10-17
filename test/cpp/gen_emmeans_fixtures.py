@@ -3,7 +3,16 @@
 
 Oracle: statsmodels OLS .t_test, the same oracle gen_lin_hyp_fixtures.py
 uses, plus scipy.stats.studentized_range for the Tukey p-values and the
-Tukey confidence limits.
+Tukey confidence limits, plus statsmodels.stats.multitest.multipletests
+for the five adjustments that go through statsduck::adjust_p.
+
+Two grids run on design DS1, and they are there for different reasons.
+L = I(3) gives the p-set {p, p, 1}, on which holm and bonferroni agree
+exactly, so it cannot tell those two apart. The SPREAD grid, which scales
+the third row by 2, gives three distinct p-values, on which they differ.
+The spread grid in turn cannot tell hochberg from BH, because those agree
+there. Between the two every method's adjusted p is a different number,
+which is what pins the EmmAdjust to AdjustMethod mapping.
 
 Design DS1: three groups, cell-means coded (no intercept), so L = I(3)
 and each marginal mean is that group's sample mean.
@@ -41,6 +50,10 @@ Self-checks, which must hold before anything is written:
   2. se[g] equals sqrt(s^2/n_g)
   3. the pairwise se from t_test equals sqrt(C_ii + C_jj - 2*C_ij)
   4. at two means, the Tukey p equals the unadjusted p
+  5. multipletests agrees with the canonical formulas p_adjust.hpp
+     documents, so its "simes-hochberg" really is R's "hochberg"
+  6. every method's adjusted p differs from every other method's on at
+     least one of the two grids
 
 This is an OFFLINE generator. It writes test/cpp/emmeans_fixtures.hpp on
 stdout and reports the self-checks on stderr. statsmodels and scipy are
@@ -57,6 +70,7 @@ import scipy
 import statsmodels
 import statsmodels.api as sm
 from scipy import stats
+from statsmodels.stats.multitest import multipletests
 
 SR = stats.studentized_range
 
@@ -64,6 +78,26 @@ ALPHA = 0.05
 
 # ---- DS1: three groups, cell-means coded.
 DS1_GROUPS = ([1.0, 2.0, 3.0], [4.0, 6.0, 8.0], [5.0, 5.0, 8.0])
+
+# A second grid on the same fit. Scaling the third row by 2 doubles that
+# mean and its standard error, which gives three distinct pairwise p-values
+# where L = I(3) gives two equal ones.
+DS1_SPREAD_L = [
+    [1.0, 0.0, 0.0],
+    [0.0, 1.0, 0.0],
+    [0.0, 0.0, 2.0],
+]
+
+# statsmodels' name for each method, in the order emm_adjust_name reports
+# them. "simes-hochberg" is the step-up Hochberg procedure, which is what
+# R's p.adjust calls "hochberg"; self-check 5 confirms that.
+ADJUST_ORACLE = {
+    "bonferroni": "bonferroni",
+    "holm": "holm",
+    "hochberg": "simes-hochberg",
+    "bh": "fdr_bh",
+    "by": "fdr_by",
+}
 
 # ---- DS2: the 12-row regression test_lm_fit.cpp pins, plus a dependent
 # fourth column. Same numbers as gen_lin_hyp_fixtures.py's DS1.
@@ -108,6 +142,46 @@ def row_test(res, row):
 def pairs(n):
     """i < j, row-major: the kernel's own enumeration order."""
     return [(i, j) for i in range(n) for j in range(i + 1, n)]
+
+
+def adjusted(ps):
+    """The five adjusted p-value vectors, from statsmodels."""
+    return {name: [float(v) for v in multipletests(ps, method=oracle)[1]]
+            for name, oracle in ADJUST_ORACLE.items()}
+
+
+def canonical(ps, method):
+    """The adjustment written out as p_adjust.hpp's doc comment states it.
+
+    Only used to confirm the oracle's convention in self-check 5. The
+    goldens themselves come from statsmodels, never from here.
+    """
+    n = len(ps)
+    order = sorted(range(n), key=lambda d: ps[d])
+    out = [float("nan")] * n
+    if method == "bonferroni":
+        return [min(1.0, n * p) for p in ps]
+    if method == "holm":
+        run = 0.0
+        for rank0, d in enumerate(order):
+            run = max(run, (n - rank0) * ps[d])
+            out[d] = min(1.0, run)
+        return out
+    run = float("inf")
+    harmonic = sum(1.0 / j for j in range(1, n + 1))
+    for rank0 in range(n - 1, -1, -1):
+        d = order[rank0]
+        if method == "hochberg":
+            q = (n - rank0) * ps[d]
+        elif method == "bh":
+            q = (n / (rank0 + 1)) * ps[d]
+        elif method == "by":
+            q = (n * harmonic / (rank0 + 1)) * ps[d]
+        else:
+            raise ValueError(method)
+        run = min(run, q)
+        out[d] = min(1.0, run)
+    return out
 
 
 # --------------------------------- DS1 --------------------------------------
@@ -234,33 +308,39 @@ if not worst_sw < 1e-13:
 print(f"self-check 3 OK: pairwise se = sqrt(C_ii + C_jj - 2*C_ij), "
       f"worst relative {worst_sw:.3e}", file=sys.stderr)
 
-# ------------- the adjustments, on DS1's three pairs ------------------------
-m1 = len(ds1_pairs)          # three estimable pairs
+# ---------------- DS1's second grid: three distinct p-values -----------------
+L1s = np.asarray(DS1_SPREAD_L, float)
+C1s = L1s @ cov1 @ L1s.T
+ds1s_means = [row_test(fit1, L1s[i]) for i in range(3)]
+ds1s_diffs = [row_test(fit1, L1s[i] - L1s[j]) for (i, j) in ds1_pairs]
+if len({round(row["p_value"], 12) for row in ds1s_diffs}) != 3:
+    fail("the spread grid's three p-values are not distinct, so it cannot "
+         "separate holm from bonferroni")
+
+# ------------- the adjustments, on both of DS1's grids -----------------------
+m1 = len(ds1_pairs)          # three estimable pairs on either grid
 k1 = 3                       # three estimable means, the Tukey family size
 
 # Tukey: the tail of the studentized range at sqrt(2)*|t|, and the limit
 # multiplier q(1 - alpha; k, df) / sqrt(2).
 tukey_crit = float(SR.ppf(1.0 - ALPHA, k1, df1)) / np.sqrt(2.0)
-for row in ds1_diffs:
-    row["p_tukey"] = float(SR.sf(np.sqrt(2.0) * abs(row["t_statistic"]), k1, df1))
-    row["tukey_lower"] = row["estimate"] - tukey_crit * row["std_error"]
-    row["tukey_upper"] = row["estimate"] + tukey_crit * row["std_error"]
-
-# Bonferroni: min(1, m*p), with limits from the t quantile at 1 - alpha/(2m).
+# Bonferroni's limits: the t quantile at 1 - alpha/(2m).
 bonf_crit = float(stats.t.ppf(1.0 - ALPHA / (2.0 * m1), df1))
-for row in ds1_diffs:
-    row["p_bonferroni"] = min(1.0, m1 * row["p_value"])
-    row["bonf_lower"] = row["estimate"] - bonf_crit * row["std_error"]
-    row["bonf_upper"] = row["estimate"] + bonf_crit * row["std_error"]
 
-# Holm, the step-down form R's p.adjust computes. Here to check the wiring
-# into statsduck::adjust_p, which test_p_adjust.cpp already tests on its own.
-order = sorted(range(m1), key=lambda d: ds1_diffs[d]["p_value"])
-cummax = 0.0
-for rank0, d in enumerate(order):
-    q = (m1 - rank0) * ds1_diffs[d]["p_value"]
-    cummax = max(cummax, q)
-    ds1_diffs[d]["p_holm"] = min(1.0, cummax)
+for rows in (ds1_diffs, ds1s_diffs):
+    ps = [row["p_value"] for row in rows]
+    adj = adjusted(ps)
+    for d, row in enumerate(rows):
+        row["p_tukey"] = float(SR.sf(np.sqrt(2.0) * abs(row["t_statistic"]), k1, df1))
+        row["tukey_lower"] = row["estimate"] - tukey_crit * row["std_error"]
+        row["tukey_upper"] = row["estimate"] + tukey_crit * row["std_error"]
+        row["bonf_lower"] = row["estimate"] - bonf_crit * row["std_error"]
+        row["bonf_upper"] = row["estimate"] + bonf_crit * row["std_error"]
+        row["p_bonferroni"] = adj["bonferroni"][d]
+        row["p_holm"] = adj["holm"][d]
+        row["p_hochberg"] = adj["hochberg"][d]
+        row["p_bh"] = adj["bh"][d]
+        row["p_by"] = adj["by"][d]
 
 # ---- Self-check 4: at two means the Tukey p is the unadjusted p.
 # Q = sqrt(2)*|T| when k = 2, so the studentized range tail at sqrt(2)*|t|
@@ -278,13 +358,82 @@ if not worst_k2 < 1e-11:
 print(f"self-check 4 OK: at k = 2 the Tukey p is the unadjusted p, "
       f"worst {worst_k2:.3e}", file=sys.stderr)
 
+# ---- Self-check 5: the oracle's convention is the one p_adjust.hpp states.
+# statsmodels calls the step-up Hochberg procedure "simes-hochberg", and R's
+# p.adjust calls it "hochberg". If those are not the same procedure, every
+# hochberg golden below is wrong, so the formulas in p_adjust.hpp's doc
+# comment are written out above and compared. The formulas are ONLY a check
+# on the oracle's naming; the goldens come from statsmodels.
+worst_conv = 0.0
+worst_conv_where = ""
+for label, rows in (("I(3)", ds1_diffs), ("spread", ds1s_diffs)):
+    ps = [row["p_value"] for row in rows]
+    for method in ADJUST_ORACLE:
+        want = canonical(ps, method)
+        got = adjusted(ps)[method]
+        for d in range(len(ps)):
+            gap = abs(got[d] - want[d])
+            if gap > worst_conv:
+                worst_conv, worst_conv_where = gap, f"{label} {method}[{d}]"
+# The band is arithmetic noise: both sides multiply the same p by the same
+# integer ratio, grouped differently.
+if not worst_conv < 1e-14:
+    fail(f"multipletests disagrees with p_adjust.hpp's formulas "
+         f"(worst {worst_conv:.3e} at {worst_conv_where})")
+print(f"self-check 5 OK: multipletests matches p_adjust.hpp's formulas, "
+      f"worst {worst_conv:.3e}", file=sys.stderr)
+
+# ---- Self-check 6: between the two grids every method is a different number.
+# This is what makes the goldens pin the EmmAdjust to AdjustMethod mapping.
+# On L = I(3) the p-set is {p, p, 1}, where holm and bonferroni agree; on the
+# spread grid hochberg and BH agree. Neither grid alone separates all six.
+METHODS = ("none", "bonferroni", "holm", "hochberg", "bh", "by")
+
+
+def method_vector(rows, name):
+    key = {"none": "p_value", "bonferroni": "p_bonferroni", "holm": "p_holm",
+           "hochberg": "p_hochberg", "bh": "p_bh", "by": "p_by"}[name]
+    return [row[key] for row in rows]
+
+
+unseparated = []
+for a_i, a in enumerate(METHODS):
+    for b in METHODS[a_i + 1:]:
+        separated = False
+        for rows in (ds1_diffs, ds1s_diffs):
+            va, vb = method_vector(rows, a), method_vector(rows, b)
+            if any(abs(x - y) > 1e-12 for x, y in zip(va, vb)):
+                separated = True
+        if not separated:
+            unseparated.append(f"{a} vs {b}")
+if unseparated:
+    fail("these method pairs give identical goldens on BOTH grids, so the "
+         f"mapping is unpinned: {', '.join(unseparated)}")
+same_on_identity = [f"{a} vs {b}" for a_i, a in enumerate(METHODS)
+                    for b in METHODS[a_i + 1:]
+                    if all(abs(x - y) <= 1e-12 for x, y in
+                           zip(method_vector(ds1_diffs, a),
+                               method_vector(ds1_diffs, b)))]
+same_on_spread = [f"{a} vs {b}" for a_i, a in enumerate(METHODS)
+                  for b in METHODS[a_i + 1:]
+                  if all(abs(x - y) <= 1e-12 for x, y in
+                         zip(method_vector(ds1s_diffs, a),
+                             method_vector(ds1s_diffs, b)))]
+print(f"self-check 6 OK: all {len(METHODS)} methods are separated across the "
+      f"two grids", file=sys.stderr)
+print(f"  agree on L = I(3):   {', '.join(same_on_identity) or 'none'}",
+      file=sys.stderr)
+print(f"  agree on the spread: {', '.join(same_on_spread) or 'none'}",
+      file=sys.stderr)
+
 # --------------------------------- emit -------------------------------------
 MEAN_FIELDS = ("estimate", "std_error", "t_statistic", "p_value",
                "lower_cl", "upper_cl")
 DIFF_FIELDS = ("estimate", "std_error", "t_statistic", "p_value",
                "lower_cl", "upper_cl",
                "p_tukey", "tukey_lower", "tukey_upper",
-               "p_bonferroni", "bonf_lower", "bonf_upper", "p_holm")
+               "p_bonferroni", "bonf_lower", "bonf_upper",
+               "p_holm", "p_hochberg", "p_bh", "p_by")
 
 
 def emit_mean_row(row):
@@ -337,6 +486,10 @@ P(f"//   each mean is its group's sample mean, worst {worst_mean:.3e} absolute")
 P(f"//   se[g] = sqrt(s^2/n_g), worst {worst_se:.3e} absolute")
 P(f"//   pairwise se = sqrt(C_ii + C_jj - 2*C_ij), worst {worst_sw:.3e} relative")
 P(f"//   at k = 2 the Tukey p is the unadjusted p, worst {worst_k2:.3e} absolute")
+P(f"//   multipletests matches p_adjust.hpp's formulas, worst {worst_conv:.3e}")
+P("//   every method is separated from every other on one of the two grids;")
+P(f"//     equal on L = I(3): {', '.join(same_on_identity) or 'none'}")
+P(f"//     equal on the spread grid: {', '.join(same_on_spread) or 'none'}")
 P("#pragma once")
 P()
 P("#include <limits>")
@@ -354,12 +507,13 @@ P("\tdouble lower_cl;")
 P("\tdouble upper_cl;")
 P("};")
 P()
-P("// One pair, with the three adjustments the test checks against an oracle.")
+P("// One pair, with every adjustment the test checks against an oracle.")
 P("// lower_cl and upper_cl are the UNADJUSTED limits, estimate +- t(1-alpha/2,")
 P("// df)*se, which is what holm, hochberg, BH, BY and none all report.")
-P("// p_tukey and the tukey limits come from the studentized range; p_bonferroni")
-P("// and the bonf limits from min(1, m*p) and t(1 - alpha/(2m)); p_holm from the")
-P("// step-down form, which pins the wiring into statsduck::adjust_p.")
+P("// p_tukey and the tukey limits come from the studentized range; the bonf")
+P("// limits from t(1 - alpha/(2m)); the five adjusted p-values from statsmodels")
+P("// multipletests, which pins the EmmAdjust to AdjustMethod mapping one")
+P("// method at a time.")
 P("struct EmmDiffCase {")
 P("\tunsigned i;")
 P("\tunsigned j;")
@@ -376,6 +530,9 @@ P("\tdouble p_bonferroni;")
 P("\tdouble bonf_lower;")
 P("\tdouble bonf_upper;")
 P("\tdouble p_holm;")
+P("\tdouble p_hochberg;")
+P("\tdouble p_bh;")
+P("\tdouble p_by;")
 P("};")
 P()
 P(f"inline constexpr double kEmmAlpha = {g(ALPHA)};")
@@ -408,6 +565,27 @@ P(f"inline constexpr double kDs1TukeyCrit = {g(tukey_crit)}; "
   "// qtukey(1-alpha, k, df)/sqrt(2)")
 P(f"inline constexpr double kDs1BonfCrit = {g(bonf_crit)}; "
   "// t(1-alpha/(2m), df)")
+P()
+P("// -- DS1 again, with the third grid row scaled by 2 ----------------------")
+P("// Same fit, same beta and cov. This grid exists because L = I(3) gives the")
+P("// p-set {p, p, 1}, where holm and bonferroni are equal, so that grid cannot")
+P("// tell those two methods apart. Here the three p-values are distinct and")
+P("// they differ. The reverse holds too: hochberg and BH are equal here and")
+P("// differ on L = I(3), so both grids are needed to pin all six methods.")
+P("inline constexpr double kDs1SpreadL[9] = {")
+for i in range(3):
+    P("    " + ", ".join(g(L1s[i, j]) for j in range(3)) + ("," if i < 2 else ""))
+P("};")
+P()
+P("inline constexpr EmmMeanCase kDs1SpreadMeans[3] = {")
+for row in ds1s_means:
+    P(emit_mean_row(row))
+P("};")
+P()
+P("inline constexpr EmmDiffCase kDs1SpreadDiffs[3] = {")
+for (i, j), row in zip(ds1_pairs, ds1s_diffs):
+    P("    " + emit_diff_row(i, j, row) + ",")
+P("};")
 P()
 P("// -- DS2: rank deficient, cov with off-diagonal entries -------------------")
 P(f"inline constexpr double kDs2Df = {g(df2)};")

@@ -303,13 +303,21 @@ static void test_ds1_other_adjustments() {
 
 // ──────────────── hochberg, BH and BY: the EmmAdjust to AdjustMethod map ─────
 static void test_ds1_step_methods() {
-	std::printf("ds1_step_methods (hochberg, BH, BY)\n");
+	std::printf("ds1_step_methods (hochberg, BH, BY on the p-set {p, p, 1})\n");
 	const Mat L = ds1_grid();
-	// The remaining three methods reach statsduck::adjust_p through one enum
-	// mapping, and test_p_adjust.cpp already tests the methods themselves. What
-	// is untested without this is the MAPPING: BH and BY swapped, or hochberg
-	// wired to holm, would pass every other assertion in this file. So each is
-	// pinned by a relation only that method satisfies.
+	// These three reach statsduck::adjust_p through one enum mapping, and
+	// test_p_adjust.cpp already tests the methods themselves. What is untested
+	// without this is the MAPPING: BH and BY swapped, or hochberg wired to
+	// holm, would pass every other assertion in this file. So each is pinned
+	// against its own golden, which the generator takes from statsmodels
+	// multipletests.
+	//
+	// This grid's p-set is {p, p, 1}, on which BONFERRONI AND HOLM ARE EQUAL —
+	// the fixture shows it, kDs1Diffs' p_bonferroni and p_holm are the same
+	// number — so this grid cannot separate those two. test_ds1_spread_grid
+	// does, on a p-set with three distinct values. Each grid separates what the
+	// other cannot; the generator's self-check 6 asserts that between them
+	// every method is a different number.
 	const auto rholm = emmeans(L, kBetaDs1, kCovDs1, kDs1Df, kEmmAlpha, EmmAdjust::HOLM);
 	const auto rhoch = emmeans(L, kBetaDs1, kCovDs1, kDs1Df, kEmmAlpha, EmmAdjust::HOCHBERG);
 	const auto rbh = emmeans(L, kBetaDs1, kCovDs1, kDs1Df, kEmmAlpha, EmmAdjust::BH);
@@ -318,6 +326,10 @@ static void test_ds1_step_methods() {
 	CHECK_MSG(std::string(statsduck::emm_adjust_name(rhoch.adjust)) == "hochberg", "hochberg echoes");
 	CHECK_MSG(std::string(statsduck::emm_adjust_name(rbh.adjust)) == "BH", "BH echoes as BH");
 	CHECK_MSG(std::string(statsduck::emm_adjust_name(rby.adjust)) == "BY", "BY echoes as BY");
+	// The premise this grid rests on: if the fixture ever stops having
+	// bonferroni and holm equal here, the comment above is stale.
+	CHECK_MSG(kDs1Diffs[0].p_bonferroni == kDs1Diffs[0].p_holm,
+	          "this p-set really does make bonferroni and holm equal");
 
 	// H_3, the harmonic number BY multiplies BH's threshold by. With three
 	// pairs the cumulative minimum lands on the same rank for both methods, so
@@ -328,12 +340,25 @@ static void test_ds1_step_methods() {
 		const double hoch = diff_at(rhoch, d).p_adjusted;
 		const double bh = diff_at(rbh, d).p_adjusted;
 		const double by = diff_at(rby, d).p_adjusted;
-		// Hochberg steps up where holm steps down, so it is never the larger.
-		check(hoch <= holm, lbl("hochberg is no more conservative than holm", d), __LINE__);
-		// BH controls the false discovery rate, so it is never larger than the
-		// familywise step-down value.
-		check(bh <= holm, lbl("BH is no more conservative than holm", d), __LINE__);
-		check(by >= bh, lbl("BY is no less conservative than BH", d), __LINE__);
+		// Each against its own golden. This is what actually pins the mapping;
+		// the relations below only say why the goldens differ.
+		check_p(hoch, kDs1Diffs[d].p_hochberg, RTOL_P, ATOL_P, lbl("ds1 pair p_hochberg", d),
+		        __LINE__);
+		check_p(bh, kDs1Diffs[d].p_bh, RTOL_P, ATOL_P, lbl("ds1 pair p_bh", d), __LINE__);
+		check_p(by, kDs1Diffs[d].p_by, RTOL_P, ATOL_P, lbl("ds1 pair p_by", d), __LINE__);
+		// Hochberg steps up where holm steps down, so on this p-set it is
+		// STRICTLY smaller for the two pairs with a p below 1: 0.0480164
+		// against holm's 0.0720246. A `<=` here would pass with equality, and
+		// so would wiring EmmAdjust::HOCHBERG to AdjustMethod::HOLM.
+		if (d < 2) {
+			check(hoch < holm, lbl("hochberg is strictly smaller than holm here", d), __LINE__);
+			check(bh < hoch, lbl("and BH strictly smaller again", d), __LINE__);
+			check(by > bh, lbl("while BY is strictly larger than BH", d), __LINE__);
+		} else {
+			// The third pair's raw p is exactly 1, which every method leaves at 1.
+			check(hoch == 1.0 && holm == 1.0 && bh == 1.0 && by == 1.0,
+			      lbl("a raw p of 1 stays 1 under every method", d), __LINE__);
+		}
 		if (bh < 1.0) {
 			// The band is arithmetic noise: both sides are the same raw p times a
 			// constant, grouped differently.
@@ -348,6 +373,160 @@ static void test_ds1_step_methods() {
 		check_close(diff_at(rby, d).upper_cl, kDs1Diffs[d].upper_cl, TOL_CL,
 		            lbl("BY limits are unadjusted", d), __LINE__);
 	}
+}
+
+// ─────────── the same fit, a p-set with three distinct values ────────────────
+static void test_ds1_spread_grid() {
+	std::printf("ds1_spread_grid (three distinct p-values: holm vs bonferroni)\n");
+	// DS1's beta and cov again, with the third grid row scaled by 2. That
+	// doubles the third mean and its standard error, which makes the three
+	// pairwise p-values distinct. On distinct p-values holm's step-down
+	// cumulative maximum is strictly below bonferroni's flat n·p for every
+	// pair but the smallest, so this grid separates the two methods that
+	// test_ds1_step_methods cannot.
+	const Mat L = mat(3, 3, std::vector<double>(kDs1SpreadL, kDs1SpreadL + 9));
+	CHECK_MSG(kDs1SpreadDiffs[0].p_value != kDs1SpreadDiffs[1].p_value &&
+	              kDs1SpreadDiffs[1].p_value != kDs1SpreadDiffs[2].p_value &&
+	              kDs1SpreadDiffs[0].p_value != kDs1SpreadDiffs[2].p_value,
+	          "the three raw p-values really are distinct");
+
+	// The fit first: the grid is new, so its means and raw per-pair values need
+	// checking against the oracle before any adjustment means anything.
+	const auto rn = emmeans(L, kBetaDs1, kCovDs1, kDs1Df, kEmmAlpha, EmmAdjust::NONE);
+	CHECK(rn.ok && rn.means.size() == 3 && rn.diffs.size() == 3);
+	CHECK_MSG(rn.k_compare == 3, "all three scaled rows are estimable");
+	for (std::size_t g = 0; g < 3; g++) {
+		const EmmMean m = mean_at(rn, g);
+		const EmmMeanCase &w = kDs1SpreadMeans[g];
+		check_close(m.estimate, w.estimate, TOL, lbl("spread mean estimate", g), __LINE__);
+		check_close(m.std_error, w.std_error, TOL, lbl("spread mean std_error", g), __LINE__);
+		check_p(m.p_value, w.p_value, RTOL_P, ATOL_P, lbl("spread mean p", g), __LINE__);
+		check_close(m.lower_cl, w.lower_cl, TOL_CL, lbl("spread mean lower_cl", g), __LINE__);
+	}
+
+	const auto rbonf = emmeans(L, kBetaDs1, kCovDs1, kDs1Df, kEmmAlpha, EmmAdjust::BONFERRONI);
+	const auto rholm = emmeans(L, kBetaDs1, kCovDs1, kDs1Df, kEmmAlpha, EmmAdjust::HOLM);
+	const auto rhoch = emmeans(L, kBetaDs1, kCovDs1, kDs1Df, kEmmAlpha, EmmAdjust::HOCHBERG);
+	const auto rbh = emmeans(L, kBetaDs1, kCovDs1, kDs1Df, kEmmAlpha, EmmAdjust::BH);
+	const auto rby = emmeans(L, kBetaDs1, kCovDs1, kDs1Df, kEmmAlpha, EmmAdjust::BY);
+	CHECK(rbonf.ok && rholm.ok && rhoch.ok && rbh.ok && rby.ok);
+
+	for (std::size_t d = 0; d < 3; d++) {
+		const EmmDiffCase &w = kDs1SpreadDiffs[d];
+		check_close(diff_at(rn, d).estimate, w.estimate, TOL, lbl("spread pair estimate", d), __LINE__);
+		check_close(diff_at(rn, d).std_error, w.std_error, TOL, lbl("spread pair std_error", d),
+		            __LINE__);
+		check_close(diff_at(rn, d).t_statistic, w.t_statistic, TOL_T, lbl("spread pair t", d),
+		            __LINE__);
+		check_p(diff_at(rn, d).p_value, w.p_value, RTOL_P, ATOL_P, lbl("spread pair p", d), __LINE__);
+		// Every method against its own golden on this p-set.
+		check_p(diff_at(rbonf, d).p_adjusted, w.p_bonferroni, RTOL_P, ATOL_P,
+		        lbl("spread p_bonferroni", d), __LINE__);
+		check_p(diff_at(rholm, d).p_adjusted, w.p_holm, RTOL_P, ATOL_P, lbl("spread p_holm", d),
+		        __LINE__);
+		check_p(diff_at(rhoch, d).p_adjusted, w.p_hochberg, RTOL_P, ATOL_P, lbl("spread p_hochberg", d),
+		        __LINE__);
+		check_p(diff_at(rbh, d).p_adjusted, w.p_bh, RTOL_P, ATOL_P, lbl("spread p_bh", d), __LINE__);
+		check_p(diff_at(rby, d).p_adjusted, w.p_by, RTOL_P, ATOL_P, lbl("spread p_by", d), __LINE__);
+		// Pair 1 is the smallest raw p, where holm's first step IS n·p, so the
+		// two agree there and only there. Pairs 0 and 2 are the separation.
+		if (d == 1) {
+			check(diff_at(rholm, d).p_adjusted == diff_at(rbonf, d).p_adjusted,
+			      lbl("holm equals bonferroni at the smallest p", d), __LINE__);
+		} else {
+			check(diff_at(rholm, d).p_adjusted < diff_at(rbonf, d).p_adjusted,
+			      lbl("holm is strictly below bonferroni here", d), __LINE__);
+			check(diff_at(rhoch, d).p_adjusted < diff_at(rholm, d).p_adjusted,
+			      lbl("and hochberg strictly below holm", d), __LINE__);
+		}
+	}
+	// What this grid cannot do, stated so the next reader does not expect it
+	// to: hochberg and BH give the same number here, and the {p, p, 1} grid in
+	// test_ds1_step_methods is what tells those two apart.
+	CHECK_MSG(kDs1SpreadDiffs[0].p_hochberg == kDs1SpreadDiffs[0].p_bh,
+	          "hochberg and BH coincide on this p-set, so the other grid separates them");
+	CHECK_MSG(kDs1Diffs[0].p_hochberg != kDs1Diffs[0].p_bh, "and it does");
+}
+
+// ───────── the guard that keeps a NaN p-value out of adjust_p's sort ─────────
+static void test_unrankable_pair_excluded_from_the_family() {
+	std::printf("unrankable_pair (the guard on adjust_p's sort, m = 2 not 3)\n");
+	// Three grid rows, the first two identical. The duplicate pair's variance
+	// is exactly zero by cancellation, so it has no t and no p — and a NaN
+	// cannot be ranked. statsduck::adjust_p sorts its valid entries with
+	// p_in[a] < p_in[b], a comparator that is false in both directions at a
+	// NaN. That is not a strict weak ordering, so std::sort would be undefined.
+	// src/emmeans.cpp therefore keeps such a pair out of the family, and this
+	// is the test that says why that line is there: without it, the four
+	// methods below reach the sort with a NaN among three valid entries.
+	//
+	// The exclusion is observable, because it is the family SIZE: over two
+	// comparisons holm gives 2p and BY gives H_2 = 1.5 times BH, while over
+	// three they would give 3p and H_3 = 1.8333 times BH.
+	Mat L(3, 3);
+	L(0, 0) = 1.0;
+	L(1, 0) = 1.0; // identical to row 0
+	L(2, 1) = 1.0;
+
+	struct Case {
+		EmmAdjust method;
+		const char *name;
+		double multiple; // the adjusted p as a multiple of the raw p, at m = 2
+		double at_three; // what a family of three would have given
+	};
+	// From statsmodels multipletests on two tied p-values, against three.
+	static const Case kCases[] = {
+	    {EmmAdjust::HOLM, "holm", 2.0, 3.0},
+	    {EmmAdjust::HOCHBERG, "hochberg", 1.0, 1.0},
+	    {EmmAdjust::BH, "BH", 1.0, 1.0},
+	    {EmmAdjust::BY, "BY", 1.5, 1.0 + 1.0 / 2.0 + 1.0 / 3.0},
+	};
+	for (const Case &c : kCases) {
+		const auto r = emmeans(L, kBetaDs1, kCovDs1, kDs1Df, kEmmAlpha, c.method);
+		check(r.ok, lbl(c.name, 0), __LINE__);
+		check(r.means.size() == 3 && r.diffs.size() == 3, lbl("three means, three pairs", 0),
+		      __LINE__);
+		check(r.k_compare == 3, lbl("all three rows are estimable means", 0), __LINE__);
+
+		// The duplicate pair: estimable, no variance, and so no p to adjust.
+		const EmmDiff dup = diff_at(r, 0);
+		check(dup.i == 0 && dup.j == 1, lbl("the duplicate pair is (0, 1)", 0), __LINE__);
+		check(dup.estimable, lbl("the duplicate pair is estimable", 0), __LINE__);
+		check(dup.std_error == 0.0, lbl("with no variance", 0), __LINE__);
+		check(std::isnan(dup.p_value), lbl("and no raw p", 0), __LINE__);
+		check(std::isnan(dup.p_adjusted), lbl("so no adjusted p either", 0), __LINE__);
+
+		// The other two pairs are adjusted over a family of two, not three.
+		for (std::size_t d = 1; d < 3; d++) {
+			const EmmDiff p = diff_at(r, d);
+			check(p.estimable && std::isfinite(p.p_value), lbl("a rankable pair", d), __LINE__);
+			// The band is arithmetic noise: the adjusted p is the raw p times a
+			// small rational, computed the same way on both sides.
+			check_close(p.p_adjusted, c.multiple * p.p_value, 1e-12 * c.multiple * p.p_value,
+			            lbl(c.name, d), __LINE__);
+			if (c.at_three != c.multiple) {
+				// The discriminator: a family of three would have given this
+				// instead, so the guard is doing something the test can see.
+				check(std::fabs(p.p_adjusted - c.at_three * p.p_value) > 1e-6,
+				      lbl("and not what a family of three would give", d), __LINE__);
+			}
+		}
+	}
+
+	// Tukey takes the other branch, so it is checked separately. sqrt(2)·|NaN|
+	// is NaN, the studentized range CDF returns NaN there, and the adjusted p
+	// comes back NaN — consistent with the raw p, which is also NaN.
+	const auto rt = emmeans(L, kBetaDs1, kCovDs1, kDs1Df, kEmmAlpha, EmmAdjust::TUKEY);
+	CHECK(rt.ok);
+	CHECK_MSG(std::isnan(diff_at(rt, 0).p_adjusted), "tukey has no adjusted p for a zero-SE pair");
+	CHECK_MSG(diff_at(rt, 0).lower_cl == 0.0 && diff_at(rt, 0).upper_cl == 0.0,
+	          "but its interval is still the point itself");
+	CHECK_MSG(std::isfinite(diff_at(rt, 1).p_adjusted) && std::isfinite(diff_at(rt, 2).p_adjusted),
+	          "and the other two pairs still get a tukey p");
+	// Tukey's family size is k_compare, the estimable MEANS, so it is 3 here
+	// even though only two pairs have a p-value. The two counts are different
+	// things and this grid is where they differ.
+	CHECK_MSG(rt.k_compare == 3, "tukey's k is the mean count, not the pair count");
 }
 
 // ─────────────── a V that is not a covariance: the two sides of the tol ──────
@@ -600,9 +779,16 @@ static void test_duplicated_rows() {
 	          "the echoed name is canonical");
 }
 
-// ──────────────── the tolerance decision does not depend on scale ───────────
+// ─────────── estimates, t and estimability under a rescaled cov ─────────────
+// What this pins is what it checks: the estimates, the standard errors, the t
+// statistics and the estimability OUTCOME under cov × 1e12 and × 1e-12. It is
+// not a test of the negative-variance tolerance — DS1's variances are all
+// comfortably positive, so that branch never comes near its boundary here.
+// test_negative_variance is where the tolerance's relative scale is pinned,
+// by the same -1e-14 landing on opposite sides of it against a scale of 1 and
+// a scale of 1e-20.
 static void test_scale_invariance() {
-	std::printf("scale_invariance (cov x 1e12)\n");
+	std::printf("scale_invariance (cov x 1e12 and x 1e-12)\n");
 	const Mat L = ds1_grid();
 	const auto r = emmeans(L, kBetaDs1, kCovDs1, 6.0, 0.05, EmmAdjust::TUKEY);
 
@@ -772,6 +958,8 @@ int main() {
 	test_ds1_against_oracle();
 	test_ds1_other_adjustments();
 	test_ds1_step_methods();
+	test_ds1_spread_grid();
+	test_unrankable_pair_excluded_from_the_family();
 	test_negative_variance();
 	test_ds2_aliased_column();
 	test_duplicated_rows();
