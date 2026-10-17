@@ -562,6 +562,56 @@ static void test_one_estimable_mean() {
 	CHECK_CLOSE(mean_at(rm, 0).estimate, kDs2Means[0].estimate, TOL);
 }
 
+// ──────────────────────── extreme df and alpha ──────────────────────────────
+static void test_extreme_df_and_alpha() {
+	std::printf("extreme_df_and_alpha (df = 0.5, alpha = 1e-10)\n");
+	const Mat L = ds1_grid();
+	// A fractional, tiny df with an extreme alpha drives StudentTQuantile deep
+	// into its tail. The result may be enormous, but it must be reached in
+	// bounded time and must be either finite or an infinity, never a NaN that
+	// reads as a valid limit.
+	const auto re = emmeans(L, kBetaDs1, kCovDs1, 0.5, 1e-10, EmmAdjust::NONE);
+	CHECK_MSG(re.ok, "a fractional df is accepted");
+	CHECK_MSG(re.df_den == 0.5 && re.alpha == 1e-10, "df and alpha are echoed exactly");
+	const double lo = mean_at(re, 0).lower_cl, hi = mean_at(re, 0).upper_cl;
+	CHECK_MSG(!std::isnan(lo) && !std::isnan(hi), "limits are not NaN");
+	CHECK_MSG(lo <= mean_at(re, 0).estimate && mean_at(re, 0).estimate <= hi,
+	          "the estimate lies inside its own interval");
+	// The same must hold for a pair, whose limits take a different route.
+	const double plo = diff_at(re, 0).lower_cl, phi = diff_at(re, 0).upper_cl;
+	CHECK_MSG(!std::isnan(plo) && !std::isnan(phi), "a pair's limits are not NaN either");
+	CHECK_MSG(plo <= diff_at(re, 0).estimate && diff_at(re, 0).estimate <= phi,
+	          "and the difference lies inside its own interval");
+	// At this df the interval is enormous, which is the honest answer, not a
+	// failure: half a degree of freedom carries almost no information.
+	CHECK_MSG(hi - lo > 1e9, "and the interval is enormous, as it should be");
+
+	// Tukey at the same extremes, which goes through the studentized range
+	// quantile instead. It is documented as degrading below df = 4 at a
+	// non-integer df, so the value is not pinned — only that it is a number.
+	const auto rt = emmeans(L, kBetaDs1, kCovDs1, 0.5, 1e-10, EmmAdjust::TUKEY);
+	CHECK_MSG(rt.ok, "tukey accepts the same extremes");
+	for (std::size_t d = 0; d < rt.diffs.size(); d++) {
+		check(!std::isnan(diff_at(rt, d).lower_cl) && !std::isnan(diff_at(rt, d).upper_cl),
+		      lbl("tukey limits are not NaN at df = 0.5", d), __LINE__);
+		check(diff_at(rt, d).lower_cl <= diff_at(rt, d).upper_cl,
+		      lbl("and they are the right way round", d), __LINE__);
+	}
+
+	// df at the boundary is misuse, not a very wide interval.
+	const auto rz = emmeans(L, kBetaDs1, kCovDs1, 0.0, 0.05, EmmAdjust::NONE);
+	CHECK_MSG(!rz.ok, "df = 0 is misuse");
+	CHECK_MSG(rz.error.find("df") != std::string::npos, "and the message names df");
+
+	// So is alpha at either boundary: an alpha of 0 asks for an interval of
+	// infinite width and an alpha of 1 for one of zero width, and neither is a
+	// confidence level.
+	for (const double edge : {0.0, 1.0}) {
+		const auto ra = emmeans(L, kBetaDs1, kCovDs1, 6.0, edge, EmmAdjust::NONE);
+		CHECK_MSG(!ra.ok, "alpha at a boundary is misuse");
+	}
+}
+
 int main() {
 	std::printf("=== test_emmeans ===\n");
 	test_ds1_hand_values();
@@ -571,6 +621,7 @@ int main() {
 	test_duplicated_rows();
 	test_scale_invariance();
 	test_one_estimable_mean();
+	test_extreme_df_and_alpha();
 	test_misuse();
 	test_adjust_names();
 	std::printf("%s: %d checks, %d failures\n", g_fail == 0 ? "PASS" : "FAIL", g_checks, g_fail);
