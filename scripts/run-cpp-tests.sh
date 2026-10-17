@@ -10,6 +10,8 @@
 #   - optimize kernel      (Nelder-Mead): test_optimize.cpp (header-only)
 #   - estimability, the aliased-coefficient rule (#21): test_estimability.cpp
 #     (header-only)
+#   - p_adjust, the multiple-testing methods (#21): test_p_adjust.cpp
+#     (header-only)
 # The first three link Eigen (via linalg.cpp); lm_core and lin_hyp also pull
 # in the header-only distributions.hpp. Each suite returns 0 on all-pass.
 #
@@ -65,6 +67,9 @@ build_and_run test_optimize \
 
 build_and_run test_estimability \
   "$ROOT/test/cpp/test_estimability.cpp"
+
+build_and_run test_p_adjust \
+  "$ROOT/test/cpp/test_p_adjust.cpp"
 
 if [[ $rc -ne 0 ]]; then
   echo "C++ unit tests FAILED." >&2
