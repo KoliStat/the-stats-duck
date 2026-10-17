@@ -1,8 +1,11 @@
 #pragma once
 
+#include <algorithm>
 #include <cmath>
+#include <cstddef>
 #include <limits>
 #include <stdexcept>
+#include <vector>
 
 // Centralized PDF / CDF / quantile implementations for the distributions used
 // throughout stats_duck. Header-only so callers pay no link cost and the
@@ -13,6 +16,15 @@
 //     incomplete companions).
 //   - P. J. Acklam, "An algorithm for computing the inverse normal
 //     cumulative distribution function" (Acklam's rational approximation).
+//   - M. Abramowitz and I. A. Stegun, Handbook of Mathematical Functions,
+//     §8 (Legendre polynomials) and §25.4 (Gauss-Legendre quadrature): the
+//     node and weight formulas used by the studentized range section.
+//   - W. M. Copenhaver and B. Holland, "Computation of the distribution of
+//     the maximum studentized range statistic with application to multiple
+//     significance testing of simple effects", Journal of Statistical
+//     Computation and Simulation 30 (1988), 1-15: the two-integral form of
+//     the studentized range distribution. The mathematics only. R's ptukey
+//     is GPL and no part of it was read, ported or paraphrased here.
 
 namespace stats_duck {
 
@@ -921,6 +933,496 @@ inline double HyperGeomQuantile(double p, double m, double n, double k) {
 		}
 	}
 	return hi;
+}
+
+// ── Studentized range distribution ──────────────────────────────────────────
+// Q = (max - min) / S for k independent standard normals and an independent S
+// with df degrees of freedom, S^2 ~ chi-squared_df / df. This is the
+// distribution behind Tukey's multiplicity adjustment.
+//
+//   P(Q <= q; k, nu) = integral over s > 0 of  f_nu(s) * W(q*s; k) ds
+//   W(w; k)          = k * integral over z of  phi(z) * [Phi(z) - Phi(z-w)]^(k-1) dz
+//
+// nu in the formulas is the df argument. f_nu is the density of
+// s = sqrt(chi-squared_nu / nu) and W is the CDF of the range of k standard
+// normals. The inner form counts which of the k values is the largest (the
+// factor k), puts it at z, and requires the other k - 1 to lie within w below
+// it.
+//
+// Both integrals are panelled Gauss-Legendre with fixed node and panel counts,
+// and the quantile is bisection with a fixed step count, so identical inputs
+// give identical results on every platform, as docs/fitter_conventions.md
+// requires. There is no adaptive stopping rule anywhere in this section.
+//
+// Unlike the rest of this header these two functions return NaN for an
+// argument outside the domain instead of throwing. They are called per row
+// from emmeans and from the ptukey / qtukey SQL scalars, where a NaN travels
+// with the row and an exception would abort the query.
+//
+// The mathematics is the published two-integral form (Copenhaver and Holland,
+// 1988; see the reference block at the top of this file). R's ptukey is GPL
+// and no part of it was read, ported or paraphrased.
+
+namespace detail {
+
+// 1 / sqrt(2) and 1 / sqrt(2*pi), written out so the inner loop does not
+// recompute them.
+constexpr double kInvSqrt2 = 0.70710678118654752440;
+constexpr double kInvSqrt2Pi = 0.39894228040143267794;
+
+//! n-point Gauss-Legendre nodes and weights on [-1, 1].
+struct GaussLegendreRule {
+	std::vector<double> x;
+	std::vector<double> w;
+};
+
+//! Nodes and weights for the n-point rule, by Newton iteration on P_n.
+//!
+//! The nodes are the roots of the Legendre polynomial P_n. P_n and P_{n-1}
+//! come from the three-term recurrence j*P_j(z) = (2j-1)*z*P_{j-1}(z) -
+//! (j-1)*P_{j-2}(z), the derivative from (z^2 - 1)*P_n'(z) = n*(z*P_n(z) -
+//! P_{n-1}(z)), and the weight at a root from w = 2 / ((1 - z^2) * P_n'(z)^2)
+//! (Abramowitz and Stegun, §8 and §25.4). The starting guess
+//! cos(pi*(i + 0.75)/(n + 0.5)) sits within one root spacing of the i-th root,
+//! counting down from +1.
+//!
+//! The iteration count is fixed rather than tested for convergence: Newton
+//! doubles the number of correct digits per step, so five steps already land
+//! on the root from that guess and the remaining ones leave it where it is.
+//! A fixed count cannot stop at a different place on a different platform.
+inline GaussLegendreRule ComputeGaussLegendreRule(int n) {
+	const int kNewtonSteps = 8;
+	GaussLegendreRule rule;
+	rule.x.assign(static_cast<std::size_t>(n), 0.0);
+	rule.w.assign(static_cast<std::size_t>(n), 0.0);
+	for (int i = 0; i < n; i++) {
+		double z = std::cos(STATS_DUCK_PI * (static_cast<double>(i) + 0.75) /
+		                    (static_cast<double>(n) + 0.5));
+		double deriv = 1.0;
+		for (int step = 0; step < kNewtonSteps; step++) {
+			double p_prev = 1.0; // P_0
+			double p_cur = z;    // P_1
+			for (int j = 2; j <= n; j++) {
+				const double jd = static_cast<double>(j);
+				const double p_next = ((2.0 * jd - 1.0) * z * p_cur - (jd - 1.0) * p_prev) / jd;
+				p_prev = p_cur;
+				p_cur = p_next;
+			}
+			deriv = static_cast<double>(n) * (z * p_cur - p_prev) / (z * z - 1.0);
+			z -= p_cur / deriv;
+		}
+		rule.x[static_cast<std::size_t>(i)] = z;
+		rule.w[static_cast<std::size_t>(i)] = 2.0 / ((1.0 - z * z) * deriv * deriv);
+	}
+	return rule;
+}
+
+//! The cached rule for a node count fixed at compile time.
+//!
+//! One function-local static per node count, which C++11 and later initialize
+//! once and thread-safely. The cache is keyed by the template argument and not
+//! by a map: a std::string-keyed unordered_map with the default hash pulls in
+//! a libc++ symbol duckdb-wasm does not export, and this header is compiled
+//! into the wasm build. See notes/engineering/ and the stats_duck WASM notes.
+template <int kNodes>
+inline const GaussLegendreRule &GaussLegendreNodes() {
+	static const GaussLegendreRule rule = ComputeGaussLegendreRule(kNodes);
+	return rule;
+}
+
+//! The kNodes-point rule applied on each of `panels` equal panels of [a, b].
+//!
+//! Panels matter because one high-order rule over a wide interval has to fit a
+//! single polynomial to the whole integrand, while panels only have to fit it
+//! locally. The loop order is fixed, panels then nodes ascending, so the sum
+//! is reproducible. An empty or inverted interval integrates to 0.
+template <int kNodes, typename Integrand>
+inline double PanelledGaussLegendre(double a, double b, int panels, Integrand f) {
+	if (!(b > a) || panels < 1) {
+		return 0.0;
+	}
+	const GaussLegendreRule &rule = GaussLegendreNodes<kNodes>();
+	const double width = (b - a) / static_cast<double>(panels);
+	const double half = 0.5 * width;
+	double total = 0.0;
+	for (int panel = 0; panel < panels; panel++) {
+		const double mid = a + (static_cast<double>(panel) + 0.5) * width;
+		double sum = 0.0;
+		for (int i = 0; i < kNodes; i++) {
+			sum += rule.w[static_cast<std::size_t>(i)] * f(mid + half * rule.x[static_cast<std::size_t>(i)]);
+		}
+		total += half * sum;
+	}
+	return total;
+}
+
+//! The w beyond which the range CDF of k standard normals is 1.0 exactly.
+//!
+//! The range exceeds w only if the largest of the k values is above w/2 or the
+//! smallest is below -w/2, so
+//!   1 - W(w; k) <= 2*k*(1 - Phi(w/2)) <= 2*k*exp(-w*w/8),
+//! and that bound reaches 1e-17 at w = 2*sqrt(2*log(2e17*k)). 1e-17 is below
+//! half the spacing of doubles at 1, which is 1.1e-16, so 1.0 is the correctly
+//! rounded answer there rather than a clamp. The point is 18.0 at k = 2 and
+//! 20.9 at k = 1e6: it grows with k, slowly.
+inline double NormalRangeFlatPoint(double k) {
+	return 2.0 * std::sqrt(2.0 * std::log(2.0e17 * k));
+}
+
+// ---- The tuned constants of the studentized range quadrature.
+//
+// The node and panel counts were chosen by sweeping them against the whole
+// scipy fixture grid in test/cpp/tukey_fixtures.hpp and against the identities
+// in test/cpp/test_tukey.cpp, then stopping at the point where the measured
+// error stops improving. Each constant carries its own evidence below.
+//
+// Two facts guided the sweep. The integrands are entire functions of the
+// integration variable, so a high-order rule on a few wide panels beats a
+// low-order rule on many narrow ones: the inner integral at 48 nodes on 2
+// panels is 2.3e-15, while 10 nodes on 10 panels, the same cost, is 1.8e-9.
+// And the k = 2 case is no guide to k = 20: the inner integrand carries the
+// power k - 1, which at k = 20 is a bump of width 1/sqrt(19), so the error at
+// k = 20 was 1.8e-9 while the k = 2 closed form agreed to 1.2e-15.
+
+//! Inner integral: panels and nodes per panel over [-8, 8] in z.
+//!
+//! 2 panels of 48 nodes. Worst error 2.3e-15 against a 96-panel 24-node
+//! reference, over k in {2,3,4,5,6,10,20} and w from 0.05 to 21 in steps of
+//! 0.05, which is the whole range the outer integral asks for. That reference
+//! agrees with the k = 2 closed form 2*Phi(w/sqrt(2)) - 1 to 1.7e-15, so 2.3e-15
+//! is the floor of the measurement and not a residual. Dropping to 40 nodes
+//! gives 2.9e-12 and to 36 nodes 1.3e-10, both still inside the band; 48 is
+//! kept because it costs 20% more than 40 and removes the error entirely.
+constexpr int kRangePanels = 2;
+constexpr int kRangeNodes = 48;
+
+//! The truncation point of the inner integral.
+//!
+//! The integrand is bounded by phi(z), whose mass beyond |z| = 8 is below
+//! 1.3e-15, so truncating there costs less than k * 1.3e-15 — six orders below
+//! the 1e-8 band this function is held to at k = 20.
+constexpr double kRangeZLimit = 8.0;
+
+//! Outer integral: panels and nodes per panel in s.
+//!
+//! 2 panels of 28 nodes, on each side of the break point below. Worst error
+//! 9.9e-13 over the whole 224-case fixture grid, which is where that error
+//! stops falling: 32 nodes, 10 panels of 10 nodes and 4 panels of 20 nodes all
+//! give the same 9.9e-13, because what is left is the tail mass below, not this
+//! rule. Dropping to 24 nodes gives 2.1e-10 and to 20 nodes 2.7e-08, which is
+//! over the band, so the margin here is two nodes wide and that is why 28 is
+//! not cut further.
+constexpr int kStudentizedPanels = 2;
+constexpr int kStudentizedNodes = 28;
+
+//! The tail mass left outside the outer integration range at each end.
+//!
+//! This, and not the quadrature, is what the 9.9e-13 above is made of: cutting
+//! it to 1e-13 moves the worst df = 1 case from 9.8e-13 to 9.8e-14 and the
+//! whole grid to 5.2e-13, in step with the change. It is left at 1e-12 because
+//! that is four orders inside the band and the chi-squared quantile that
+//! supplies the range is itself measured at this level, not below it.
+constexpr double kStudentizedTailMass = 1e-12;
+
+//! Degrees of freedom at or above which the outer integral is replaced by its
+//! limit W(q; k), the normal-range probability.
+//!
+//! The jump at the switch, measured at the last df below this cutoff over k in
+//! {2,3,6,20} and q in [1, 8], is 1.877e-10. That is the number the cutoff was
+//! chosen against: the target was below 1e-9. The gap falls off as C/df, which
+//! the measurement bears out at 1.876e-06 for df = 1e6, 1.876e-07 at 1e7,
+//! 1.876e-08 at 1e8 and 1.877e-09 at 1e9, always at k = 20 and q = 4, so a
+//! cutoff of 1e9 would have left 1.9e-09, above the target.
+//!
+//! Replacing the integral this late asks the quadrature to stay accurate at
+//! df = 1e10, which is why the density below is written in shape form. Two
+//! checks that it is: at df = 1e6 and 1e8 the k = 2 value agrees with scipy's
+//! own t CDF to 1.7e-15 and 2.8e-14, and the gap keeps following C/df to the
+//! cutoff, which it would not if the quadrature were breaking down.
+constexpr double kStudentizedNormalLimit = 1e10;
+
+//! Degrees of freedom above which the integration range in s stops coming from
+//! ChiSquareQuantile.
+//!
+//! Measured against scipy's chi2.ppf, ChiSquareQuantile at 1e-12 is exact to
+//! 5.2e-15 relative at df = 2000 and 5.2e-14 at df = 1e4, then drifts: 6.7e-07
+//! at 1e5 and 2.7e-05 at 1e6. The switch sits at 2000, well before the drift
+//! matters, and the measured jump in the CDF across it is 6.2e-14 at k = 20.
+constexpr double kStudentizedChiSquareLimit = 2000.0;
+
+//! The integration range in s = sqrt(chi-squared_df / df).
+//!
+//! Up to kStudentizedChiSquareLimit it comes from the chi-squared quantile
+//! already in this header, at kStudentizedTailMass and its complement: the
+//! mass outside is below 2e-12, which is under the 1e-8 band.
+//!
+//! That quantile rests on GammaP, whose series and continued fraction both
+//! stop after 200 terms while near the mode of a chi-squared both need about
+//! sqrt(df/2) of them, so for large df it silently returns a range that is too
+//! narrow. Above the limit the range therefore comes from the normal
+//! approximation to s, which is where s is heading anyway: mean 1 - 1/(4*df),
+//! standard deviation 1/sqrt(2*df). Eight standard deviations leave less than
+//! 1e-15 of mass outside, which is less than the quantile range leaves, so the
+//! switch never narrows the range.
+inline void StudentizedRangeSpread(double df, double &s_lo, double &s_hi) {
+	if (df <= kStudentizedChiSquareLimit) {
+		s_lo = std::sqrt(ChiSquareQuantile(kStudentizedTailMass, df) / df);
+		s_hi = std::sqrt(ChiSquareQuantile(1.0 - kStudentizedTailMass, df) / df);
+		return;
+	}
+	const double sd = 1.0 / std::sqrt(2.0 * df);
+	const double center = 1.0 - 1.0 / (4.0 * df);
+	s_lo = std::max(0.0, center - 8.0 * sd);
+	s_hi = center + 8.0 * sd;
+}
+
+//! One abscissa of the inner integral, with everything that does not depend on
+//! w worked out in advance.
+struct RangeGridPoint {
+	double z;        //!< the abscissa
+	double weight;   //!< the quadrature weight, times exp(-z*z/2), times the panel half width
+	double erfc_pos; //!< erfc(z / sqrt(2))
+	double erfc_neg; //!< erfc(-z / sqrt(2)), which is 2*Phi(z)
+};
+
+//! The fixed abscissae of the inner integral.
+//!
+//! The layout is the same panelled Gauss-Legendre layout PanelledGaussLegendre
+//! walks, in the same order, so this is the same rule. What it adds is that
+//! phi(z) and the two erfc values at z do not depend on w, and the outer
+//! integral calls the inner one about 56 times at different w, so precomputing
+//! them halves the erfc calls. erfc is about 80% of the run time of this
+//! distribution, so that is worth the table.
+//!
+//! A function-local static, which C++11 and later initialize once and
+//! thread-safely. Keyed by nothing, because the layout is fixed at compile
+//! time; a std::string-keyed unordered_map with the default hash would break
+//! the wasm build, which does not export the libc++ symbol it needs.
+inline const std::vector<RangeGridPoint> &RangeGrid() {
+	static const std::vector<RangeGridPoint> grid = []() {
+		const GaussLegendreRule &rule = GaussLegendreNodes<kRangeNodes>();
+		const double width = 2.0 * kRangeZLimit / static_cast<double>(kRangePanels);
+		const double half = 0.5 * width;
+		std::vector<RangeGridPoint> points;
+		points.reserve(static_cast<std::size_t>(kRangePanels) * kRangeNodes);
+		for (int panel = 0; panel < kRangePanels; panel++) {
+			const double mid = -kRangeZLimit + (static_cast<double>(panel) + 0.5) * width;
+			for (int i = 0; i < kRangeNodes; i++) {
+				const std::size_t idx = static_cast<std::size_t>(i);
+				const double z = mid + half * rule.x[idx];
+				points.push_back({z, half * rule.w[idx] * std::exp(-0.5 * z * z),
+				                  std::erfc(z * kInvSqrt2), std::erfc(-z * kInvSqrt2)});
+			}
+		}
+		return points;
+	}();
+	return grid;
+}
+
+} // namespace detail
+
+//! W(w; k): the probability that the range of k independent standard normals
+//! is at most w. w <= 0 gives 0, w at or beyond the flat point gives exactly 1,
+//! and k < 2 or any NaN argument gives NaN.
+//!
+//! This is the inner integral of StudentizedRangeCDF below, and on its own it
+//! is that distribution's limit as df grows, which is how the test pins it
+//! against NormalCDF at k = 2. It sits next to the other CDFs rather than in
+//! detail for the same reason GammaPSeries does: it is a helper with a name
+//! worth reading and a domain worth stating.
+inline double NormalRangeCDF(double w, double k) {
+	if (std::isnan(w) || std::isnan(k)) {
+		return std::numeric_limits<double>::quiet_NaN();
+	}
+	if (!(k >= 2.0)) {
+		return std::numeric_limits<double>::quiet_NaN();
+	}
+	if (!(w > 0.0)) {
+		return 0.0;
+	}
+	if (w >= detail::NormalRangeFlatPoint(k)) {
+		return 1.0;
+	}
+	// k / sqrt(2*pi) * integral over [-8, 8] of
+	//   exp(-z*z/2) * [Phi(z) - Phi(z-w)]^(k-1) dz,
+	// with the phi factor and the two erfc values at each z taken from the
+	// precomputed grid. Panels then nodes ascending, a fixed order, so the sum
+	// is reproducible.
+	const double km1 = k - 1.0;
+	double sum = 0.0;
+	for (const detail::RangeGridPoint &pt : detail::RangeGrid()) {
+		// Phi(z) - Phi(z-w), in whichever form does not cancel. The difference
+		// is raised to the power k - 1, so a relative error in it comes out
+		// multiplied by k - 1, and subtracting two values of 0.5*(1 + erf(.))
+		// loses digits when both are near 1. With a = (z-w)/sqrt(2) at or above
+		// 0 both erfc values are small and the difference of them is clean;
+		// below 0 both are near 2, and the erfc values at the negated arguments
+		// are the clean pair.
+		const double a = (pt.z - w) * detail::kInvSqrt2;
+		const double inside =
+		    a >= 0.0 ? 0.5 * (std::erfc(a) - pt.erfc_pos) : 0.5 * (pt.erfc_neg - std::erfc(-a));
+		sum += pt.weight * std::pow(inside, km1);
+	}
+	const double p = k * detail::kInvSqrt2Pi * sum;
+	return p < 0.0 ? 0.0 : (p > 1.0 ? 1.0 : p);
+}
+
+//! P(Q <= q; k, df) for the studentized range of k means on df degrees of
+//! freedom. q <= 0 gives 0, k < 2 or df <= 0 or any NaN argument gives NaN.
+//!
+//! Accuracy, measured against scipy.stats.studentized_range: 9.9e-13 over the
+//! whole committed grid, which is every integer df from 1 to 1000 and k from 2
+//! to 20, and 5e-12 or better for any real df of 4 or more.
+//!
+//! k is a count of means, so it is not held to a band beyond the grid's 20. It
+//! stays sensible to about 1e6; above that [Phi(z) - Phi(z-w)]^(k-1) underflows
+//! to zero at every node and the CDF reports 0.
+//!
+//! A df that is not an integer and is below 4 is less accurate than that, and
+//! the error grows as df falls: 6.4e-10 at df = 3.5, 1.0e-07 at 2.5, 2.0e-05 at
+//! 1.5 and 1.2e-02 at 0.5, worst at k = 2 and halfway between integers. The
+//! reason is the s^(df-1) factor in the density below. For an integer df that
+//! factor is a polynomial and the integrand is entire, which is why the whole
+//! committed grid sits at 1e-12; for any other df it has a branch point at
+//! s = 0, which lands against the lower end of the integration range, and a
+//! fixed-node Gauss-Legendre rule converges only algebraically against a
+//! branch point at the edge of a panel. Raising the node or panel count does
+//! not fix it: the rate is about n^-(2*df) there, so df = 1.5 would need about
+//! 350 nodes. Fixing it needs a graded mesh or a Gauss-Jacobi rule carrying
+//! s^(df-1) in the weight, which is a different quadrature.
+inline double StudentizedRangeCDF(double q, double k, double df) {
+	if (std::isnan(q) || std::isnan(k) || std::isnan(df)) {
+		return std::numeric_limits<double>::quiet_NaN();
+	}
+	if (!(k >= 2.0) || !(df > 0.0)) {
+		return std::numeric_limits<double>::quiet_NaN();
+	}
+	if (!(q > 0.0)) {
+		return 0.0;
+	}
+	// At or above the limit the outer integral is replaced by the limit it is
+	// converging to. The measured jump at the switch is with the constant.
+	if (df >= detail::kStudentizedNormalLimit) {
+		return NormalRangeCDF(q, k);
+	}
+
+	double s_lo = 0.0;
+	double s_hi = 0.0;
+	detail::StudentizedRangeSpread(df, s_lo, s_hi);
+
+	// The density of s, up to the constant factor the ratio below cancels:
+	//   log g(s) = (df - 1)*log(s/s_mode) - (df/2)*(s*s - s_mode*s_mode)
+	// measured from the mode, sqrt((df-1)/df), so the exponential never
+	// overflows and the two terms that grow with df cancel most of each other
+	// before they are exponentiated. For df <= 1 the density has no interior
+	// mode (it is largest at s = 0), and s = 1 serves as the reference point.
+	//
+	// Leaving the normalising constant out is what makes the large-df end
+	// work: written in full the constant is (df/2)*log(df/2) - lgamma(df/2),
+	// a difference of two terms of size 1e11 at df = 1e10, which loses eleven
+	// digits of the O(log df) answer. The ratio below never needs it.
+	const double s_mode = df > 1.0 ? std::sqrt((df - 1.0) / df) : 1.0;
+	const double log_s_mode = std::log(s_mode);
+	const double sq_s_mode = s_mode * s_mode;
+	const auto shape = [df, log_s_mode, sq_s_mode](double s) {
+		return std::exp((df - 1.0) * (std::log(s) - log_s_mode) - 0.5 * df * (s * s - sq_s_mode));
+	};
+
+	// Beyond s_break the inner CDF is exactly 1, so the integrand there is the
+	// density alone. Splitting at that point does three things: it gives the
+	// panels below it the whole transition of W to resolve, which at small df
+	// happens over a sliver of the range (at df = 1 and q = 298 the range in s
+	// is [0, 7.1] and W rises from 0 to 1 within [0.005, 0.025]); it saves the
+	// inner integral above it; and it makes that piece cancel exactly between
+	// the numerator and the denominator.
+	const double s_break =
+	    std::min(std::max(detail::NormalRangeFlatPoint(k) / q, s_lo), s_hi);
+
+	const auto weighted = [&shape, q, k](double s) { return shape(s) * NormalRangeCDF(q * s, k); };
+	const double flat = detail::PanelledGaussLegendre<detail::kStudentizedNodes>(
+	    s_break, s_hi, detail::kStudentizedPanels, shape);
+	const double num = detail::PanelledGaussLegendre<detail::kStudentizedNodes>(
+	                       s_lo, s_break, detail::kStudentizedPanels, weighted) +
+	                   flat;
+	const double den = detail::PanelledGaussLegendre<detail::kStudentizedNodes>(
+	                       s_lo, s_break, detail::kStudentizedPanels, shape) +
+	                   flat;
+
+	// Dividing by the quadrature of the same density over the same nodes does
+	// two things. It cancels the leading quadrature error of the density, and
+	// it makes a q large enough that W is 1 at every node return exactly 1.0,
+	// because the numerator and the denominator are then the same sum in the
+	// same order.
+	//
+	// den is a positive density over a range of positive width, so it is
+	// positive for every df this quadrature can represent. Below about
+	// df = 1e-300 the shape underflows to zero at every node, and NaN is the
+	// honest answer there rather than whatever 0/0 produces.
+	if (!(den > 0.0)) {
+		return std::numeric_limits<double>::quiet_NaN();
+	}
+	const double p = num / den;
+	return p < 0.0 ? 0.0 : (p > 1.0 ? 1.0 : p);
+}
+
+//! The inverse of StudentizedRangeCDF in q. p = 0 gives 0, the floor of the
+//! support; p = 1 gives +inf; p outside [0, 1], k < 2, df <= 0 or any NaN
+//! argument gives NaN.
+inline double StudentizedRangeQuantile(double p, double k, double df) {
+	if (std::isnan(p) || std::isnan(k) || std::isnan(df)) {
+		return std::numeric_limits<double>::quiet_NaN();
+	}
+	if (!(k >= 2.0) || !(df > 0.0)) {
+		return std::numeric_limits<double>::quiet_NaN();
+	}
+	if (p < 0.0 || p > 1.0) {
+		return std::numeric_limits<double>::quiet_NaN();
+	}
+	if (p == 0.0) {
+		return 0.0;
+	}
+	if (p == 1.0) {
+		return std::numeric_limits<double>::infinity();
+	}
+
+	// Bracket from [0, 8], doubling the upper end until the CDF passes p. The
+	// upper end has to move a long way at small df: the 0.99 quantile at k = 20
+	// and df = 1 is 298. The cap stops a pathological input from looping
+	// forever; 100 doublings reach 1e31 and beyond that the quantile is
+	// reported as infinite.
+	//
+	// A NaN from the CDF is reported as NaN. Without that, every comparison
+	// below would be false, the bracket would collapse to its lower end and the
+	// function would return a number near 0 for an input it cannot compute.
+	const int kMaxDoublings = 100;
+	double lo = 0.0;
+	double hi = 8.0;
+	for (int i = 0;; i++) {
+		const double at_hi = StudentizedRangeCDF(hi, k, df);
+		if (std::isnan(at_hi)) {
+			return std::numeric_limits<double>::quiet_NaN();
+		}
+		if (!(at_hi < p)) {
+			break;
+		}
+		if (i >= kMaxDoublings) {
+			return std::numeric_limits<double>::infinity();
+		}
+		hi *= 2.0;
+	}
+	// A fixed step count, so the result never depends on an adaptive stopping
+	// rule that could differ between platforms. 100 steps shrink the bracket
+	// by 2^-100, far below the accuracy of the CDF itself, so the CDF is the
+	// limiting factor and not the bisection.
+	for (int i = 0; i < 100; i++) {
+		const double mid = 0.5 * (lo + hi);
+		if (StudentizedRangeCDF(mid, k, df) < p) {
+			lo = mid;
+		} else {
+			hi = mid;
+		}
+	}
+	return 0.5 * (lo + hi);
 }
 
 } // namespace stats_duck
