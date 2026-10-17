@@ -1,21 +1,19 @@
 #include "lin_hyp_function.hpp"
 #include "register_documented.hpp"
 
-#include "lin_hyp.hpp" // statsduck::lin_hyp — the DuckDB-free kernel
+#include "lin_hyp.hpp"   // statsduck::lin_hyp — the DuckDB-free kernel
+#include "list_read.hpp" // ListVectorReader, ListMatrixReader
 
 #include "duckdb/common/types/vector.hpp"
 #include "duckdb/function/scalar_function.hpp"
 #include "duckdb/main/extension/extension_loader.hpp"
 
 #include <cmath>
-#include <limits>
 #include <vector>
 
 namespace duckdb {
 
 namespace {
-
-const double kNaN = std::numeric_limits<double>::quiet_NaN();
 
 // One row of the per-constraint table, mirroring lm_fit's coefficients element.
 static LogicalType LinHypRowType() {
@@ -50,53 +48,17 @@ static inline void SetD(Vector &v, idx_t row, double x) {
 	}
 }
 
-// Read a run of a flat DOUBLE list into `out`, reading NULL as NaN so it
-// reaches the kernel's own non-finite check instead of needing separate
-// validity handling.
-static void ReadDoubles(const UnifiedVectorFormat &fmt, const list_entry_t &entry,
-                        std::vector<double> &out) {
-	const auto data = UnifiedVectorFormat::GetData<double>(fmt);
-	out.assign(entry.length, 0.0);
-	for (idx_t j = 0; j < entry.length; j++) {
-		const auto idx = fmt.sel->get_index(entry.offset + j);
-		out[j] = fmt.validity.RowIsValid(idx) ? data[idx] : kNaN;
-	}
-}
-
 static void LinHypExec(DataChunk &args, ExpressionState &, Vector &result) {
 	const idx_t count = args.size();
 
-	// L is LIST(LIST(DOUBLE)), so it unpacks in three levels: the outer list
-	// gives one entry per row of the chunk, its child is a list per constraint,
-	// and that child holds the doubles.
-	auto &l_vec = args.data[0];
-	UnifiedVectorFormat l_fmt;
-	l_vec.ToUnifiedFormat(count, l_fmt);
-	const auto l_entries = UnifiedVectorFormat::GetData<list_entry_t>(l_fmt);
-
-	auto &l_rows_vec = ListVector::GetEntry(l_vec);
-	UnifiedVectorFormat l_rows_fmt;
-	l_rows_vec.ToUnifiedFormat(ListVector::GetListSize(l_vec), l_rows_fmt);
-	const auto l_row_entries = UnifiedVectorFormat::GetData<list_entry_t>(l_rows_fmt);
-
-	auto &l_vals_vec = ListVector::GetEntry(l_rows_vec);
-	UnifiedVectorFormat l_vals_fmt;
-	l_vals_vec.ToUnifiedFormat(ListVector::GetListSize(l_rows_vec), l_vals_fmt);
-
-	auto &beta_vec = args.data[1];
-	UnifiedVectorFormat beta_fmt;
-	beta_vec.ToUnifiedFormat(count, beta_fmt);
-	const auto beta_entries = UnifiedVectorFormat::GetData<list_entry_t>(beta_fmt);
-	UnifiedVectorFormat beta_child_fmt;
-	ListVector::GetEntry(beta_vec).ToUnifiedFormat(ListVector::GetListSize(beta_vec),
-	                                               beta_child_fmt);
-
-	auto &cov_vec = args.data[2];
-	UnifiedVectorFormat cov_fmt;
-	cov_vec.ToUnifiedFormat(count, cov_fmt);
-	const auto cov_entries = UnifiedVectorFormat::GetData<list_entry_t>(cov_fmt);
-	UnifiedVectorFormat cov_child_fmt;
-	ListVector::GetEntry(cov_vec).ToUnifiedFormat(ListVector::GetListSize(cov_vec), cov_child_fmt);
+	// L is LIST(LIST(DOUBLE)); ListMatrixReader does the three-level unwrap
+	// (one entry per row of the chunk, a list per constraint, and that
+	// list's own doubles). beta and cov are LIST(DOUBLE); ListVectorReader
+	// does the two-level unwrap. Each reader converts its argument's format
+	// once here, not once per row.
+	ListMatrixReader l_reader(args.data[0], count);
+	ListVectorReader beta_reader(args.data[1], count);
+	ListVectorReader cov_reader(args.data[2], count);
 
 	UnifiedVectorFormat s2_fmt, df_fmt;
 	args.data[3].ToUnifiedFormat(count, s2_fmt);
@@ -108,12 +70,9 @@ static void LinHypExec(DataChunk &args, ExpressionState &, Vector &result) {
 	std::vector<statsduck::LinHypResult> fits(count);
 	std::vector<bool> emit(count, false);
 	idx_t total_rows = 0;
-	std::vector<double> beta_buf, cov_buf, l_buf;
+	std::vector<double> beta_buf, cov_buf;
 
 	for (idx_t i = 0; i < count; i++) {
-		const auto l_idx = l_fmt.sel->get_index(i);
-		const auto beta_idx = beta_fmt.sel->get_index(i);
-		const auto cov_idx = cov_fmt.sel->get_index(i);
 		const auto s2_idx = s2_fmt.sel->get_index(i);
 		const auto df_idx = df_fmt.sel->get_index(i);
 		// This check is what produces the NULL result for a NULL argument, and
@@ -122,14 +81,13 @@ static void LinHypExec(DataChunk &args, ExpressionState &, Vector &result) {
 		// lets the binder fold a NULL that is constant at bind time. A NULL
 		// arriving in a column still reaches the executor, so every argument
 		// is tested per row here.
-		if (!l_fmt.validity.RowIsValid(l_idx) || !beta_fmt.validity.RowIsValid(beta_idx) ||
-		    !cov_fmt.validity.RowIsValid(cov_idx) || !s2_fmt.validity.RowIsValid(s2_idx) ||
-		    !df_fmt.validity.RowIsValid(df_idx)) {
+		if (!l_reader.RowValid(i) || !beta_reader.RowValid(i) || !cov_reader.RowValid(i) ||
+		    !s2_fmt.validity.RowIsValid(s2_idx) || !df_fmt.validity.RowIsValid(df_idx)) {
 			continue; // a NULL argument gives a NULL result
 		}
 
-		ReadDoubles(beta_child_fmt, beta_entries[beta_idx], beta_buf);
-		ReadDoubles(cov_child_fmt, cov_entries[cov_idx], cov_buf);
+		beta_reader.Read(i, beta_buf);
+		cov_reader.Read(i, cov_buf);
 		const std::size_t k = beta_buf.size();
 		if (k == 0) {
 			throw InvalidInputException("lin_hyp: beta is empty");
@@ -141,29 +99,14 @@ static void LinHypExec(DataChunk &args, ExpressionState &, Vector &result) {
 			    static_cast<unsigned long long>(cov_buf.size()));
 		}
 
-		const auto l_entry = l_entries[l_idx];
-		const std::size_t q = l_entry.length;
+		const std::size_t q = l_reader.Rows(i);
 		if (q == 0) {
 			throw InvalidInputException("lin_hyp: the hypothesis matrix has no rows");
 		}
-		statsduck::linalg::Mat L(q, k);
-		for (idx_t a = 0; a < q; a++) {
-			const auto row_idx = l_rows_fmt.sel->get_index(l_entry.offset + a);
-			if (!l_rows_fmt.validity.RowIsValid(row_idx)) {
-				throw InvalidInputException("lin_hyp: the hypothesis matrix has a NULL row");
-			}
-			const auto row_entry = l_row_entries[row_idx];
-			if (row_entry.length != k) {
-				throw InvalidInputException(
-				    "lin_hyp: every hypothesis row must have the same width as beta (%llu); row %llu "
-				    "has %llu",
-				    static_cast<unsigned long long>(k), static_cast<unsigned long long>(a + 1),
-				    static_cast<unsigned long long>(row_entry.length));
-			}
-			ReadDoubles(l_vals_fmt, row_entry, l_buf);
-			for (std::size_t b = 0; b < k; b++) {
-				L(a, b) = l_buf[b];
-			}
+		statsduck::linalg::Mat L;
+		std::string read_error;
+		if (!l_reader.Read(i, k, L, read_error)) {
+			throw InvalidInputException("lin_hyp: " + read_error);
 		}
 
 		statsduck::linalg::Mat V(k, k);
