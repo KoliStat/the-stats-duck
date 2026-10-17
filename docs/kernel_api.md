@@ -16,18 +16,19 @@ standard, validation discipline).
 This page is the orientation map. **The headers are the source of truth** — each
 function's preconditions, tolerances, and result semantics live in the
 doc-comments of [`src/include/linalg.hpp`](../src/include/linalg.hpp),
-[`src/include/lm_core.hpp`](../src/include/lm_core.hpp), and
+[`src/include/lm_core.hpp`](../src/include/lm_core.hpp),
+[`src/include/lin_hyp.hpp`](../src/include/lin_hyp.hpp), and
 [`src/include/optimize.hpp`](../src/include/optimize.hpp).
 
 ## Consuming the core from a sibling repo
 
 The API boundary is header-only, but the implementation is not: `linalg.cpp`
-uses Eigen (confined to that one translation unit) and `lm_core.cpp` builds on
-it. So a consumer:
+uses Eigen (confined to that one translation unit), and `lm_core.cpp` and
+`lin_hyp.cpp` build on it. So a consumer:
 
 1. adds `src/include` to its include path → `#include "linalg.hpp"`,
-   `#include "lm_core.hpp"`;
-2. compiles `src/linalg.cpp` and `src/lm_core.cpp` into its own build;
+   `#include "lm_core.hpp"`, `#include "lin_hyp.hpp"`;
+2. compiles `src/linalg.cpp`, `src/lm_core.cpp`, and `src/lin_hyp.cpp` into its own build;
 3. makes the Eigen headers (`third_party/eigen`) available **when compiling
    `linalg.cpp`** — that is the only Eigen dependency, and it never leaks past
    that TU.
@@ -141,10 +142,60 @@ Conventions:
 - **Failure is a value**: degenerate input (empty `x0`, `max_eval ≤ 0`) returns
   `converged = false` with `fx = NaN`, never throws.
 
+## `lin_hyp.hpp` — general linear hypothesis
+
+Tests `L·β = 0` for q constraints at once, given a fit's coefficients and their
+covariance. Header-only API over `linalg`; it does **not** depend on
+`lm_core.hpp`, so the same function serves any fit.
+
+```cpp
+LinHypResult lin_hyp(const linalg::Mat &L,          // q × k, one row per constraint
+                     const std::vector<double> &beta,
+                     const linalg::Mat &V,          // k × k covariance of beta
+                     double sigma2, double df);
+```
+
+| Symbol | Kind | Notes |
+| --- | --- | --- |
+| `LinHypResult` | struct | `ok`/`error`; `estimable`; per-row `estimate`/`std_error`/`t_statistic`/`p_value`; joint `ss`, `df_num`, `df_den`, `f_statistic`, `f_p_value`, `chisq`, `chisq_p_value` |
+
+Conventions worth knowing:
+
+- **Three outcomes, not two.** `ok = false` is misuse (a dimension mismatch, a
+  non-positive `df`). `ok = true` with `estimable = false` means the hypothesis
+  cannot be evaluated, and callers should report NULL. The rest of the struct —
+  `estimate`, `ss`, `df_num`, `chisq` and the others — is filled in only when
+  both `ok` and `estimable` are true.
+- **`df_num` is the rank of `L·V·Lᵀ`**, not `L`'s row count, so redundant
+  constraints count once. One `pinv` call yields both the pseudo-inverse and
+  that rank.
+- **C is scaled to unit diagonal before `pinv`, and symmetrized.** `pinv`
+  decides the numerical rank against a tolerance relative to the largest
+  singular value, and C's diagonal holds the constraints' variances, so
+  without the scaling two constraints whose variances are more than about
+  1e12 apart read as redundant — a change of units is enough to reach that.
+  With `D = diag(1/√C_ii)`, `C⁻ = D·(D·C·D)⁻·D`, which leaves the Wald
+  statistic unchanged when C has full rank. Any kernel that inverts a
+  covariance with `pinv` needs the same step.
+- **Two covariance checks, not a positive-definiteness test.** A strictly
+  negative `C_ii`, or a Wald statistic that is not `>= 0`, proves the input is
+  not a covariance, and either one gives `estimable = false`. That is a
+  data-shaped failure, so it is a NULL result rather than an error. The pair
+  is not exhaustive: an indefinite `C` that passes both is evaluated normally,
+  because catching every such matrix needs an eigendecomposition. `C_ii = 0`
+  stays estimable: a zero row of `L` produces one.
+- **Aliased coefficients do not spread.** A rank-deficient fit carries NaN in
+  the rows and columns of its dropped coefficients. A hypothesis putting
+  non-zero weight there is not estimable; one that avoids them is evaluated
+  normally, with those rows and columns zeroed in a working copy first, because
+  IEEE makes `0 · NaN = NaN`.
+- **`ss` = `chisq` · `sigma2`** is a sum of squares only under the classical
+  covariance; with a robust `V` the F and chi-square are a Wald test.
+
 ## Testing & validation
 
-All three layers are unit-tested directly, standalone (no DuckDB), against
+All four layers are unit-tested directly, standalone (no DuckDB), against
 golden values — `test/cpp/test_linalg.cpp`, `test/cpp/test_lm_fit.cpp`
-(statsmodels oracle), and `test/cpp/test_optimize.cpp` (classic optimization
-test functions). Build and run them with `scripts/run-cpp-tests.sh` (or
-`make test_cpp`).
+(statsmodels oracle), `test/cpp/test_lin_hyp.cpp` (statsmodels oracle), and
+`test/cpp/test_optimize.cpp` (classic optimization test functions). Build and
+run them with `scripts/run-cpp-tests.sh` (or `make test_cpp`).

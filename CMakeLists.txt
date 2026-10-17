@@ -87,6 +87,8 @@ set(EXTENSION_SOURCES
     src/lm_core.cpp
     src/lm_fit_function.cpp
     src/linalg.cpp
+    src/lin_hyp.cpp
+    src/lin_hyp_function.cpp
     src/table_one_function.cpp
     src/meta_function.cpp
     src/normality_function.cpp

@@ -17,6 +17,7 @@
 #include "corr_matrix_function.hpp"
 #include "lm_function.hpp"
 #include "lm_fit_function.hpp"
+#include "lin_hyp_function.hpp"
 #include "table_one_function.hpp"
 #include "meta_function.hpp"
 #include "normality_function.hpp"
@@ -81,6 +82,9 @@ static void LoadInternal(ExtensionLoader &loader) {
 
 	// OLS regression aggregate with classical + HC0–HC3 robust SEs (kernel-backed)
 	RegisterLmFit(loader);
+
+	// General linear hypothesis — contrasts, ESTIMATE, Type III sums of squares
+	RegisterLinHyp(loader);
 
 	// Table 1 helper
 	RegisterTableOne(loader);
