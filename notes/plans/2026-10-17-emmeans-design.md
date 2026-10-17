@@ -183,22 +183,33 @@ The kernel follows `lin_hyp`'s three-outcome contract, which
 `BinderException` for a constant-foldable problem:
 
 - a row of `L` whose width is not k, including a ragged `L`;
+- an `L` with zero rows, since a grid of no means is a request for nothing;
+- a NULL **row** of `L`. A NULL row carries no width, so it cannot be read
+  as k NaNs without inventing k: it is a malformed matrix rather than a
+  missing value;
 - `cov` whose length is not k²;
 - a `beta` of length 0, since there is nothing to estimate;
 - `df` not greater than 0, or not finite;
 - `alpha` outside (0, 1), or not finite;
 - an unrecognized `adjust` name.
 
+Those first three match `lin_hyp` exactly, which raises on the same three
+shapes with the same reasoning. `test/sql/lin_hyp.test` pins all of them.
+Two neighbouring functions answering the same malformed input differently is
+the outcome `docs/fitter_conventions.md` exists to prevent.
+
 **A data-shaped failure is a NULL.** It never raises:
 
-- `L` with zero rows makes the whole STRUCT NULL;
 - a NULL in any argument position makes the whole STRUCT NULL, which is
   DuckDB's ordinary scalar behaviour;
-- a NULL element inside `L`, `beta` or `cov` — including a NULL row of `L`
-  rather than a NULL element within a row — also makes the whole STRUCT
-  NULL, because a missing entry cannot be distinguished from a zero one and
-  guessing would silently change the hypothesis. `lin_hyp` draws the same
-  line and tests both shapes;
+- a NULL element **inside** a row of `L`, or inside `beta` or `cov`, reads
+  as NaN. The non-finite checks then make the affected means not estimable,
+  so those elements of `means` are NULL and every pair touching them is
+  NULL, while the rest of the grid is reported normally. This is `lin_hyp`'s
+  rule given the per-row granularity `emmeans` has: one unusable grid row
+  must not discard the others. A NULL on `cov`'s diagonal is indistinguishable
+  from the NaN a rank-deficient fit puts there, and that is correct — both
+  mean the coefficient was not estimated;
 - a mean that cannot be evaluated is a NULL element of `means`;
 - a pair involving such a mean is a NULL element of `diffs`.
 

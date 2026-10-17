@@ -737,20 +737,18 @@ Create `src/include/emmeans.hpp` with the interface block above. The file commen
 
 In `src/emmeans.cpp`, validate in this order and return `ok = false` with a message naming the function and the actual sizes: a row width that is not k, a `cov` that is not k × k, a `beta` of length 0, a `df` that is not positive and finite, an `alpha` outside (0, 1). Then take `aliased_columns(V)`, build the zeroed working copies, and form `theta = matvec(L, beta_w)` and `C = sandwich(L, V_w)` once.
 
-Two shapes that look like errors but are not:
-
-- **An `L` with zero rows is not misuse.** It returns `ok = true` with empty `means` and `diffs` and `k_compare` of 0. The SQL layer is what turns an empty `means` into a NULL result, per the spec. Deciding this in the kernel would make an empty grid an exception, which would abort a whole `GROUP BY` for one group whose grid came out empty.
-- **A zero row inside `L`** produces a zero row in `C`, which is legitimate — it is the degenerate contrast that estimates zero with zero variance. Do not reject it.
+An `L` with zero rows is **misuse**, not a value: it raises, with a message containing "no rows", exactly as `lin_hyp` does for the same shape. A grid of no means is a request for nothing, and two neighbouring functions must not answer the same malformed input differently.
 
 ```cpp
-// An empty grid is a value, not an error.
+// An empty grid is misuse, matching lin_hyp's "no rows".
 const linalg::Mat L0(0, 3);
 const auto r0 = statsduck::emmeans(L0, beta_ds1, V_ds1, 6.0, 0.05,
                                    statsduck::EmmAdjust::TUKEY);
-check(r0.ok, "an empty L is not misuse");
-check(r0.means.empty() && r0.diffs.empty(), "and produces nothing");
-check(r0.k_compare == 0, "with a family size of zero");
+check(!r0.ok, "an empty L is misuse");
+check(r0.error.find("no rows") != std::string::npos, "and the message says so");
 ```
+
+One shape that looks like an error but is not: **a zero row inside `L`** produces a zero row in `C`, which is legitimate — it is the degenerate contrast that estimates zero with zero variance. Do not reject it.
 
 - [ ] **Step 7: Implement the means**
 
@@ -984,30 +982,39 @@ FROM (SELECT emmeans([[1,0,0],[0,1,0],[0,0,1]],
 
 Cover, each as its own query: the mean standard error 0.9428 and the pair standard error 1.3333; `i` and `j` coming back 1-based; `diffs` having three elements; `k_compare` of 3; `adjust` echoing `tukey` by default and `BH` when given `fdr`; the limits moving between `tukey` and `holm` but `p_value` staying the same in both; `alpha := 0.01` widening the limits; a single-row `L` giving an empty `diffs`; and `ptukey` reproducing the Tukey `p_adjusted` for one pair, so the two layers are tied together in SQL as well as in C++.
 
-Then the misuse cases, each expecting an error with its message fragment: a ragged `L`, a row width that is not k, a `cov` that is not k² long, `df := 0`, `alpha := 1`, and `adjust := 'nope'`.
-
-Then the three NULL paths, which are data-shaped and must **not** raise. The first query establishes the pattern; write each as its own query:
+Then the misuse cases, each expecting an error with its message fragment. The first six mirror `lin_hyp` exactly, down to the fragment text, because two neighbouring functions must answer the same malformed input the same way: a ragged `L` ("same width"), a row width that is not k ("same width"), an `L` with zero rows ("no rows"), a NULL **row** of `L` ("NULL row"), a `cov` that is not k² long ("covariance"), and a `beta` of length 0 ("beta is empty"). Then three of its own: `df := 0` ("df must be positive"), `alpha := 1` ("alpha"), and `adjust := 'nope'` ("adjust").
 
 ```
-# An empty L makes the whole result NULL, not an error and not an empty list.
-query I
-SELECT emmeans(CAST([] AS DOUBLE[][]), [1.0, 2.0, 3.0],
-               [1.0,0,0, 0,1.0,0, 0,0,1.0], 6.0) IS NULL;
-----
-true
-
-# A NULL element inside L makes the whole result NULL: a missing weight cannot
-# be told apart from a zero one, and guessing would change the hypothesis.
-query I
-SELECT emmeans([[1.0, NULL, 0.0]], [1.0, 2.0, 3.0],
-               [1.0,0,0, 0,1.0,0, 0,0,1.0], 6.0) IS NULL;
-----
-true
-
-# A NULL row of L is the same answer by the same reasoning.
-query I
+# A NULL row of L raises, as it does in lin_hyp: a NULL row carries no width,
+# so it cannot be read as k NaNs without inventing k.
+statement error
 SELECT emmeans([[1.0, 0.0, 0.0], NULL], [1.0, 2.0, 3.0],
-               [1.0,0,0, 0,1.0,0, 0,0,1.0], 6.0) IS NULL;
+               [1.0,0,0, 0,1.0,0, 0,0,1.0], 6.0);
+----
+NULL row
+```
+
+Then the NULL paths that are data-shaped and must **not** raise. A NULL element *inside* a row reads as NaN, which makes that one mean non-estimable while the rest of the grid is still reported — the per-row analogue of `lin_hyp`'s rule:
+
+```
+# A NULL element inside the second grid row costs that mean and its pairs,
+# and nothing else. The first mean is still 2.0 and k_compare drops to 2.
+query IIII
+SELECT printf('%.4f', (e).means[1].estimate),
+       (e).means[2].estimate IS NULL,
+       (e).diffs[1].estimate IS NULL,
+       (e).k_compare
+FROM (SELECT emmeans([[1,0,0],[0,NULL,0],[0,0,1]],
+                     list_transform(m.coefficients, c -> c.estimate),
+                     m.cov, m.df_residual) AS e
+      FROM (SELECT lm_fit(y, [g1, g2, g3], 'const', false) AS m FROM ds1));
+----
+2.0000	true	true	2
+
+# A top-level NULL argument gives a NULL result, which is DuckDB's ordinary
+# scalar behaviour rather than anything this function decides.
+query I
+SELECT emmeans(NULL, [1.0, 2.0, 3.0], [1.0,0,0, 0,1.0,0, 0,0,1.0], 6.0) IS NULL;
 ----
 true
 ```
