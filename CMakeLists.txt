@@ -89,6 +89,7 @@ set(EXTENSION_SOURCES
     src/linalg.cpp
     src/lin_hyp.cpp
     src/lin_hyp_function.cpp
+    src/emmeans.cpp
     src/table_one_function.cpp
     src/meta_function.cpp
     src/normality_function.cpp

@@ -1,0 +1,375 @@
+// Direct C++ unit tests for the statsduck::emmeans kernel (#21).
+//
+// Golden values come from statsmodels and scipy via
+// test/cpp/gen_emmeans_fixtures.py, which writes test/cpp/emmeans_fixtures.hpp.
+// Each marginal mean is oracled by OLSResults.t_test(L_row) and each pair by
+// t_test(L_i - L_j). That second route never forms C = L·V·Lᵀ, so it is
+// independent confirmation that sqrt(C_ii + C_jj - 2·C_ij) is the pairwise
+// standard error — the one shortcut this kernel takes.
+//
+// DS1 is three groups with cell-means coding, so every mean is a group mean
+// and every standard error is sqrt(s²/n). Those values are asserted by hand
+// as well as against the goldens, so a wrong fixture cannot hide a wrong
+// kernel. DS2 is rank deficient and its covariance has off-diagonal entries,
+// so it covers both the aliased-column rule and the cross term.
+//
+// Builds standalone (no DuckDB) via scripts/run-cpp-tests.sh. Exit 0 = pass.
+
+#include "emmeans.hpp"
+
+#include "emmeans_fixtures.hpp"
+
+#include <cmath>
+#include <cstdio>
+#include <limits>
+#include <string>
+#include <vector>
+
+using statsduck::EmmAdjust;
+using statsduck::EmmDiff;
+using statsduck::EmmeansResult;
+using statsduck::EmmMean;
+using statsduck::emmeans;
+using statsduck::linalg::Mat;
+
+static const double kNaN = std::numeric_limits<double>::quiet_NaN();
+
+static int g_checks = 0;
+static int g_fail = 0;
+
+static void check(bool cond, const char *expr, int line) {
+	++g_checks;
+	if (!cond) {
+		++g_fail;
+		std::printf("  FAIL (line %d): %s\n", line, expr);
+	}
+}
+static void check_close(double a, double b, double tol, const char *label, int line) {
+	++g_checks;
+	const double d = std::fabs(a - b);
+	if (!(d <= tol)) {
+		++g_fail;
+		std::printf("  FAIL (line %d): %s : |%.17g - %.17g| = %.3g > %.3g\n", line, label, a, b, d, tol);
+	}
+}
+// A p-value's band is relative with an absolute floor. See the band block
+// below for why a tail needs both halves.
+static void check_p(double a, double b, double rtol, double atol, const char *label, int line) {
+	++g_checks;
+	const double d = std::fabs(a - b);
+	const double allowed = atol + rtol * std::fabs(b);
+	if (!(d <= allowed)) {
+		++g_fail;
+		std::printf("  FAIL (line %d): %s : |%.17g - %.17g| = %.3g > %.3g\n", line, label, a, b, d,
+		            allowed);
+	}
+}
+#define CHECK(cond) check((cond), #cond, __LINE__)
+#define CHECK_MSG(cond, why) check((cond), (why), __LINE__)
+#define CHECK_CLOSE(a, b, tol) check_close((a), (b), (tol), #a " ~= " #b, __LINE__)
+
+// A label carrying the loop index, so a failure inside a fixture loop says
+// which case failed and not only which line.
+static const char *lbl(const char *what, std::size_t idx) {
+	static char buf[160];
+	std::snprintf(buf, sizeof(buf), "%s[%d]", what, static_cast<int>(idx));
+	return buf;
+}
+
+// ─────────────────────────── bounds-safe reads ───────────────────────────────
+// A failing call returns empty vectors. Indexing one turns a clear assertion
+// failure into a crash that hides which assertion was wrong, which is the
+// defect #33, #36 and #20 each hit. These return an all-NaN element instead,
+// so the run reports the assertion that found the problem and keeps going.
+static EmmMean mean_at(const EmmeansResult &r, std::size_t i) {
+	if (i < r.means.size()) {
+		return r.means[i];
+	}
+	EmmMean m;
+	m.estimate = m.std_error = m.t_statistic = m.p_value = m.lower_cl = m.upper_cl = kNaN;
+	return m;
+}
+static EmmDiff diff_at(const EmmeansResult &r, std::size_t i) {
+	if (i < r.diffs.size()) {
+		return r.diffs[i];
+	}
+	EmmDiff d;
+	// A sentinel index, so an i/j assertion fails instead of matching 0 by luck.
+	d.i = d.j = static_cast<std::size_t>(-1);
+	d.estimate = d.std_error = d.t_statistic = d.p_value = d.p_adjusted = kNaN;
+	d.lower_cl = d.upper_cl = kNaN;
+	return d;
+}
+
+// ───────────────────────────── tolerance bands ───────────────────────────────
+// Every golden carries 17 significant digits, so no band here is a
+// transcription limit. Each is the measured distance between two independent
+// implementations of the same quantity, with headroom stated.
+//
+// Estimates and standard errors: both sides are a handful of arithmetic
+// operations on the same covariance, differing only in the order of a dot
+// product. Measured worst: exact on DS1, 3.6e-15 absolute on DS2. 1e-9 leaves
+// six orders of headroom for a compiler's choice of fused multiply-add.
+static const double TOL = 1e-9;
+// t statistics inherit both the estimate's and the standard error's error.
+// Measured worst: 1.8e-15 absolute.
+static const double TOL_T = 1e-8;
+// Confidence limits add a quantile inversion, and that is the loosest step in
+// this file. distributions.hpp inverts its own CDF by bisection; scipy inverts
+// a different implementation of a different CDF. Measured worst: 1.0e-14
+// absolute on a t quantile and 1.9e-11 on a studentized range quantile, which
+// agrees with the ~1e-11 relative accuracy test_tukey.cpp measures for qtukey.
+// 1e-8 is 500 times the worse of the two.
+static const double TOL_CL = 1e-8;
+// p-values get a relative band WITH an absolute floor. Both sides compute a
+// tail as 2·(1 − CDF), and that subtraction throws away the leading digits: at
+// DS2's smallest p, 7.7e-10, one ULP of the intermediate is already 1.2e-7 of
+// the answer, so a relative band alone would reject a correct tail. The floor
+// is that rounding — measured worst 9.5e-17 absolute, so 1e-15 is about ten
+// times it — and the relative part covers every p of order 1e-3 and up, where
+// the measured worst is 6.8e-14 relative.
+static const double RTOL_P = 1e-9;
+static const double ATOL_P = 1e-15;
+// The studentized range tail is documented in distributions.hpp as accurate to
+// about 1e-12 for every integer df, and DS1's df is 6. Measured worst: 8.9e-13
+// absolute, 1.6e-11 relative. The floor is ten times the documented accuracy.
+static const double RTOL_TUKEY_P = 1e-8;
+static const double ATOL_TUKEY_P = 1e-11;
+
+// Build a row-major Mat from a flat value list.
+static Mat mat(std::size_t r, std::size_t c, std::vector<double> vals) {
+	Mat m(r, c);
+	m.data = std::move(vals);
+	return m;
+}
+
+// ───────────────────────── the fitted models ─────────────────────────────────
+// DS1: three groups, cell-means coded, so L = I(3) selects the three cell
+// means and beta is (2, 6, 6) with cov = (s²/3)·I.
+static const std::vector<double> kBetaDs1(kDs1Beta, kDs1Beta + 3);
+static const Mat kCovDs1 = mat(3, 3, std::vector<double>(kDs1Cov, kDs1Cov + 9));
+
+// DS2: the rank-deficient fit, full width, with NaN in the dropped column and
+// in its row and column of cov — what lm_fit reports.
+static const std::vector<double> kBetaDs2(kDs2Beta, kDs2Beta + 4);
+static const Mat kCovDs2 = mat(4, 4, std::vector<double>(kDs2Cov, kDs2Cov + 16));
+static const Mat kLDs2 = mat(3, 4, std::vector<double>(kDs2L, kDs2L + 12));
+
+// L = I(3): the three cell means of DS1, in order.
+static Mat ds1_grid() {
+	Mat L(3, 3);
+	for (std::size_t i = 0; i < 3; i++) {
+		for (std::size_t j = 0; j < 3; j++) {
+			L(i, j) = (i == j) ? 1.0 : 0.0;
+		}
+	}
+	return L;
+}
+
+// ──────────────────── DS1, the values computable by hand ─────────────────────
+static void test_ds1_hand_values() {
+	std::printf("ds1_hand_values (three cell means, s2 = 8/3 on 6 df)\n");
+	const Mat L = ds1_grid();
+	const auto r = emmeans(L, kBetaDs1, kCovDs1, 6.0, 0.05, EmmAdjust::TUKEY);
+	CHECK_MSG(r.ok, "DS1 fits");
+	CHECK_MSG(r.means.size() == 3, "three means");
+	CHECK_MSG(r.diffs.size() == 3, "three pairs from three means");
+	CHECK_MSG(r.k_compare == 3, "all three means are estimable");
+	CHECK_MSG(r.df_den == 6.0, "df is echoed exactly");
+	CHECK_MSG(r.alpha == 0.05, "alpha is echoed exactly");
+	CHECK_MSG(r.adjust == EmmAdjust::TUKEY, "the method is echoed");
+	CHECK_MSG(std::string(statsduck::emm_adjust_name(r.adjust)) == "tukey",
+	          "and its canonical name is tukey");
+
+	// Hand-computable: the means are the group means, the SEs come from s² = 8/3.
+	CHECK_CLOSE(mean_at(r, 0).estimate, 2.0, 1e-10);
+	CHECK_CLOSE(mean_at(r, 1).estimate, 6.0, 1e-10);
+	CHECK_CLOSE(mean_at(r, 2).estimate, 6.0, 1e-10);
+	CHECK_CLOSE(mean_at(r, 0).std_error, 0.9428090416, 1e-9);
+	CHECK_CLOSE(diff_at(r, 0).std_error, 1.3333333333, 1e-9);
+	CHECK_CLOSE(diff_at(r, 0).estimate, -4.0, 1e-10);
+	CHECK_MSG(diff_at(r, 0).i == 0 && diff_at(r, 0).j == 1, "pairs are 0-based in the kernel");
+	CHECK_MSG(diff_at(r, 1).i == 0 && diff_at(r, 1).j == 2, "and enumerated row-major");
+	CHECK_MSG(diff_at(r, 2).i == 1 && diff_at(r, 2).j == 2, "third pair is 2-3");
+
+	// Groups 2 and 3 have the same mean, so their difference is exactly zero
+	// and its t is exactly zero. No oracle needed for either.
+	CHECK_CLOSE(diff_at(r, 2).estimate, 0.0, 1e-13);
+	CHECK_CLOSE(diff_at(r, 2).t_statistic, 0.0, 1e-13);
+}
+
+// ─────────────────── DS1 against the statsmodels oracle ──────────────────────
+static void test_ds1_against_oracle() {
+	std::printf("ds1_against_oracle (tukey)\n");
+	const Mat L = ds1_grid();
+	const auto r = emmeans(L, kBetaDs1, kCovDs1, kDs1Df, kEmmAlpha, EmmAdjust::TUKEY);
+	CHECK(r.ok);
+	CHECK(r.means.size() == 3 && r.diffs.size() == 3);
+
+	for (std::size_t g = 0; g < 3; g++) {
+		const EmmMean m = mean_at(r, g);
+		const EmmMeanCase &w = kDs1Means[g];
+		check(m.estimable, lbl("ds1 mean estimable", g), __LINE__);
+		check_close(m.estimate, w.estimate, TOL, lbl("ds1 mean estimate", g), __LINE__);
+		check_close(m.std_error, w.std_error, TOL, lbl("ds1 mean std_error", g), __LINE__);
+		check_close(m.t_statistic, w.t_statistic, TOL_T, lbl("ds1 mean t", g), __LINE__);
+		check_p(m.p_value, w.p_value, RTOL_P, ATOL_P, lbl("ds1 mean p", g), __LINE__);
+		// A mean's limits are never adjusted, whatever the pairwise method is.
+		check_close(m.lower_cl, w.lower_cl, TOL_CL, lbl("ds1 mean lower_cl", g), __LINE__);
+		check_close(m.upper_cl, w.upper_cl, TOL_CL, lbl("ds1 mean upper_cl", g), __LINE__);
+	}
+
+	for (std::size_t d = 0; d < 3; d++) {
+		const EmmDiff p = diff_at(r, d);
+		const EmmDiffCase &w = kDs1Diffs[d];
+		check(p.i == w.i && p.j == w.j, lbl("ds1 pair indices", d), __LINE__);
+		check(p.estimable, lbl("ds1 pair estimable", d), __LINE__);
+		check_close(p.estimate, w.estimate, TOL, lbl("ds1 pair estimate", d), __LINE__);
+		check_close(p.std_error, w.std_error, TOL, lbl("ds1 pair std_error", d), __LINE__);
+		check_close(p.t_statistic, w.t_statistic, TOL_T, lbl("ds1 pair t", d), __LINE__);
+		check_p(p.p_value, w.p_value, RTOL_P, ATOL_P, lbl("ds1 pair p", d), __LINE__);
+		// Tukey: the studentized range tail at sqrt(2)·|t| over k = 3 means.
+		check_p(p.p_adjusted, w.p_tukey, RTOL_TUKEY_P, ATOL_TUKEY_P, lbl("ds1 pair p_tukey", d),
+		       __LINE__);
+		// And the Tukey limits, estimate ± q(1-alpha; k, df)/sqrt(2) · se.
+		check_close(p.lower_cl, w.tukey_lower, TOL_CL, lbl("ds1 pair tukey lower", d), __LINE__);
+		check_close(p.upper_cl, w.tukey_upper, TOL_CL, lbl("ds1 pair tukey upper", d), __LINE__);
+	}
+}
+
+// ───────────────── DS1 under bonferroni and under holm ───────────────────────
+static void test_ds1_other_adjustments() {
+	std::printf("ds1_other_adjustments (bonferroni, holm)\n");
+	const Mat L = ds1_grid();
+
+	// Bonferroni adjusts the p-values through statsduck::adjust_p and widens
+	// the limits with t(1 - alpha/(2m), df), m being the three estimable pairs.
+	const auto rb = emmeans(L, kBetaDs1, kCovDs1, kDs1Df, kEmmAlpha, EmmAdjust::BONFERRONI);
+	CHECK(rb.ok);
+	CHECK_MSG(std::string(statsduck::emm_adjust_name(rb.adjust)) == "bonferroni",
+	          "bonferroni echoes its own name");
+	for (std::size_t d = 0; d < 3; d++) {
+		const EmmDiff p = diff_at(rb, d);
+		const EmmDiffCase &w = kDs1Diffs[d];
+		check_p(p.p_adjusted, w.p_bonferroni, RTOL_P, ATOL_P, lbl("ds1 pair p_bonferroni", d),
+		        __LINE__);
+		check_close(p.lower_cl, w.bonf_lower, TOL_CL, lbl("ds1 pair bonf lower", d), __LINE__);
+		check_close(p.upper_cl, w.bonf_upper, TOL_CL, lbl("ds1 pair bonf upper", d), __LINE__);
+		// The raw p is reported unchanged alongside the adjusted one.
+		check_p(p.p_value, w.p_value, RTOL_P, ATOL_P, lbl("ds1 pair raw p under bonferroni", d),
+		        __LINE__);
+	}
+
+	// Holm is a step-down method, so it needs the ranks of the whole family.
+	// Its limits stay at the unadjusted t quantile, which is what the mean
+	// limits use, so the goldens for those are kDs1Means' own limits.
+	const auto rh = emmeans(L, kBetaDs1, kCovDs1, kDs1Df, kEmmAlpha, EmmAdjust::HOLM);
+	CHECK(rh.ok);
+	CHECK_MSG(std::string(statsduck::emm_adjust_name(rh.adjust)) == "holm",
+	          "holm echoes its own name");
+	for (std::size_t d = 0; d < 3; d++) {
+		const EmmDiff p = diff_at(rh, d);
+		const EmmDiffCase &w = kDs1Diffs[d];
+		check_p(p.p_adjusted, w.p_holm, RTOL_P, ATOL_P, lbl("ds1 pair p_holm", d), __LINE__);
+		// estimate ± t(1 - alpha/2, df)·se: no multiplicity in the interval.
+		check_close(p.lower_cl, w.lower_cl, TOL_CL, lbl("ds1 pair holm lower", d), __LINE__);
+		check_close(p.upper_cl, w.upper_cl, TOL_CL, lbl("ds1 pair holm upper", d), __LINE__);
+		// Correcting for multiplicity can only widen an interval, so holm's,
+		// which does not, sits strictly inside bonferroni's.
+		check(p.lower_cl > w.bonf_lower && p.upper_cl < w.bonf_upper,
+		      lbl("holm limits are narrower than bonferroni's", d), __LINE__);
+	}
+}
+
+// ────────────────────────── the misuse cases ─────────────────────────────────
+static void test_misuse() {
+	std::printf("misuse (every ok = false path)\n");
+	const Mat L = ds1_grid();
+
+	// An empty grid is misuse, matching lin_hyp's "no rows". A grid of no means
+	// is a request for nothing, and two neighbouring functions must not answer
+	// the same malformed input differently.
+	const Mat L0(0, 3);
+	const auto r0 = emmeans(L0, kBetaDs1, kCovDs1, 6.0, 0.05, EmmAdjust::TUKEY);
+	CHECK_MSG(!r0.ok, "an empty L is misuse");
+	CHECK_MSG(r0.error.find("no rows") != std::string::npos, "and the message says so");
+
+	// A row width that is not k.
+	const auto r1 = emmeans(mat(1, 2, {1.0, 0.0}), kBetaDs1, kCovDs1, 6.0, 0.05, EmmAdjust::TUKEY);
+	CHECK_MSG(!r1.ok, "a grid whose rows are not k wide is misuse");
+	CHECK_MSG(r1.error.find("emmeans") != std::string::npos, "the message names the function");
+	CHECK_MSG(r1.error.find('2') != std::string::npos && r1.error.find('3') != std::string::npos,
+	          "and reports both actual sizes");
+
+	// A covariance that is not k × k.
+	const auto r2 = emmeans(L, kBetaDs1, mat(2, 2, {1.0, 0.0, 0.0, 1.0}), 6.0, 0.05, EmmAdjust::TUKEY);
+	CHECK_MSG(!r2.ok, "a covariance that is not k by k is misuse");
+	CHECK_MSG(r2.error.find("covariance") != std::string::npos, "and the message says which input");
+
+	// An empty beta. L's rows are zero wide too, so the width check passes and
+	// this is the one that must fire.
+	const auto r3 = emmeans(Mat(1, 0), std::vector<double>(), Mat(0, 0), 6.0, 0.05, EmmAdjust::TUKEY);
+	CHECK_MSG(!r3.ok, "an empty beta is misuse");
+	CHECK_MSG(r3.error.find("beta") != std::string::npos, "and the message names beta");
+
+	// df must be positive and finite.
+	for (const double bad_df : {0.0, -1.0, std::numeric_limits<double>::infinity(), kNaN}) {
+		const auto rd = emmeans(L, kBetaDs1, kCovDs1, bad_df, 0.05, EmmAdjust::TUKEY);
+		CHECK_MSG(!rd.ok, "a df that is not positive and finite is misuse");
+		CHECK_MSG(rd.error.find("df") != std::string::npos, "and the message names df");
+	}
+
+	// alpha must be strictly inside (0, 1).
+	for (const double bad_alpha : {0.0, 1.0, -0.1, 1.5, kNaN}) {
+		const auto ra = emmeans(L, kBetaDs1, kCovDs1, 6.0, bad_alpha, EmmAdjust::TUKEY);
+		CHECK_MSG(!ra.ok, "an alpha outside (0, 1) is misuse");
+		CHECK_MSG(ra.error.find("alpha") != std::string::npos, "and the message names alpha");
+	}
+
+	// A failing call returns empty vectors, not a half-filled result.
+	CHECK_MSG(r0.means.empty() && r0.diffs.empty(), "a failing call reports nothing");
+}
+
+// ───────────────────── parse_emm_adjust / emm_adjust_name ────────────────────
+static void test_adjust_names() {
+	std::printf("adjust_names (parse and echo)\n");
+	struct NameCase {
+		const char *in;
+		EmmAdjust want;
+		const char *canonical;
+	};
+	// fdr is an alias for BH, so it echoes as BH. Case sensitive, matching
+	// statsduck::parse_adjust, which is the same SQL surface.
+	static const NameCase kCases[] = {
+	    {"tukey", EmmAdjust::TUKEY, "tukey"},
+	    {"bonferroni", EmmAdjust::BONFERRONI, "bonferroni"},
+	    {"holm", EmmAdjust::HOLM, "holm"},
+	    {"hochberg", EmmAdjust::HOCHBERG, "hochberg"},
+	    {"BH", EmmAdjust::BH, "BH"},
+	    {"fdr", EmmAdjust::BH, "BH"},
+	    {"BY", EmmAdjust::BY, "BY"},
+	    {"none", EmmAdjust::NONE, "none"},
+	};
+	for (const NameCase &c : kCases) {
+		EmmAdjust got = EmmAdjust::NONE;
+		check(statsduck::parse_emm_adjust(c.in, got), lbl(c.in, 0), __LINE__);
+		check(got == c.want, lbl("parsed value", 0), __LINE__);
+		check(std::string(statsduck::emm_adjust_name(c.want)) == c.canonical, lbl(c.in, 1), __LINE__);
+	}
+	for (const char *bad : {"Tukey", "TUKEY", "bh", "by", "sidak", "", "fdr "}) {
+		EmmAdjust got = EmmAdjust::TUKEY;
+		check(!statsduck::parse_emm_adjust(bad, got), lbl(bad, 2), __LINE__);
+		check(got == EmmAdjust::TUKEY, lbl("a rejected name leaves out untouched", 0), __LINE__);
+	}
+}
+
+int main() {
+	std::printf("=== test_emmeans ===\n");
+	test_ds1_hand_values();
+	test_ds1_against_oracle();
+	test_ds1_other_adjustments();
+	test_misuse();
+	test_adjust_names();
+	std::printf("%s: %d checks, %d failures\n", g_fail == 0 ? "PASS" : "FAIL", g_checks, g_fail);
+	return g_fail == 0 ? 0 : 1;
+}
