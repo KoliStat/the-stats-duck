@@ -22,6 +22,7 @@ WHERE description IS NULL AND function_name IN (
     'bootstrap', 'chisq_goodness_of_fit', 'chisq_independence', 'corr_matrix',
     'dbeta', 'dchisq', 'dexp', 'df', 'dgamma', 'dhyper', 'dlnorm', 'dnbinom',
     'dnorm', 'dpois', 'dt', 'dweibull',
+    'emmeans',
     'jarque_bera', 'kendall_test', 'ks_test_1samp', 'ks_test_2samp',
     'lin_hyp', 'lm', 'lm_fit', 'lm_summary', 'mann_whitney_u', 'meta',
     'pbeta', 'pchisq', 'pearson_test', 'pexp', 'pf', 'pgamma', 'phyper',
@@ -56,6 +57,7 @@ WHERE (examples IS NULL OR len(examples) = 0) AND function_name IN (
     'bootstrap', 'chisq_goodness_of_fit', 'chisq_independence', 'corr_matrix',
     'dbeta', 'dchisq', 'dexp', 'df', 'dgamma', 'dhyper', 'dlnorm', 'dnbinom',
     'dnorm', 'dpois', 'dt', 'dweibull',
+    'emmeans',
     'jarque_bera', 'kendall_test', 'ks_test_1samp', 'ks_test_2samp',
     'lin_hyp', 'lm', 'lm_fit', 'lm_summary', 'mann_whitney_u', 'meta',
     'pbeta', 'pchisq', 'pearson_test', 'pexp', 'pf', 'pgamma', 'phyper',
@@ -72,7 +74,7 @@ WHERE (examples IS NULL OR len(examples) = 0) AND function_name IN (
 []
 
 # ── 3. Canary: the name list above stays in sync with what we register ───────
-# 98 distinct function names are registered today (83 user-facing + 15
+# 99 distinct function names are registered today (84 user-facing + 15
 # visualize_mark_v1_* internals). If this count moves, a function was added
 # or removed — update the lists above (and the community docs get the new
 # entry automatically via FunctionDescription).
@@ -84,6 +86,7 @@ WHERE function_name IN (
     'bootstrap', 'chisq_goodness_of_fit', 'chisq_independence', 'corr_matrix',
     'dbeta', 'dchisq', 'dexp', 'df', 'dgamma', 'dhyper', 'dlnorm', 'dnbinom',
     'dnorm', 'dpois', 'dt', 'dweibull',
+    'emmeans',
     'jarque_bera', 'kendall_test', 'ks_test_1samp', 'ks_test_2samp',
     'lin_hyp', 'lm', 'lm_fit', 'lm_summary', 'mann_whitney_u', 'meta',
     'pbeta', 'pchisq', 'pearson_test', 'pexp', 'pf', 'pgamma', 'phyper',
@@ -105,4 +108,4 @@ WHERE function_name IN (
     'visualize_mark_v1_text', 'visualize_mark_v1_tick',
     'visualize_mark_v1_violin');
 ----
-98
+99

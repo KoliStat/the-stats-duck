@@ -1,0 +1,402 @@
+# name: test/sql/emmeans.test
+# description: estimated marginal means (emmeans)
+# group: [stats_duck]
+
+require stats_duck
+
+statement ok
+CREATE TABLE ds1 AS SELECT * FROM (VALUES
+  (1.0, 1, 0, 0), (2.0, 1, 0, 0), (3.0, 1, 0, 0),
+  (4.0, 0, 1, 0), (6.0, 0, 1, 0), (8.0, 0, 1, 0),
+  (5.0, 0, 0, 1), (5.0, 0, 0, 1), (8.0, 0, 0, 1)
+) AS t(y, g1, g2, g3);
+
+# The fit behind every query below: three cells of three observations, no
+# intercept, so each coefficient is that cell's own mean. RSS = 2 + 8 + 6 = 16
+# on 6 residual degrees of freedom, so sigma² = 8/3 and each mean's variance is
+# sigma²/3 = 8/9. Every expected number below follows from that by hand, except
+# the Tukey adjusted p-value, whose oracle is named where it appears.
+
+# Cell-means coding, so each marginal mean is that group's mean: 2, 6, 6.
+query III
+SELECT printf('%.4f', (e).means[1].estimate),
+       printf('%.4f', (e).means[2].estimate),
+       printf('%.4f', (e).means[3].estimate)
+FROM (SELECT emmeans([[1,0,0],[0,1,0],[0,0,1]],
+                     list_transform(m.coefficients, c -> c.estimate),
+                     m.cov, m.df_residual) AS e
+      FROM (SELECT lm_fit(y, [g1, g2, g3], 'const', false) AS m FROM ds1));
+----
+2.0000	6.0000	6.0000
+
+# Every mean has the pooled standard error sqrt(8/9) = 0.9428090.
+query III
+SELECT printf('%.4f', (e).means[1].std_error),
+       printf('%.4f', (e).means[2].std_error),
+       printf('%.4f', (e).means[3].std_error)
+FROM (SELECT emmeans([[1,0,0],[0,1,0],[0,0,1]],
+                     list_transform(m.coefficients, c -> c.estimate),
+                     m.cov, m.df_residual) AS e
+      FROM (SELECT lm_fit(y, [g1, g2, g3], 'const', false) AS m FROM ds1));
+----
+0.9428	0.9428	0.9428
+
+# A pair's standard error is sqrt(8/9 + 8/9) = 1.3333333, because the two cells
+# are independent. The t is −4 / 1.3333 = −3 on 6 df, so p = 0.0240082.
+query IIII
+SELECT printf('%.4f', (e).diffs[1].estimate),
+       printf('%.4f', (e).diffs[1].std_error),
+       printf('%.4f', (e).diffs[1].t_statistic),
+       printf('%.4f', (e).diffs[1].p_value)
+FROM (SELECT emmeans([[1,0,0],[0,1,0],[0,0,1]],
+                     list_transform(m.coefficients, c -> c.estimate),
+                     m.cov, m.df_residual) AS e
+      FROM (SELECT lm_fit(y, [g1, g2, g3], 'const', false) AS m FROM ds1));
+----
+-4.0000	1.3333	-3.0000	0.0240
+
+# A mean's own t tests it against zero: 2 / 0.9428090 = 2.1213 on 6 df. Its
+# limits are 2 ± 2.4469119 · 0.9428090, and they are never adjusted.
+query IIII
+SELECT printf('%.4f', (e).means[1].t_statistic),
+       printf('%.4f', (e).means[1].p_value),
+       printf('%.4f', (e).means[1].lower_cl),
+       printf('%.4f', (e).means[1].upper_cl)
+FROM (SELECT emmeans([[1,0,0],[0,1,0],[0,0,1]],
+                     list_transform(m.coefficients, c -> c.estimate),
+                     m.cov, m.df_residual) AS e
+      FROM (SELECT lm_fit(y, [g1, g2, g3], 'const', false) AS m FROM ds1));
+----
+2.1213	0.0781	-0.3070	4.3070
+
+# i and j come back 1-based, so they index `means` directly, and the pairs are
+# enumerated i < j row-major: (1,2), (1,3), (2,3).
+query IIIIII
+SELECT (e).diffs[1].i, (e).diffs[1].j,
+       (e).diffs[2].i, (e).diffs[2].j,
+       (e).diffs[3].i, (e).diffs[3].j
+FROM (SELECT emmeans([[1,0,0],[0,1,0],[0,0,1]],
+                     list_transform(m.coefficients, c -> c.estimate),
+                     m.cov, m.df_residual) AS e
+      FROM (SELECT lm_fit(y, [g1, g2, g3], 'const', false) AS m FROM ds1));
+----
+1	2	1	3	2	3
+
+# Three means give three pairs, k_compare is the estimable means rather than
+# the pairs, and df_den echoes the df argument.
+query IIII
+SELECT len((e).means), len((e).diffs), (e).k_compare, printf('%.1f', (e).df_den)
+FROM (SELECT emmeans([[1,0,0],[0,1,0],[0,0,1]],
+                     list_transform(m.coefficients, c -> c.estimate),
+                     m.cov, m.df_residual) AS e
+      FROM (SELECT lm_fit(y, [g1, g2, g3], 'const', false) AS m FROM ds1));
+----
+3	3	3	6.0
+
+# The third pair is 6 − 6 = 0, which is a real answer with p = 1, not a NULL.
+query III
+SELECT printf('%.4f', (e).diffs[3].estimate),
+       printf('%.4f', (e).diffs[3].p_value),
+       (e).diffs[3].estimate IS NULL
+FROM (SELECT emmeans([[1,0,0],[0,1,0],[0,0,1]],
+                     list_transform(m.coefficients, c -> c.estimate),
+                     m.cov, m.df_residual) AS e
+      FROM (SELECT lm_fit(y, [g1, g2, g3], 'const', false) AS m FROM ds1));
+----
+0.0000	1.0000	false
+
+# adjust defaults to tukey and echoes the canonical name, so fdr comes back as
+# BH. alpha defaults to 0.05.
+query III
+SELECT (d).adjust, (f).adjust, printf('%.2f', (d).alpha)
+FROM (SELECT emmeans(gr, b, cv, dfr) AS d,
+             emmeans(gr, b, cv, dfr, 0.05, 'fdr') AS f
+      FROM (SELECT [[1,0,0],[0,1,0],[0,0,1]] AS gr,
+                   list_transform(m.coefficients, c -> c.estimate) AS b,
+                   m.cov AS cv, m.df_residual AS dfr
+            FROM (SELECT lm_fit(y, [g1, g2, g3], 'const', false) AS m FROM ds1)));
+----
+tukey	BH	0.05
+
+# ── The adjustment moves the limits, never the raw p-value ──────────────────
+# Tukey has a simultaneous interval, so its limits are wider than the
+# unadjusted ones Holm leaves alone. The unadjusted pair limits are
+# −4 ± 2.4469119 · 1.3333333. The raw p-value is the same under both, and the
+# Tukey limit is exactly qtukey(0.95, 3, 6) / sqrt(2) wide, which ties this
+# layer to the ptukey/qtukey scalars.
+query IIIII
+SELECT printf('%.4f', (h).diffs[1].lower_cl),
+       printf('%.4f', (h).diffs[1].upper_cl),
+       (t).diffs[1].lower_cl < (h).diffs[1].lower_cl AND
+           (t).diffs[1].upper_cl > (h).diffs[1].upper_cl,
+       (t).diffs[1].p_value = (h).diffs[1].p_value,
+       abs((t).diffs[1].lower_cl -
+           (-4.0 - qtukey(0.95, 3, 6) / sqrt(2) * (t).diffs[1].std_error)) < 1e-12
+FROM (SELECT emmeans(gr, b, cv, dfr, 0.05, 'tukey') AS t,
+             emmeans(gr, b, cv, dfr, 0.05, 'holm') AS h
+      FROM (SELECT [[1,0,0],[0,1,0],[0,0,1]] AS gr,
+                   list_transform(m.coefficients, c -> c.estimate) AS b,
+                   m.cov AS cv, m.df_residual AS dfr
+            FROM (SELECT lm_fit(y, [g1, g2, g3], 'const', false) AS m FROM ds1)));
+----
+-7.2625	-0.7375	true	true	true
+
+# ptukey reproduces the Tukey adjusted p-value for the first pair, from the
+# reported t, k_compare and df_den alone. The two layers agree to the bit. The
+# literal is scipy's studentized_range value, the same oracle
+# test/cpp/emmeans_fixtures.hpp carries for this pair.
+query II
+SELECT printf('%.6f', (e).diffs[1].p_adjusted),
+       abs((e).diffs[1].p_adjusted -
+           (1 - ptukey(sqrt(2) * abs((e).diffs[1].t_statistic),
+                       (e).k_compare, (e).df_den))) < 1e-12
+FROM (SELECT emmeans([[1,0,0],[0,1,0],[0,0,1]],
+                     list_transform(m.coefficients, c -> c.estimate),
+                     m.cov, m.df_residual) AS e
+      FROM (SELECT lm_fit(y, [g1, g2, g3], 'const', false) AS m FROM ds1));
+----
+0.054398	true
+
+# A smaller alpha widens the limits: 2 ± 3.7074280 · 0.9428090 at alpha 0.01,
+# against ±2.4469119 at 0.05.
+query II
+SELECT printf('%.4f', (e).means[1].lower_cl),
+       printf('%.4f', (e).means[1].upper_cl)
+FROM (SELECT emmeans([[1,0,0],[0,1,0],[0,0,1]],
+                     list_transform(m.coefficients, c -> c.estimate),
+                     m.cov, m.df_residual, 0.01) AS e
+      FROM (SELECT lm_fit(y, [g1, g2, g3], 'const', false) AS m FROM ds1));
+----
+-1.4954	5.4954
+
+# One grid row has no pairs, so diffs is an empty list rather than NULL.
+query IIII
+SELECT len((e).means), len((e).diffs), (e).diffs IS NULL, (e).k_compare
+FROM (SELECT emmeans([[1,0,0]],
+                     list_transform(m.coefficients, c -> c.estimate),
+                     m.cov, m.df_residual) AS e
+      FROM (SELECT lm_fit(y, [g1, g2, g3], 'const', false) AS m FROM ds1));
+----
+1	0	false	1
+
+# ── Multi-row chunk: the output-list offset walk ─────────────────────────────
+# Group b has no observations in its third cell, so g3 is all zeros, lm_fit
+# drops it as dependent, and the grid row selecting it is not estimable.
+statement ok
+CREATE TABLE ds_multi AS SELECT * FROM (VALUES
+  ('a', 1.0, 1, 0, 0), ('a', 2.0, 1, 0, 0), ('a', 4.0, 0, 1, 0),
+  ('a', 6.0, 0, 1, 0), ('a', 5.0, 0, 0, 1), ('a', 8.0, 0, 0, 1),
+  ('b', 2.0, 1, 0, 0), ('b', 3.0, 1, 0, 0), ('b', 7.0, 0, 1, 0),
+  ('b', 9.0, 0, 1, 0), ('b', 4.0, 0, 1, 0), ('b', 6.0, 0, 1, 0),
+  ('c', 3.0, 1, 0, 0), ('c', 5.0, 1, 0, 0), ('c', 2.0, 0, 1, 0),
+  ('c', 4.0, 0, 1, 0), ('c', 9.0, 0, 0, 1), ('c', 7.0, 0, 0, 1)
+) AS t(grp, y, g1, g2, g3);
+
+# Three fits in one query. Group b's third cell is empty, so g3 is dropped and
+# the grid row selecting it is not estimable. The rows therefore emit different
+# numbers of estimable means and of estimable pairs, which a single-row query
+# cannot catch when an output offset fails to advance.
+query IIII
+SELECT grp,
+       len((e).means),
+       len((e).diffs),
+       (e).k_compare
+FROM (
+  SELECT grp, emmeans([[1,0,0],[0,1,0],[0,0,1]],
+                      list_transform(m.coefficients, c -> c.estimate),
+                      m.cov, m.df_residual) AS e
+  FROM (SELECT grp, lm_fit(y, [g1, g2, g3], 'const', false) AS m
+        FROM ds_multi GROUP BY grp)
+) ORDER BY grp;
+----
+a	3	3	3
+b	3	3	2
+c	3	3	3
+
+# Where the NULLs land, not merely that they are present. An output offset that
+# does not advance per row puts one group's elements under another group's
+# list, which this catches and the length check above cannot. The cell means
+# are a 1.5, 5, 6.5; b 2.5, 6.5, not estimable; c 4, 3, 8.
+query IIIIIIIII
+SELECT grp,
+       printf('%.4f', (e).means[1].estimate),
+       printf('%.4f', (e).means[2].estimate),
+       (e).means[3].estimate IS NULL,
+       printf('%.4f', (e).diffs[1].estimate),
+       (e).diffs[1].i, (e).diffs[1].j,
+       (e).diffs[2].estimate IS NULL,
+       (e).diffs[3].estimate IS NULL
+FROM (
+  SELECT grp, emmeans([[1,0,0],[0,1,0],[0,0,1]],
+                      list_transform(m.coefficients, c -> c.estimate),
+                      m.cov, m.df_residual) AS e
+  FROM (SELECT grp, lm_fit(y, [g1, g2, g3], 'const', false) AS m
+        FROM ds_multi GROUP BY grp)
+) ORDER BY grp;
+----
+a	1.5000	5.0000	false	-3.5000	1	2	false	false
+b	2.5000	6.5000	true	-4.0000	1	2	true	true
+c	4.0000	3.0000	false	1.0000	1	2	false	false
+
+# Every row above holds three means and three pairs, so the two queries only
+# catch an offset that fails to advance at all. Here the rows hold one, three
+# and two grid rows, so the means list advances by 1, 3, 2 and the diffs list
+# by 0, 3, 1: advancing either list by the other's length then overlaps two
+# rows and reports one row's numbers under another's.
+#
+# The grids go through a table rather than staying in the VALUES list, and
+# that is the point of the table. A VALUES scan evaluates one of its rows per
+# chunk (PhysicalExpressionScan), so a query reading the list straight out of
+# VALUES has one row per call and cannot see an offset bug at all. A table
+# scan of three rows hands all three to one call.
+#
+# Row 4 has a NULL beta, so its result is NULL and it contributes nothing to
+# either list. Row 5 is there to show the offsets carry on correctly across it.
+statement ok
+CREATE TABLE ds_grid AS SELECT * FROM (VALUES
+  (1, [[1.0, 0.0]],                         [2.0, 5.0], [1.0,0.0,0.0,1.0]),
+  (2, [[1.0, 0.0], [0.0, 1.0], [1.0, 1.0]], [3.0, 4.0], [1.0,0.0,0.0,1.0]),
+  (3, [[0.0, 1.0], [1.0, 0.0]],             [1.0, 7.0], [1.0,0.0,0.0,1.0]),
+  (4, [[1.0, 0.0]],                         NULL,       [1.0,0.0,0.0,1.0]),
+  (5, [[1.0, 0.0], [0.0, 1.0]],             [9.0, 2.0], [1.0,0.0,0.0,1.0])
+) AS t(grp, gr, b, cv);
+
+query IIIIIIII
+SELECT grp, len((e).means), len((e).diffs), (e).k_compare,
+       printf('%.4f', (e).means[1].estimate),
+       printf('%.4f', (e).means[len((e).means)].estimate),
+       (e).diffs[1].estimate IS NULL,
+       (e).diffs[len((e).diffs)].j
+FROM (SELECT grp, emmeans(gr, b, cv, 10.0) AS e FROM ds_grid)
+ORDER BY grp;
+----
+1	1	0	1	2.0000	2.0000	true	NULL
+2	3	3	3	3.0000	7.0000	false	3
+3	2	1	2	7.0000	1.0000	false	2
+4	NULL	NULL	NULL	NULL	NULL	true	NULL
+5	2	1	2	9.0000	2.0000	false	2
+
+# The middle group on its own, so the same positions are checked against a
+# single-row chunk as well.
+query III
+SELECT printf('%.4f', (e).means[1].estimate),
+       (e).means[3].estimate IS NULL,
+       (e).diffs[3].estimate IS NULL
+FROM (SELECT emmeans([[1,0,0],[0,1,0],[0,0,1]],
+                     list_transform(m.coefficients, c -> c.estimate),
+                     m.cov, m.df_residual) AS e
+      FROM (SELECT lm_fit(y, [g1, g2, g3], 'const', false) AS m
+            FROM ds_multi WHERE grp = 'b'));
+----
+2.5000	true	true
+
+# A grid where no row is estimable is still a result, not a NULL row: the
+# struct is there with every element NULL and k_compare 0. Only misuse
+# discards a whole row.
+query IIII
+SELECT len((e).means), (e).means[1].estimate IS NULL, len((e).diffs), (e).k_compare
+FROM (SELECT emmeans([[0,0,1]],
+                     list_transform(m.coefficients, c -> c.estimate),
+                     m.cov, m.df_residual) AS e
+      FROM (SELECT lm_fit(y, [g1, g2, g3], 'const', false) AS m
+            FROM ds_multi WHERE grp = 'b'));
+----
+1	true	0	0
+
+# ── Data-shaped failures are NULL, never an error ───────────────────────────
+# A NULL element inside the second grid row costs that mean and its pairs,
+# and nothing else. The first mean is still 2.0 and k_compare drops to 2.
+query IIII
+SELECT printf('%.4f', (e).means[1].estimate),
+       (e).means[2].estimate IS NULL,
+       (e).diffs[1].estimate IS NULL,
+       (e).k_compare
+FROM (SELECT emmeans([[1,0,0],[0,NULL,0],[0,0,1]],
+                     list_transform(m.coefficients, c -> c.estimate),
+                     m.cov, m.df_residual) AS e
+      FROM (SELECT lm_fit(y, [g1, g2, g3], 'const', false) AS m FROM ds1));
+----
+2.0000	true	true	2
+
+# A top-level NULL argument gives a NULL result, which is DuckDB's ordinary
+# scalar behaviour rather than anything this function decides.
+query I
+SELECT emmeans(NULL, [1.0, 2.0, 3.0], [1.0,0,0, 0,1.0,0, 0,0,1.0], 6.0) IS NULL;
+----
+true
+
+# Each of the other argument positions, the same way.
+query IIII
+SELECT emmeans([[1.0,0.0,0.0]], NULL, [1.0,0,0, 0,1.0,0, 0,0,1.0], 6.0) IS NULL,
+       emmeans([[1.0,0.0,0.0]], [1.0, 2.0, 3.0], NULL, 6.0) IS NULL,
+       emmeans([[1.0,0.0,0.0]], [1.0, 2.0, 3.0],
+               [1.0,0,0, 0,1.0,0, 0,0,1.0], NULL) IS NULL,
+       emmeans([[1.0,0.0,0.0]], [1.0, 2.0, 3.0],
+               [1.0,0,0, 0,1.0,0, 0,0,1.0], 6.0, 0.05, NULL) IS NULL;
+----
+true	true	true	true
+
+# ── Misuse raises ───────────────────────────────────────────────────────────
+# The first six answers match lin_hyp's, fragment for fragment: two
+# neighbouring functions must not answer the same malformed input differently.
+
+# A ragged grid.
+statement error
+SELECT emmeans([[1.0, 0.0, 0.0], [0.0, 1.0]], [1.0, 2.0, 3.0],
+               [1.0,0,0, 0,1.0,0, 0,0,1.0], 6.0);
+----
+same width
+
+# A grid row that is not as wide as beta.
+statement error
+SELECT emmeans([[1.0, 0.0]], [1.0, 2.0, 3.0],
+               [1.0,0,0, 0,1.0,0, 0,0,1.0], 6.0);
+----
+same width as beta
+
+# A grid with no rows at all.
+statement error
+SELECT emmeans([], [1.0, 2.0], [1.0,0,0,1.0], 6.0);
+----
+no rows
+
+# A NULL row of L raises, as it does in lin_hyp: a NULL row carries no width,
+# so it cannot be read as k NaNs without inventing k.
+statement error
+SELECT emmeans([[1.0, 0.0, 0.0], NULL], [1.0, 2.0, 3.0],
+               [1.0,0,0, 0,1.0,0, 0,0,1.0], 6.0);
+----
+NULL row
+
+# A covariance whose length is not k².
+statement error
+SELECT emmeans([[1.0, 0.0, 0.0]], [1.0, 2.0, 3.0], [1.0, 0.0, 0.0, 1.0], 6.0);
+----
+covariance
+
+# beta itself is empty.
+statement error
+SELECT emmeans([[1.0, 0.0]], [], [], 6.0);
+----
+beta is empty
+
+# Then three of its own. A df that is not positive.
+statement error
+SELECT emmeans([[1.0, 0.0, 0.0]], [1.0, 2.0, 3.0],
+               [1.0,0,0, 0,1.0,0, 0,0,1.0], 0.0);
+----
+df must be positive
+
+# An alpha outside (0, 1).
+statement error
+SELECT emmeans([[1.0, 0.0, 0.0]], [1.0, 2.0, 3.0],
+               [1.0,0,0, 0,1.0,0, 0,0,1.0], 6.0, 1.0);
+----
+alpha
+
+# An unknown adjustment name.
+statement error
+SELECT emmeans([[1.0, 0.0, 0.0]], [1.0, 2.0, 3.0],
+               [1.0,0,0, 0,1.0,0, 0,0,1.0], 6.0, 0.05, 'nope');
+----
+adjust
