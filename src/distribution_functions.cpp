@@ -553,6 +553,27 @@ static void QHyperExec(DataChunk &args, ExpressionState &, Vector &result) {
 	                        });
 }
 
+// ── Studentized range (Tukey) ───────────────────────────────────────────────
+// ptukey(q, k, df) / qtukey(p, k, df). k is the number of means being
+// compared and df is the error degrees of freedom; see distributions.hpp for
+// the domain and the accuracy notes.
+
+static void PTukeyExec(DataChunk &args, ExpressionState &, Vector &result) {
+	TernaryExecutor::ExecuteWithNulls<double, double, double, double>(
+	    args.data[0], args.data[1], args.data[2], result, args.size(),
+	    [](double q, double k, double df, ValidityMask &mask, idx_t idx) {
+		    return SafeCall([&] { return stats_duck::StudentizedRangeCDF(q, k, df); }, mask, idx);
+	    });
+}
+
+static void QTukeyExec(DataChunk &args, ExpressionState &, Vector &result) {
+	TernaryExecutor::ExecuteWithNulls<double, double, double, double>(
+	    args.data[0], args.data[1], args.data[2], result, args.size(),
+	    [](double p, double k, double df, ValidityMask &mask, idx_t idx) {
+		    return SafeCall([&] { return stats_duck::StudentizedRangeQuantile(p, k, df); }, mask, idx);
+	    });
+}
+
 } // namespace
 
 void RegisterDistributionFunctions(ExtensionLoader &loader) {
@@ -767,6 +788,22 @@ void RegisterDistributionFunctions(ExtensionLoader &loader) {
 	statsduck::RegisterDocumented(loader, ScalarFunction("qhyper", {DBL, DBL, DBL, DBL}, DBL, QHyperExec),
 	                              "Hypergeometric quantile.", {"p", "m", "n", "k"},
 	                              "SELECT qhyper(0.95, 5, 10, 4)");
+
+	// ── Studentized range (Tukey) ────────────────────────────────────────────
+	// k is the number of means being compared and df is the error degrees of
+	// freedom. Used to get Tukey HSD critical values and multiplicity-adjusted
+	// p-values without going through emmeans.
+	statsduck::RegisterDocumented(
+	    loader, ScalarFunction("ptukey", {DBL, DBL, DBL}, DBL, PTukeyExec),
+	    "Studentized range distribution CDF for k means on df degrees of freedom. A df that "
+	    "is not an integer and is below 4 is accurate to about 1e-5 rather than 1e-12.",
+	    {"q", "k", "df"}, "SELECT ptukey(3.0, 3, 10)");
+	statsduck::RegisterDocumented(
+	    loader, ScalarFunction("qtukey", {DBL, DBL, DBL}, DBL, QTukeyExec),
+	    "Studentized range distribution quantile, the Tukey HSD critical value, for k means on "
+	    "df degrees of freedom. A df that is not an integer and is below 4 is accurate to "
+	    "about 1e-5 rather than 1e-12.",
+	    {"p", "k", "df"}, "SELECT qtukey(0.95, 3, 10)");
 }
 
 } // namespace duckdb
