@@ -146,13 +146,33 @@ are unadjusted for those methods.
 | `BH` (`fdr`), `BY` | step-up on the estimable p-values | unadjusted t(1 − α/2, df) |
 | `none` | equals `p_value` | unadjusted t(1 − α/2, df) |
 
-`m` is the number of **estimable** pairs, not q(q−1)/2.
+`m` is the number of estimable pairs **that have a finite p-value**, not
+q(q−1)/2 and not quite the count of estimable pairs either. The distinction
+only bites when a grid repeats a level: such a pair has a zero variance, so
+it is estimable and keeps its estimate, but its t and p are NaN. A
+comparison with no p-value is not a member of a multiplicity family, so it
+is excluded from `m`.
 
-The adjustment runs over the estimable pairs only. Including non-estimable
-slots would change the ranks that the step-down and step-up procedures
-depend on. `AdjustInPlace` in `src/adjust_p_function.cpp` already takes a
-`valid` mask and writes NaN into the invalid slots, which is exactly this
-behaviour, and is why it is worth extracting rather than reimplementing.
+That exclusion is also forced rather than chosen. The shared adjustment
+helper sorts the p-values to rank them, and a NaN makes every comparison
+against it false, which breaks the transitivity a strict weak ordering
+requires — so passing one in is undefined behaviour, not merely untidy. The
+helper's own Bonferroni count is the size of its valid set, so keeping a
+wider `m` for the limits would report `min(1, 3p)` beside a
+`t(1 − α/6)` interval, which is self-inconsistent.
+
+One consequence to document rather than fix: `m` is therefore not always
+recoverable from the result. A non-estimable pair is a NULL element of
+`diffs`, so counting the non-NULL elements gives `m` in every ordinary case;
+it overcounts only for the degenerate zero-variance pair above. The
+documentation says so rather than the result carrying a seventh field for
+a case a caller reaches by asking for the same mean twice.
+
+The adjustment runs over that set only. Including the excluded slots would
+change the ranks that the step-down and step-up procedures depend on.
+`AdjustInPlace` in `src/adjust_p_function.cpp` already takes a `valid` mask
+and writes NaN into the invalid slots, which is exactly this behaviour, and
+is why it is worth extracting rather than reimplementing.
 
 With fewer than two estimable means there are no comparisons. `diffs` is an
 empty list when q = 1, and a list of NULL elements when pairs exist but
