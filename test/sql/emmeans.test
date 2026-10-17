@@ -141,6 +141,47 @@ FROM (SELECT emmeans(gr, b, cv, dfr, 0.05, 'tukey') AS t,
 ----
 -7.2625	-0.7375	true	true	true
 
+# Bonferroni is the other method with a simultaneous interval, so it moves the
+# limits too. The level is split across the m = 3 pairs that have a p-value, so
+# the multiplier is t(1 − 0.05/6, 6) = 3.2874552 against the unadjusted
+# 2.4469119, giving −4 ± 3.2874552 · 1.3333333. Its adjusted p is 3 · 0.0240082.
+query IIIII
+SELECT printf('%.4f', (bf).diffs[1].p_adjusted),
+       printf('%.4f', (bf).diffs[1].lower_cl),
+       printf('%.4f', (bf).diffs[1].upper_cl),
+       abs((bf).diffs[1].lower_cl -
+           (-4.0 - qt(1 - 0.05 / 6, 6) * (bf).diffs[1].std_error)) < 1e-12,
+       (bf).diffs[1].lower_cl < (hm).diffs[1].lower_cl AND
+           (bf).diffs[1].upper_cl > (hm).diffs[1].upper_cl
+FROM (SELECT emmeans(gr, bt, cv, dfr, 0.05, 'bonferroni') AS bf,
+             emmeans(gr, bt, cv, dfr, 0.05, 'holm') AS hm
+      FROM (SELECT [[1,0,0],[0,1,0],[0,0,1]] AS gr,
+                   list_transform(m.coefficients, c -> c.estimate) AS bt,
+                   m.cov AS cv, m.df_residual AS dfr
+            FROM (SELECT lm_fit(y, [g1, g2, g3], 'const', false) AS m FROM ds1)));
+----
+0.0720	-8.3833	0.3833	true	true
+
+# The remaining names are reachable from SQL and echo their canonical name.
+# A step-down or step-up procedure gives no interval, so hochberg and BY leave
+# the limits at the unadjusted −7.2625 and −0.7375. Under none the adjusted
+# p-value is the raw one.
+query IIIIIII
+SELECT (hc).adjust, (bq).adjust, (nn).adjust,
+       printf('%.4f', (hc).diffs[1].lower_cl),
+       printf('%.4f', (bq).diffs[1].upper_cl),
+       printf('%.4f', (nn).diffs[1].p_adjusted),
+       (nn).diffs[1].p_adjusted = (nn).diffs[1].p_value
+FROM (SELECT emmeans(gr, bt, cv, dfr, 0.05, 'hochberg') AS hc,
+             emmeans(gr, bt, cv, dfr, 0.05, 'BY') AS bq,
+             emmeans(gr, bt, cv, dfr, 0.05, 'none') AS nn
+      FROM (SELECT [[1,0,0],[0,1,0],[0,0,1]] AS gr,
+                   list_transform(m.coefficients, c -> c.estimate) AS bt,
+                   m.cov AS cv, m.df_residual AS dfr
+            FROM (SELECT lm_fit(y, [g1, g2, g3], 'const', false) AS m FROM ds1)));
+----
+hochberg	BY	none	-7.2625	-0.7375	0.0240	true
+
 # ptukey reproduces the Tukey adjusted p-value for the first pair, from the
 # reported t, k_compare and df_den alone. The two layers agree to the bit. The
 # literal is scipy's studentized_range value, the same oracle
@@ -239,16 +280,10 @@ b	2.5000	6.5000	true	-4.0000	1	2	true	true
 c	4.0000	3.0000	false	1.0000	1	2	false	false
 
 # Every row above holds three means and three pairs, so the two queries only
-# catch an offset that fails to advance at all. Here the rows hold one, three
-# and two grid rows, so the means list advances by 1, 3, 2 and the diffs list
-# by 0, 3, 1: advancing either list by the other's length then overlaps two
-# rows and reports one row's numbers under another's.
-#
-# The grids go through a table rather than staying in the VALUES list, and
-# that is the point of the table. A VALUES scan evaluates one of its rows per
-# chunk (PhysicalExpressionScan), so a query reading the list straight out of
-# VALUES has one row per call and cannot see an offset bug at all. A table
-# scan of three rows hands all three to one call.
+# catch an offset that fails to advance at all. Here the five rows contribute
+# one, three, two, no and two means, so the means list advances by 1, 3, 2, 0, 2
+# and the diffs list by 0, 3, 1, 0, 1. Advancing either list by the other's
+# length then overlaps two rows and reports one row's numbers under another's.
 #
 # Row 4 has a NULL beta, so its result is NULL and it contributes nothing to
 # either list. Row 5 is there to show the offsets carry on correctly across it.
@@ -387,10 +422,26 @@ SELECT emmeans([[1.0, 0.0, 0.0]], [1.0, 2.0, 3.0],
 ----
 df must be positive
 
+# A df that is positive but not finite. "Not finite" is misuse in its own
+# right, not only "not greater than zero".
+statement error
+SELECT emmeans([[1.0, 0.0, 0.0]], [1.0, 2.0, 3.0],
+               [1.0,0,0, 0,1.0,0, 0,0,1.0], 'inf'::DOUBLE);
+----
+df must be positive
+
 # An alpha outside (0, 1).
 statement error
 SELECT emmeans([[1.0, 0.0, 0.0]], [1.0, 2.0, 3.0],
                [1.0,0,0, 0,1.0,0, 0,0,1.0], 6.0, 1.0);
+----
+alpha
+
+# An alpha that is not a number. Every comparison against NaN is false, so it
+# is outside (0, 1) by the same check.
+statement error
+SELECT emmeans([[1.0, 0.0, 0.0]], [1.0, 2.0, 3.0],
+               [1.0,0,0, 0,1.0,0, 0,0,1.0], 6.0, 'nan'::DOUBLE);
 ----
 alpha
 

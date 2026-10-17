@@ -90,15 +90,17 @@ static void EmmeansExec(DataChunk &args, ExpressionState &, Vector &result) {
 	args.data[3].ToUnifiedFormat(count, df_fmt);
 	const auto df_data = UnifiedVectorFormat::GetData<double>(df_fmt);
 
-	// The optional arguments: a null pointer means the overload does not have
-	// that argument, so the row takes the default.
+	// The optional arguments. An overload that does not have one never reads
+	// its vector, and the row takes the default instead.
+	const bool has_alpha = n_args >= 5;
+	const bool has_adjust = n_args >= 6;
 	const double *alpha_data = nullptr;
 	const string_t *adjust_data = nullptr;
-	if (n_args >= 5) {
+	if (has_alpha) {
 		args.data[4].ToUnifiedFormat(count, alpha_fmt);
 		alpha_data = UnifiedVectorFormat::GetData<double>(alpha_fmt);
 	}
-	if (n_args >= 6) {
+	if (has_adjust) {
 		args.data[5].ToUnifiedFormat(count, adjust_fmt);
 		adjust_data = UnifiedVectorFormat::GetData<string_t>(adjust_fmt);
 	}
@@ -111,8 +113,8 @@ static void EmmeansExec(DataChunk &args, ExpressionState &, Vector &result) {
 
 	for (idx_t row = 0; row < count; row++) {
 		const auto df_idx = df_fmt.sel->get_index(row);
-		const idx_t alpha_idx = alpha_data ? alpha_fmt.sel->get_index(row) : 0;
-		const idx_t adjust_idx = adjust_data ? adjust_fmt.sel->get_index(row) : 0;
+		const idx_t alpha_idx = has_alpha ? alpha_fmt.sel->get_index(row) : 0;
+		const idx_t adjust_idx = has_adjust ? adjust_fmt.sel->get_index(row) : 0;
 		// This check is what produces the NULL result for a NULL argument, and
 		// it must not be removed. DuckDB does not mask runtime NULLs for a
 		// scalar function: the default null handling on the declaration only
@@ -122,8 +124,8 @@ static void EmmeansExec(DataChunk &args, ExpressionState &, Vector &result) {
 		// so a NULL argument gives a NULL result rather than an error.
 		if (!l_reader.RowValid(row) || !beta_reader.RowValid(row) || !cov_reader.RowValid(row) ||
 		    !df_fmt.validity.RowIsValid(df_idx) ||
-		    (alpha_data && !alpha_fmt.validity.RowIsValid(alpha_idx)) ||
-		    (adjust_data && !adjust_fmt.validity.RowIsValid(adjust_idx))) {
+		    (has_alpha && !alpha_fmt.validity.RowIsValid(alpha_idx)) ||
+		    (has_adjust && !adjust_fmt.validity.RowIsValid(adjust_idx))) {
 			continue; // a NULL argument gives a NULL result
 		}
 
@@ -160,9 +162,9 @@ static void EmmeansExec(DataChunk &args, ExpressionState &, Vector &result) {
 			    static_cast<unsigned long long>(bad_width));
 		}
 
-		const double alpha = alpha_data ? alpha_data[alpha_idx] : kDefaultAlpha;
+		const double alpha = has_alpha ? alpha_data[alpha_idx] : kDefaultAlpha;
 		statsduck::EmmAdjust adjust = kDefaultAdjust;
-		if (adjust_data) {
+		if (has_adjust) {
 			const auto &name_s = adjust_data[adjust_idx];
 			const std::string name(name_s.GetData(), name_s.GetSize());
 			if (!statsduck::parse_emm_adjust(name, adjust)) {
@@ -193,7 +195,7 @@ static void EmmeansExec(DataChunk &args, ExpressionState &, Vector &result) {
 
 	// Two LIST children instead of lin_hyp's one, each with its own length and
 	// its own offset. Reserve before fetching the child vector — Reserve can
-	// reallocate, and fetching first is the classic bug. See
+	// reallocate, and fetching first is the mistake this ordering prevents. See
 	// notes/engineering/2026-06-lm-fit-robust-se-aggregate.md §2.
 	Vector &means_list = *children[0];
 	ListVector::Reserve(means_list, total_means);
@@ -223,10 +225,12 @@ static void EmmeansExec(DataChunk &args, ExpressionState &, Vector &result) {
 			FlatVector::SetNull(result, row, true);
 			means_entries[row] = list_entry_t(means_out, 0);
 			diffs_entries[row] = list_entry_t(diffs_out, 0);
-			// The VARCHAR child is set NULL as well, unlike the numeric ones.
-			// An unwritten string_t holds whatever its buffer held, and a copy
-			// of this vector would read that as a pointer. An unwritten double
-			// is only a number nobody reads.
+			// Defensive only. FlatVector::SetNull on a STRUCT recurses and sets
+			// every child NULL for that row, so the line above has already
+			// nulled this child. That recursion is also what makes a NULL
+			// result row readable: struct_extract just references the child
+			// vector and does not propagate the parent's validity, and a debug
+			// build asserts that a NULL struct entry has NULL children.
 			FlatVector::SetNull(*children[4], row, true);
 			continue;
 		}
