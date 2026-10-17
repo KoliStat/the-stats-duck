@@ -516,6 +516,52 @@ static void test_scale_invariance() {
 	CHECK_CLOSE(diff_at(rt, 0).t_statistic / 1e6, diff_at(r, 0).t_statistic, 1e-6);
 }
 
+// ──────────── fewer than two estimable means: no ptukey call at all ─────────
+static void test_one_estimable_mean() {
+	std::printf("one_estimable_mean (tukey below k = 2)\n");
+	// Tukey with fewer than two estimable means. ptukey is undefined for k < 2
+	// — it returns NaN — so it must not be called at all.
+	Mat L_one_row(1, 3);
+	L_one_row(0, 0) = 1.0;
+	L_one_row(0, 1) = 0.0;
+	L_one_row(0, 2) = 0.0;
+	const auto r1 = emmeans(L_one_row, kBetaDs1, kCovDs1, 6.0, 0.05, EmmAdjust::TUKEY);
+	CHECK_MSG(r1.ok, "a single grid row is not misuse");
+	CHECK_MSG(r1.means.size() == 1 && r1.diffs.empty(), "one mean, no pairs");
+	CHECK_MSG(r1.k_compare == 1, "k_compare reports what it found");
+	CHECK_MSG(std::isfinite(mean_at(r1, 0).estimate), "the mean is reported normally");
+	CHECK_MSG(std::isfinite(mean_at(r1, 0).lower_cl), "and its limits are finite");
+	CHECK_MSG(std::isfinite(mean_at(r1, 0).upper_cl), "both of them");
+	// A one-row grid is not a special case numerically: it is DS1's first cell
+	// mean, so the DS1 goldens still apply.
+	CHECK_CLOSE(mean_at(r1, 0).estimate, kDs1Means[0].estimate, TOL);
+	CHECK_CLOSE(mean_at(r1, 0).std_error, kDs1Means[0].std_error, TOL);
+	CHECK_CLOSE(mean_at(r1, 0).lower_cl, kDs1Means[0].lower_cl, TOL_CL);
+
+	// The harder shape: one estimable mean WITH a pair present. A grid of DS2's
+	// first row and its aliased row gives k_compare = 1 and one pair, so the
+	// Tukey branch is reached with something to write into. Nothing may come
+	// back NaN on the estimable mean, which is what a ptukey call at k = 1
+	// would produce.
+	Mat Lmix(2, 4);
+	for (std::size_t j = 0; j < 4; j++) {
+		Lmix(0, j) = kDs2L[j];     // avoids the dropped column
+		Lmix(1, j) = kDs2L[2 * 4 + j]; // touches it
+	}
+	const auto rm = emmeans(Lmix, kBetaDs2, kCovDs2, kDs2Df, 0.05, EmmAdjust::TUKEY);
+	CHECK_MSG(rm.ok, "a grid with one usable row is not misuse");
+	CHECK_MSG(rm.k_compare == 1, "only one mean was estimable");
+	CHECK_MSG(rm.diffs.size() == 1, "the pair is still reported");
+	CHECK_MSG(!diff_at(rm, 0).estimable, "but it is not estimable");
+	CHECK_MSG(mean_at(rm, 0).estimable, "the usable row is");
+	CHECK_MSG(std::isfinite(mean_at(rm, 0).estimate) && std::isfinite(mean_at(rm, 0).std_error) &&
+	              std::isfinite(mean_at(rm, 0).t_statistic) &&
+	              std::isfinite(mean_at(rm, 0).p_value) && std::isfinite(mean_at(rm, 0).lower_cl) &&
+	              std::isfinite(mean_at(rm, 0).upper_cl),
+	          "and no NaN reaches any field it reports");
+	CHECK_CLOSE(mean_at(rm, 0).estimate, kDs2Means[0].estimate, TOL);
+}
+
 int main() {
 	std::printf("=== test_emmeans ===\n");
 	test_ds1_hand_values();
@@ -524,6 +570,7 @@ int main() {
 	test_ds2_aliased_column();
 	test_duplicated_rows();
 	test_scale_invariance();
+	test_one_estimable_mean();
 	test_misuse();
 	test_adjust_names();
 	std::printf("%s: %d checks, %d failures\n", g_fail == 0 ? "PASS" : "FAIL", g_checks, g_fail);
