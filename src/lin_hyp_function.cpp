@@ -51,11 +51,11 @@ static inline void SetD(Vector &v, idx_t row, double x) {
 static void LinHypExec(DataChunk &args, ExpressionState &, Vector &result) {
 	const idx_t count = args.size();
 
-	// L is LIST(LIST(DOUBLE)); ListMatrixReader does the three-level unwrap
-	// (one entry per row of the chunk, a list per constraint, and that
-	// list's own doubles). beta and cov are LIST(DOUBLE); ListVectorReader
-	// does the two-level unwrap. Each reader converts its argument's format
-	// once here, not once per row.
+	// L is LIST(LIST(DOUBLE)). ListMatrixReader does its three-level unwrap:
+	// one entry per row of the chunk, a list per constraint, and that
+	// list's own doubles. beta and cov are LIST(DOUBLE). ListVectorReader
+	// does their two-level unwrap. Each reader converts its argument's
+	// format once here, not once per row.
 	ListMatrixReader l_reader(args.data[0], count);
 	ListVectorReader beta_reader(args.data[1], count);
 	ListVectorReader cov_reader(args.data[2], count);

@@ -13,10 +13,10 @@
 
 namespace duckdb {
 
-// Multiple-testing corrections — adjusted p-values from a vector of raw
+// Multiple-testing corrections: adjusted p-values from a vector of raw
 // p-values. The methods, their formulas, and the NULL-handling convention
-// live in p_adjust.hpp now. This file is just the SQL binding: unwrapping
-// the arguments, raising on an unknown method name, and writing the result
+// live in p_adjust.hpp now. This file is just the SQL binding. It unwraps
+// the arguments, raises on an unknown method name, and writes the result
 // list.
 
 namespace {

@@ -16,7 +16,7 @@
 // This keeps the total conversion cost proportional to the chunk size, not
 // to the chunk size times the number of rows in it.
 //
-// DuckDB-coupled on purpose: this header touches Vector and
+// This header is DuckDB-coupled on purpose. It touches Vector and
 // UnifiedVectorFormat directly. It belongs with the function layer, not the
 // DuckDB-free kernel headers (linalg.hpp, lin_hyp.hpp, and so on).
 
@@ -33,9 +33,10 @@ namespace duckdb {
 
 // Reads one run of a flat DOUBLE list (`entry`, inside `fmt`) into `out`. A
 // NULL element reads as NaN, so a kernel's own non-finite check is what
-// catches a missing value, rather than a second validity check for the same
-// thing. Shared by ListVectorReader and ListMatrixReader below: both read a
-// flat run of doubles this same way, just from different levels of nesting.
+// catches a missing value. That replaces a second, separate validity check
+// for the same thing. ListVectorReader and ListMatrixReader below share
+// this function. Both read a flat run of doubles the same way. They just
+// read from different levels of nesting.
 inline void ReadDoubles(const UnifiedVectorFormat &fmt, const list_entry_t &entry,
                         std::vector<double> &out) {
 	const auto data = UnifiedVectorFormat::GetData<double>(fmt);
@@ -60,7 +61,7 @@ struct ListVectorReader {
 	}
 
 	// False when row's own list argument is NULL. Read() is not meaningful
-	// for such a row; the caller decides what a NULL argument means for it.
+	// for such a row. The caller decides what a NULL argument means for it.
 	bool RowValid(idx_t row) const {
 		return list_fmt.validity.RowIsValid(list_fmt.sel->get_index(row));
 	}
@@ -71,9 +72,9 @@ struct ListVectorReader {
 	}
 };
 
-// Reads a LIST(LIST(DOUBLE)) argument, one chunk row at a time: each row of
-// the chunk holds its own matrix, as a list of same-width sub-lists (one
-// sub-list per matrix row). Used for lin_hyp's L.
+// Reads a LIST(LIST(DOUBLE)) argument, one chunk row at a time. Each row of
+// the chunk holds its own matrix, stored as a list of same-width sub-lists,
+// one sub-list per matrix row. Used for lin_hyp's L.
 struct ListMatrixReader {
 	UnifiedVectorFormat outer_fmt;
 	const list_entry_t *outer_entries = nullptr;
@@ -93,7 +94,7 @@ struct ListMatrixReader {
 	}
 
 	// False when row's own list argument is NULL. Rows() and Read() are not
-	// meaningful for such a row; the caller decides what a NULL argument
+	// meaningful for such a row. The caller decides what a NULL argument
 	// means for it.
 	bool RowValid(idx_t row) const {
 		return outer_fmt.validity.RowIsValid(outer_fmt.sel->get_index(row));
@@ -105,17 +106,18 @@ struct ListMatrixReader {
 	}
 
 	// Reads row's nested list into out, a Rows(row) x expected_width matrix.
-	// Returns false, with error set, when a sub-list is NULL or a sub-list's
-	// length is not expected_width -- the two shapes a rectangular matrix
-	// cannot hold. A NULL scalar inside a sub-list is not one of these:
-	// ReadDoubles reads it as NaN, same as ListVectorReader::Read.
+	// Returns false, with error set, when a sub-list is NULL. Also returns
+	// false when a sub-list's length is not expected_width. A rectangular
+	// matrix cannot hold either shape. A NULL scalar inside a sub-list is
+	// not one of these failures: ReadDoubles reads it as NaN, the same way
+	// ListVectorReader::Read does.
 	//
-	// error names the failing sub-list (1-based) and, for a width mismatch,
-	// both widths, in the wording lin_hyp has always used: beta is the
-	// argument every row's width is compared against, for every caller this
-	// header has today. A caller that needs different wording is free to
-	// ignore error and report its own, using Rows(row) and expected_width,
-	// which it already has.
+	// error names the failing sub-list as a 1-based index. For a width
+	// mismatch it also names both widths. The wording matches what lin_hyp
+	// has always reported: beta is the argument every row's width is
+	// compared against, for every caller this header has today. A caller
+	// that needs different wording can ignore error. It already has
+	// Rows(row) and expected_width, enough to write its own message.
 	bool Read(idx_t row, std::size_t expected_width, statsduck::linalg::Mat &out,
 	          std::string &error) const {
 		const auto outer_entry = outer_entries[outer_fmt.sel->get_index(row)];
