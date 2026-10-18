@@ -18,7 +18,7 @@ Every task's requirements implicitly include these. Values are copied from the s
 - **The oracle is never a build or CI dependency.** Generators run in a throwaway virtualenv and the goldens are committed.
 - **Two namespaces, one letter apart.** `distributions.hpp` is `stats_duck`; the kernel is `statsduck`. Calls across that boundary need qualifying. `src/lin_hyp.cpp` already does this.
 - **`q` means two different things.** In the studentized range it is the quantile; in `emmeans` it is the number of marginal means. Name them `q` and `n_means` respectively in code that touches both.
-- **Determinism.** Fixed loop orders, fixed quadrature node counts, no hashing, no random numbers. Identical inputs give bit-identical results on every platform.
+- **Determinism, on a given platform.** Fixed loop orders, fixed quadrature node counts, no hashing, no random numbers, so identical inputs give identical results on every run of the same build. That is not bit-identical results *across* platforms: `std::erfc`, `std::exp`, `std::pow` and `std::cos` are not bit-identical across libm implementations, and the wasm build uses a different one from the desktop build. What the rule asks for is that the algorithm contribute no platform dependence of its own.
 - **No default-hash `std::string`-keyed `unordered_map` or `unordered_set`** in extension code. It breaks the wasm build at load time. `scripts/check-wasm-string-hash.sh` enforces this in CI.
 - **NaN becomes SQL NULL at the vector layer**, through the `SetD` helper pattern. ±Inf passes through unchanged.
 - **Result STRUCT field order is contract and append-only.** The type function carries `// Field order MUST match the writes in Finalize` with an index comment per field.
