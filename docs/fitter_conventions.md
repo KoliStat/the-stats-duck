@@ -1,8 +1,8 @@
 # Fitter conventions: the model-fitting API standard
 
 Every SQL-facing model-fitting function in `stats_duck` follows the
-conventions on this page. Today that is `lm_fit`. Next come `glm_fit`
-(#22), `lin_hyp` (#20), `emmeans` (#21), and the fitters in downstream
+conventions on this page. Today that is `lm_fit`, `lin_hyp` (#20), and
+`emmeans` (#21). Next comes `glm_fit` (#22), and the fitters in downstream
 sibling repos. The conventions exist for two reasons. A new fitter can be
 designed by following them step by step. And a user who has learned one
 fitter can predict how the others behave.
@@ -26,6 +26,17 @@ exception.
   labelled `x1` … `xk` in list order, with `(Intercept)` first when
   `add_intercept` is true (the default). Callers pass predictors without a
   constant column.
+- **A matrix argument goes flat or nested, depending on who builds it.** A
+  machine-produced matrix goes flat and row-major: a plain `LIST(DOUBLE)`
+  with its dimension inferred from its length (k² for a k×k covariance).
+  `cov` is the example; `lm_fit` assembles it that way. A matrix a human
+  writes into a query goes nested instead, as `LIST(LIST(DOUBLE))`.
+  `lin_hyp`'s and `emmeans`'s `L` are the examples there. Readability is the
+  reason: `[[0,1,0],[0,0,1]]` reads as a matrix, while the same four numbers
+  flattened have to be chunked by eye to see where one row ends and the
+  next begins. Break the rule for a matrix argument evaluated once per data
+  row, or one large enough for offsets to matter. Neither case has come up
+  yet.
 - **Per-row key columns (cluster, subject, strata) are `VARCHAR`
   arguments.** DuckDB does not cast integers to `VARCHAR` in this position
   on its own, so callers write `id::VARCHAR` (`test/sql/lm_fit_agg.test`
