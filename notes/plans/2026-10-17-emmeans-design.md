@@ -298,8 +298,13 @@ a tolerance needs something to be relative *to*:
 #66 proposes the same treatment for `lin_hyp`, so that the two agree.
 
 **Determinism.** Fixed loop orders, no hashing, no random numbers, and fixed
-node counts in the quadrature below. Identical inputs give bit-identical
-results on every platform, as `docs/fitter_conventions.md` requires.
+node counts in the quadrature below, so the algorithm itself contributes no
+platform dependence of its own, which is what `docs/fitter_conventions.md`
+actually requires. That is not bit-identical results on every platform.
+`std::erfc`, `std::exp`, `std::pow` and `std::cos` are not bit-identical
+across libm implementations, and the wasm build uses a different one from
+the desktop build. The quadrature can still differ in the last few bits
+between platforms for that reason, not from anything this design chooses.
 
 ## The studentized range distribution
 
@@ -429,9 +434,16 @@ These need no oracle and no new constants:
   means with the pooled standard error. A transposed sandwich or a wrong `L`
   convention fails here;
 - with exactly two means, Tukey's `p_adjusted` equals the unadjusted
-  `p_value` exactly, because there is one comparison and the studentized
-  range at k = 2 reduces to √2·abs(t). This ties the distribution work and
-  the linear algebra together in one assertion;
+  `p_value` to within the studentized range's own accuracy, because there
+  is one comparison and the studentized range at k = 2 reduces to
+  √2·abs(t). The two numbers still come from different code paths
+  (`StudentTCDF` for `p_value`, `StudentizedRangeCDF` for `p_adjusted`), so
+  they agree to the quadrature's accuracy rather than bit for bit.
+  Measured on the shipped function the gap is about 1e-13.
+  `p_adjusted` can land very slightly below `p_value` rather than at or
+  above it; that is the gap, not a meaningful ordering. This ties the
+  distribution work and the linear algebra together in one assertion,
+  loosely rather than exactly;
 - `bonferroni` with one estimable pair leaves `p_value` unchanged;
 - `none` gives `p_adjusted` equal to `p_value` for every pair.
 

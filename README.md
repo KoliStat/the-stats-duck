@@ -583,11 +583,26 @@ FROM (SELECT unnest((emmeans([[1,0,0],[0,1,0],[0,0,1]],
 `i` and `j` in `diffs` are **1-based**, so they index `means` directly.
 `means[(u).i]` is the first mean in a difference.
 
-A mean can fail to be estimable: it puts weight on a coefficient a
-rank-deficient fit could not estimate, or its variance is negative by more
-than rounding should allow. When that happens, every numeric field of that
-element of `means` is NULL, and the same holds for every element of `diffs`
-that touches it. A pair can also fail on its own, the same way, even when
+A mean can fail to be estimable three ways.
+
+First, it can put weight on a coefficient whose own diagonal entry in
+`cov` is not finite. A rank-deficient fit leaves exactly that behind, but
+a hand-built `cov` can do the same with no such fit involved; the code
+cannot tell the two apart.
+
+Second, a non-finite value can reach its estimate or its variance from
+somewhere else entirely. A NULL inside the matching row of `L` costs only
+that one mean. A NULL anywhere in `beta`, or in an **off-diagonal** entry
+of `cov`, costs every mean at once instead, because both feed every
+row's calculation, and the diagonal check above does not see an
+off-diagonal NULL at all.
+
+Third, its own variance can be negative by more than rounding should
+allow.
+
+When any of these happens, every numeric field of that element of
+`means` is NULL, and the same holds for every element of `diffs` that
+touches it. A pair can also fail on its own, the same way, even when
 both of its means are fine: its own variance can be negative by more than
 rounding should allow. `means` and `diffs` keep their length and their
 positions regardless, so `i` and `j` stay valid indices.
@@ -619,7 +634,12 @@ Five things worth knowing before reading `adjust` as a knob with no cost:
   design. It is exact only for k means with a common variance and equal
   group sizes. With unequal standard errors, the same studentized-range
   multiplier is applied to each pair's own standard error instead. SAS and
-  R's `emmeans` both do this too.
+  R's `emmeans` both do this too. At exactly two means, `p_adjusted` and
+  `p_value` come from two different code paths that happen to agree
+  mathematically, not the same one, so they can differ by about 1e-13 in
+  practice. `p_adjusted` can land very slightly below `p_value` rather
+  than at or above it; that is the quadrature's own accuracy, not a real
+  crossing.
 - **`k_compare` is the number of estimable means.** For `'tukey'` it is
   exactly the family size the studentized range uses, so
   `1 - ptukey(sqrt(2) * abs(t_statistic), k_compare, df_den)` reproduces a
@@ -642,6 +662,13 @@ scalar-function call positionally, regardless of any `name :=` label.
 'bonferroni')` fails instead, with a cast error: the five-argument overload
 reads that fifth position as `alpha`, a `DOUBLE`, and gets the string
 `'bonferroni'`. Call `emmeans` positionally.
+
+**The default `'tukey'` adjustment evaluates a double integral for every
+row**, through `qtukey`'s quantile search, and is far slower than the
+other methods. Measured over 1000 rows of a five-mean grid, `'tukey'` took
+about 28.5 s against `'bonferroni'`'s 0.158 s — a factor of about 180. A
+caller running `emmeans` once per group over many groups should expect
+that, or choose a cheaper `adjust` method.
 
 ### Multiple-testing correction (scalar)
 

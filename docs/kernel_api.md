@@ -291,8 +291,8 @@ Conventions worth knowing:
 - **`ok = false` is misuse; callers raise.** `error` names the problem, and
   `means`/`diffs` come back empty. The checks run in this order, and the
   first failure is the one reported: `L` with no rows; a row width that is
-  not k, including a ragged `L`; a `V` that is not k × k; a `beta` of
-  length 0; and a `df` that is not positive and finite. Four of those five
+  not k; a `V` that is not k × k; a `beta` of length 0; and a `df` that is
+  not positive and finite. Four of those five
   raise in close to the same words `lin_hyp` uses for the same shapes on
   `L`, `beta` and `V`. `lin_hyp`'s own `df` check only rejects a
   non-positive value, not an infinite one, so this one is stricter. An
@@ -312,6 +312,18 @@ Conventions worth knowing:
   shares with `lin_hyp`), and the test for which grid rows may use the result
   runs per row, so one unusable row of `L` does not discard the rest of the
   grid.
+- **A mean's estimate or variance can go non-finite independent of
+  aliasing.** `aliased_columns` only inspects `V`'s own diagonal, so a NaN
+  anywhere else still reaches `theta[i]` or `C(i,i)`: `linalg::matvec` and
+  `linalg::sandwich` are dense products that multiply through every term
+  unconditionally, and `0 · NaN = NaN` under IEEE, not `0`. A NaN confined
+  to one row of `L` only poisons that row's own `theta[i]`, because each
+  row's dot product is independent. A NaN anywhere in `beta`, or in an
+  **off-diagonal** entry of `V`, reaches every row's dot product instead.
+  That typically poisons every mean at once and drops `k_compare` to `0`.
+  A NaN on `V`'s own diagonal is caught by the aliasing check above and
+  stays local to the rows that use that column. The same NaN one cell
+  over, off the diagonal, is not caught at all.
 - **The negative-variance tolerance is relative, and its scale differs by
   case.** Both a mean's variance (`C_ii`) and a difference's variance
   (`C_ii + C_jj − 2·C_ij`) are sums that can land slightly below zero from
@@ -324,7 +336,12 @@ Conventions worth knowing:
   estimable.
 - **`tukey` needs two estimable means at minimum.** Below `k_compare = 2` the
   studentized range is undefined, so neither `StudentizedRangeCDF` nor
-  `StudentizedRangeQuantile` is called at all.
+  `StudentizedRangeQuantile` is called at all. At exactly two, `p_adjusted`
+  comes from `StudentizedRangeCDF` and `p_value` from `StudentTCDF`. Those
+  are two different code paths that agree mathematically at k = 2, not
+  the same computation, so they can differ by about 1e-13 in practice.
+  `p_adjusted` can land very slightly below `p_value` instead of at or
+  above it; that is the quadrature's own accuracy, not a real crossing.
 - **`bonferroni`'s family size is a pair count, not `k_compare`.** Its
   multiplier `m` is the number of estimable pairs that have a finite
   p-value. A pair between two identical grid rows is excluded from that
@@ -339,6 +356,18 @@ Conventions worth knowing:
 - **The symmetric part of `C` is what is used**, matching `lin_hyp`: where
   `V` is asymmetric, `C_ij` is read as `(C_ij + C_ji)/2`, because only the
   symmetric part has a meaning in a variance.
+
+Two more headers back the two sections above without a section of their
+own, because each is a handful of free functions with no state.
+**`estimability.hpp`** is the aliased-coefficient rule `lin_hyp.hpp` and
+`emmeans.hpp` share: `aliased_columns`, `zero_aliased`, and
+`row_touches_aliased`. **`p_adjust.hpp`** is the six multiple-testing
+methods behind `adjust_p` and behind six of `emmeans`'s own seven
+`EmmAdjust` values — every one but `TUKEY`, which needs the studentized
+range rather than a plain list of p-values. `emmeans.hpp`'s own
+`parse_emm_adjust`/`emm_adjust_name` follow the shape of
+`p_adjust.hpp`'s `parse_adjust`/`adjust_name`. Both headers are
+DuckDB-free and Eigen-free, like `linalg.hpp`.
 
 ## Testing & validation
 

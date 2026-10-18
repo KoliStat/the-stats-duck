@@ -124,13 +124,22 @@ Fields 0–14 are shipped; 12–14 landed with lm_fit Increment A (#34, #35).
 
 ## Numeric and portability discipline
 
-- **Deterministic by construction.** Identical inputs give bit-identical
-  results, on every platform. Randomness exists only in the sampling
-  functions. The `r*` scalars draw from a per-thread generator seeded from
+- **Deterministic by construction, on a given platform.** A fitter never
+  draws random numbers and never sums in an order that depends on a hash
+  table, so identical inputs give identical results on every run of the
+  same build. That is not the same promise as bit-identical results
+  *across* platforms. Fixed loop orders, fixed node and iteration counts
+  where a choice exists to fix, and a fixed summation order mean the
+  algorithm itself contributes no platform dependence of its own, but
+  `std::erfc`, `std::exp`, `std::pow`, `std::cos` and similar calls are
+  not bit-identical across libm implementations, and the wasm build uses
+  a different one from the desktop build. Anything that calls them can
+  differ in the last few bits between platforms, through no choice the
+  algorithm makes. Randomness exists only in the sampling functions. The
+  `r*` scalars draw from a per-thread generator seeded from
   `std::random_device` and are registered `VOLATILE`
   (`src/random_sampling_function.cpp`). `bootstrap` takes an optional seed
-  argument for reproducible runs. A fitter never draws random numbers, and
-  it never sums in an order that depends on a hash table.
+  argument for reproducible runs.
 - **The wasm string-hash pitfall.** Never put a default-hash
   `std::string`-keyed `std::unordered_map` or `unordered_set` in extension
   code. It pulls in a libc++ symbol (`std::__hash_memory`) that duckdb-wasm
