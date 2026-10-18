@@ -66,3 +66,15 @@ that has been written down than to re-derive it.
   the band. Also: `GammaP` stops after 200 terms, and an offline measurement
   against scipy's `chi2.ppf` puts the resulting drift in `ChiSquareQuantile`
   above about df = 1e4. Nothing in the repository tests that second claim.
+
+- [`2026-10-verifying-against-a-stale-binary.md`](2026-10-verifying-against-a-stale-binary.md)
+  — two incidents (#20/#21) of a real command against a real binary giving a
+  confident, wrong answer because the binary was not the one the diff
+  produced. Piping `cmake --build` through `tail`/`head` reports `tail`'s
+  exit status, not the build's, so a compile failure still "succeeds" — this
+  is how an earlier task shipped a wrong claim about DuckDB's `VALUES`
+  execution model. Separately, `build/release/Release/duckdb.exe` statically
+  links `stats_duck` via the `shell` CMake target, so `LOAD` of a freshly
+  built extension can be a silent no-op: the catalog already has the
+  function, by name, from the stale static copy. How to detect each, and
+  what to run instead.

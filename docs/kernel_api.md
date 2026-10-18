@@ -225,16 +225,22 @@ Exposed as the SQL scalars `ptukey` and `qtukey`.
   `ptukey(q, 2, df) = 2 · pt(q / sqrt(2), df) − 1`. This is the fastest way to
   convince yourself the two-integral quadrature is right, because it reduces
   the whole thing to a distribution this header already validates elsewhere.
-- **Both return NaN instead of throwing when `k < 2`, `df <= 0`, or any
-  argument is NaN**, unlike the rest of this header, which throws
-  `std::invalid_argument`. They are called per row from `emmeans` and from
-  the `ptukey`/`qtukey` SQL scalars, where a NaN travels with the row and an
-  exception would abort the query. `StudentizedRangeQuantile` also returns
-  NaN for a `p` outside `[0, 1]`; `StudentizedRangeCDF` places no such
-  restriction on `q` — `q <= 0` is a valid input, and the answer is `0.0`.
-  An infinite `df` is not out of domain either: it is the normal-range
-  limit the outer integral converges to, so `StudentizedRangeCDF(q, k,
-  INFINITY)` is a value, not a NaN.
+- **Both return NaN instead of throwing when `k < 2`, `k` is infinite,
+  `df <= 0`, or any argument is NaN**, unlike the rest of this header,
+  which throws `std::invalid_argument`. An infinite `k` is rejected on
+  purpose rather than left to run: without the check, the inner integral's
+  `[Phi(z) - Phi(z-w)]^(k-1)` factor underflows to zero at every node for a
+  large enough `k`, and `k` (infinity) times that zero is `NaN` under IEEE
+  arithmetic, not `0`. That happens to be the right answer here, but only
+  by accident, so `NormalRangeCDF` checks `std::isinf(k)` explicitly rather
+  than relying on it. They are called per row from `emmeans`
+  and from the `ptukey`/`qtukey` SQL scalars, where a NaN travels with the
+  row and an exception would abort the query. `StudentizedRangeQuantile`
+  also returns NaN for a `p` outside `[0, 1]`; `StudentizedRangeCDF` places
+  no such restriction on `q` — `q <= 0` is a valid input, and the answer is
+  `0.0`. An infinite `df` is not out of domain either: it is the
+  normal-range limit the outer integral converges to, so
+  `StudentizedRangeCDF(q, k, INFINITY)` is a value, not a NaN.
 - **A `df` that is not an integer and is below 4 is accurate to about 1e-5
   rather than 1e-12.** Every integer `df`, and every real `df` at or above 4,
   measures at about 1e-12 against `scipy.stats.studentized_range`. Below
@@ -282,6 +288,18 @@ EmmeansResult emmeans(const linalg::Mat &L,          // q × k, one row per mean
 
 Conventions worth knowing:
 
+- **`ok = false` is misuse; callers raise.** `error` names the problem, and
+  `means`/`diffs` come back empty. The checks run in this order, and the
+  first failure is the one reported: `L` with no rows; a row width that is
+  not k, including a ragged `L`; a `V` that is not k × k; a `beta` of
+  length 0; and a `df` that is not positive and finite. Four of those five
+  raise in close to the same words `lin_hyp` uses for the same shapes on
+  `L`, `beta` and `V`. `lin_hyp`'s own `df` check only rejects a
+  non-positive value, not an infinite one, so this one is stricter. An
+  `alpha` outside `(0, 1)` is the sixth kernel-level check, and has no
+  `lin_hyp` counterpart to compare against, since `lin_hyp` takes no
+  `alpha`. The SQL layer adds one misuse case of its own, ahead of all six:
+  an unrecognized `adjust` name, rejected before `emmeans` is ever called.
 - **Nothing is inverted.** There is no `pinv`, no equilibration and no rank
   tolerance here, because `emmeans` forms no quadratic form to invert
   through. `lin_hyp` needs all three for its joint test; `emmeans` has no

@@ -592,6 +592,17 @@ both of its means are fine: its own variance can be negative by more than
 rounding should allow. `means` and `diffs` keep their length and their
 positions regardless, so `i` and `j` stay valid indices.
 
+That is the data-shaped kind of failure, and it is always a NULL, never an
+error. Misuse is different, and raises instead: a ragged `L`, a row of `L`
+that is not as wide as `beta`, an `L` with no rows, a NULL row of `L`, a
+`cov` that is not k² long, or an empty `beta`. Those six raise in close to
+the same words `lin_hyp` uses for the same six shapes, because two
+neighbouring functions must not answer the same malformed input
+differently. A `df` that is not positive and finite, an `alpha` outside
+`(0, 1)`, or an unrecognized `adjust` name raise too. `lin_hyp` has
+neither an `alpha` nor an `adjust` argument to compare against, and its own
+`df` check does not reject an infinite value the way this one does.
+
 Five things worth knowing before reading `adjust` as a knob with no cost:
 
 - **A mean's own confidence limits are never adjusted for multiplicity**,

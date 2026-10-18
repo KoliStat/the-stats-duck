@@ -26,10 +26,13 @@ that name is preserved across releases for backward compatibility.
   simultaneous interval. `'tukey'` is the Tukey-Kramer approximation
   whenever the compared means do not share a standard error, which is any
   unbalanced design, and is exact only when they do, matching SAS and R's
-  `emmeans`. A mean that puts weight on a rank-deficient fit's aliased
-  coefficient is reported NULL for that element only, and so is a pair
-  that touches such a mean, or one whose own variance is negative past a
-  1e-12 relative tolerance; the rest of the grid is unaffected either way.
+  `emmeans`. A mean is reported NULL for that element only when it puts
+  weight on a rank-deficient fit's aliased coefficient, or when its own
+  variance is negative past a 1e-12 relative tolerance. `cov` need not come
+  from `lm_fit`, so a hand-built, indefinite covariance can trigger the
+  second case with no aliasing involved. A pair is reported NULL the same
+  way, either by touching a mean that failed or by its own variance
+  failing the same check; the rest of the grid is unaffected either way.
   That tolerance decides whether a slightly negative variance is a
   rounding artefact. It does not decide whether `cov` is a covariance in
   general, the same limit `lin_hyp`'s own checks have. `k_compare`, the
