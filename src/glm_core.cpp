@@ -257,14 +257,29 @@ double deviance(Family f, const std::vector<double> &y, const std::vector<double
 		return total;
 	case Family::kBinomial:
 		for (std::size_t i = 0; i < n; i++) {
-			const double term =
-			    y[i] * std::log(y[i] / mu[i]) + (1.0 - y[i]) * std::log((1.0 - y[i]) / (1.0 - mu[i]));
+			// y·ln(y/mu) is 0·ln(0) at y = 0, and the symmetric
+			// (1-y)·ln((1-y)/(1-mu)) term is 0·ln(0) at y = 1. Both are
+			// NaN in IEEE unless defined as 0 here, by the usual x·ln(x)
+			// convention at x = 0. Every plain 0/1 logistic fit hits this,
+			// so it is the common case, not an edge case.
+			double term = 0.0;
+			if (y[i] != 0.0) {
+				term += y[i] * std::log(y[i] / mu[i]);
+			}
+			if (y[i] != 1.0) {
+				term += (1.0 - y[i]) * std::log((1.0 - y[i]) / (1.0 - mu[i]));
+			}
 			total += w[i] * term;
 		}
 		return 2.0 * total;
 	case Family::kPoisson:
 		for (std::size_t i = 0; i < n; i++) {
-			const double term = y[i] * std::log(y[i] / mu[i]) - (y[i] - mu[i]);
+			// Same guard, same reason: y·ln(y/mu) is 0·ln(0) at y = 0,
+			// which all-zero count data hits.
+			double term = -(y[i] - mu[i]);
+			if (y[i] != 0.0) {
+				term += y[i] * std::log(y[i] / mu[i]);
+			}
 			total += w[i] * term;
 		}
 		return 2.0 * total;

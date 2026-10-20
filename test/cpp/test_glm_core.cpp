@@ -264,6 +264,40 @@ static void test_loglik_aic_dispersion() {
 	      "gamma log-likelihood genuinely depends on calling pearson_dispersion first");
 }
 
+static void test_zero_one_binomial_deviance() {
+	std::printf("deviance at a zero or unit binomial response (Review Focus item 1)\n");
+
+	// Every plain 0/1 logistic fit has y exactly 0 and exactly 1, so this is the
+	// common case and not an edge case. The deviance term y·ln(y/mu) is 0·ln 0 at
+	// y = 0, which is NaN in IEEE unless the term is special-cased to zero. An
+	// unguarded deviance makes the most common use of this function return NULL.
+	const std::vector<double> y01 = {0.0, 1.0, 0.0, 1.0};
+	const std::vector<double> mu01 = {0.2, 0.8, 0.3, 0.6};
+	const std::vector<double> w01 = {1.0, 1.0, 1.0, 1.0};
+	const double d01 = statsduck::deviance(statsduck::Family::kBinomial, y01, mu01, w01);
+	check(std::isfinite(d01), "a 0/1 binomial deviance is finite");
+	check(d01 > 0.0, "and positive");
+
+	// Hand-computed: −2[ln(0.8) + ln(0.8) + ln(0.7) + ln(0.6)] = 2.5285...
+	check(close_rel(d01, -2.0 * (std::log(0.8) + std::log(0.8) + std::log(0.7) + std::log(0.6)), 1e-12),
+	      "at y in {0, 1} the deviance reduces to -2 Σ ln(likelihood)");
+
+	// The same guard on the other side, and for a weighted proportion of exactly 0.
+	check(std::isfinite(statsduck::deviance(statsduck::Family::kBinomial, {0.0}, {0.5}, {10.0})),
+	      "a zero proportion with weight 10 is finite");
+	check(std::isfinite(statsduck::deviance(statsduck::Family::kBinomial, {1.0}, {0.5}, {10.0})),
+	      "a unit proportion with weight 10 is finite");
+
+	// Poisson has the same 0·ln 0 term at y = 0, which all-zero count data hits.
+	const double dp0 = statsduck::deviance(statsduck::Family::kPoisson, {0.0, 0.0}, {0.5, 0.5}, {1.0, 1.0});
+	check(std::isfinite(dp0), "a poisson deviance at y = 0 is finite");
+	check(close_rel(dp0, 2.0, 1e-12), "and equals 2 Σ mu when every y is zero");
+
+	// The log-likelihood must survive the same inputs.
+	check(std::isfinite(statsduck::glm_loglik(statsduck::Family::kBinomial, y01, mu01, w01, 1.0)),
+	      "the 0/1 binomial log-likelihood is finite");
+}
+
 int main() {
 	std::printf("== test_glm_core ==\n");
 	test_round_trip();
@@ -272,6 +306,7 @@ int main() {
 	test_parsing_and_link_tables();
 	test_deviance();
 	test_loglik_aic_dispersion();
+	test_zero_one_binomial_deviance();
 
 	std::printf("\n%d checks, %d failures\n", g_checks, g_fail);
 	if (g_fail == 0) {
