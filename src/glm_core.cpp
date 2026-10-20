@@ -303,7 +303,11 @@ double glm_loglik(Family f, const std::vector<double> &y, const std::vector<doub
 		const double nd = static_cast<double>(n);
 		const double sigma2 = deviance(f, y, mu, w) / nd;
 		const double two_pi = 2.0 * 3.14159265358979323846;
-		return -0.5 * nd * (std::log(two_pi * sigma2) + 1.0);
+		// Two separate std::log calls, summed, not one log of a product.
+		// Mathematically the same value, but this is the exact sequence
+		// lm_core.cpp uses, kept identical so the two never drift apart
+		// by a rounding bit on the same input.
+		return -0.5 * nd * (std::log(two_pi) + std::log(sigma2) + 1.0);
 	}
 	case Family::kBinomial: {
 		double total = 0.0;
