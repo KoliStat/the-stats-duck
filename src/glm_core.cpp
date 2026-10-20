@@ -244,4 +244,116 @@ double variance(Family f, double mu) {
 	return std::numeric_limits<double>::quiet_NaN(); // unreachable
 }
 
+double deviance(Family f, const std::vector<double> &y, const std::vector<double> &mu,
+                const std::vector<double> &w) {
+	const std::size_t n = y.size();
+	double total = 0.0;
+	switch (f) {
+	case Family::kGaussian:
+		for (std::size_t i = 0; i < n; i++) {
+			const double d = y[i] - mu[i];
+			total += w[i] * d * d;
+		}
+		return total;
+	case Family::kBinomial:
+		for (std::size_t i = 0; i < n; i++) {
+			const double term =
+			    y[i] * std::log(y[i] / mu[i]) + (1.0 - y[i]) * std::log((1.0 - y[i]) / (1.0 - mu[i]));
+			total += w[i] * term;
+		}
+		return 2.0 * total;
+	case Family::kPoisson:
+		for (std::size_t i = 0; i < n; i++) {
+			const double term = y[i] * std::log(y[i] / mu[i]) - (y[i] - mu[i]);
+			total += w[i] * term;
+		}
+		return 2.0 * total;
+	case Family::kGamma:
+		for (std::size_t i = 0; i < n; i++) {
+			total += w[i] * (-std::log(y[i] / mu[i]) + (y[i] - mu[i]) / mu[i]);
+		}
+		return 2.0 * total;
+	}
+	return std::numeric_limits<double>::quiet_NaN(); // unreachable
+}
+
+double glm_loglik(Family f, const std::vector<double> &y, const std::vector<double> &mu,
+                   const std::vector<double> &w, double dispersion) {
+	const std::size_t n = y.size();
+	switch (f) {
+	case Family::kGaussian: {
+		// Ignores `dispersion`: sigma^2 is recomputed from deviance/n
+		// directly below, matching lm_core::loglik. See the header for
+		// why this is a different quantity from the passed-in argument.
+		const double nd = static_cast<double>(n);
+		const double sigma2 = deviance(f, y, mu, w) / nd;
+		const double two_pi = 2.0 * 3.14159265358979323846;
+		return -0.5 * nd * (std::log(two_pi * sigma2) + 1.0);
+	}
+	case Family::kBinomial: {
+		double total = 0.0;
+		for (std::size_t i = 0; i < n; i++) {
+			// w*y*ln(mu) and w*(1-y)*ln(1-mu): each skips its own log
+			// entirely when its coefficient (y, or 1-y) is exactly 0,
+			// the same 0*ln(.) := 0 convention the deviance above uses.
+			// mu can sit at its clamped boundary (kMuEps or 1 - kMuEps)
+			// for an extreme fit, where ln(mu) or ln(1 - mu) is a real,
+			// large negative number, not just a very small positive one;
+			// guarding on y keeps that number from ever being multiplied
+			// against a zero coefficient to produce NaN instead of 0.
+			if (y[i] != 0.0) {
+				total += w[i] * y[i] * std::log(mu[i]);
+			}
+			if (y[i] != 1.0) {
+				total += w[i] * (1.0 - y[i]) * std::log(1.0 - mu[i]);
+			}
+			total += stats_duck::detail::LogChoose(w[i], w[i] * y[i]);
+		}
+		return total;
+	}
+	case Family::kPoisson: {
+		double total = 0.0;
+		for (std::size_t i = 0; i < n; i++) {
+			// Same guard as binomial, on the same term shape: y*ln(mu) is
+			// skipped at y = 0 rather than computed and discarded.
+			double term = -mu[i] - std::lgamma(y[i] + 1.0);
+			if (y[i] != 0.0) {
+				term += y[i] * std::log(mu[i]);
+			}
+			total += w[i] * term;
+		}
+		return total;
+	}
+	case Family::kGamma: {
+		double total = 0.0;
+		const double shape = 1.0 / dispersion;
+		for (std::size_t i = 0; i < n; i++) {
+			const double k = w[i] * shape; // the effective shape for this row
+			total += (k - 1.0) * std::log(y[i]) - y[i] * k / mu[i] - std::lgamma(k) -
+			         k * std::log(mu[i] / k);
+		}
+		return total;
+	}
+	}
+	return std::numeric_limits<double>::quiet_NaN(); // unreachable
+}
+
+double glm_aic(Family f, double loglik, std::size_t rank) {
+	const double d = (f == Family::kGaussian || f == Family::kGamma) ? 1.0 : 0.0;
+	return -2.0 * loglik + 2.0 * (static_cast<double>(rank) + d);
+}
+
+double pearson_dispersion(Family f, const std::vector<double> &y, const std::vector<double> &mu,
+                          const std::vector<double> &w, std::size_t df_residual) {
+	if (f == Family::kBinomial || f == Family::kPoisson) {
+		return 1.0;
+	}
+	double total = 0.0;
+	for (std::size_t i = 0; i < y.size(); i++) {
+		const double d = y[i] - mu[i];
+		total += w[i] * d * d / variance(f, mu[i]);
+	}
+	return total / static_cast<double>(df_residual);
+}
+
 } // namespace statsduck

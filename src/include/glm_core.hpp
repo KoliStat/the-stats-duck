@@ -5,8 +5,12 @@
 // This file holds the pure scalar functions the IRLS loop will use. IRLS
 // stands for iteratively reweighted least squares. It is the algorithm
 // glm_fit uses to fit a generalized linear model. This increment has no
-// loop yet. It only has the family and link enums, their parsers, and four
-// scalar functions: link_eta, link_inv, link_deriv, and variance.
+// loop yet. It has the family and link enums, their parsers, four scalar
+// functions over a single observation (link_eta, link_inv, link_deriv,
+// variance), and four closed-form quantities over a whole fit's y, mu and
+// w vectors (deviance, glm_loglik, glm_aic, pearson_dispersion). All eight
+// are testable without a fitting loop, because every one of them takes
+// the fitted values as a plain argument instead of computing them.
 //
 // DuckDB-free and Eigen-free at the boundary, like linalg.hpp and
 // lm_core.hpp. This file includes lm_core.hpp for one reason: the Vcov
@@ -22,7 +26,9 @@
 
 #include "lm_core.hpp" // statsduck::Vcov — the enum only, never fit_lm/parse_vcov
 
+#include <cstddef>
 #include <string>
+#include <vector>
 
 namespace statsduck {
 
@@ -178,5 +184,87 @@ double link_deriv(Link l, double eta);
 //   gaussian   1            binomial   mu * (1 - mu)
 //   poisson    mu           gamma      mu^2
 double variance(Family f, double mu);
+
+// Four closed-form quantities a fit reports, computable from the fitted
+// values alone: deviance, pearson_dispersion, glm_loglik, glm_aic. No
+// fitting loop is needed to test them, and none is in this increment.
+//
+// A fit computes them in this order: deviance, then pearson_dispersion,
+// then glm_loglik (passing pearson_dispersion's result as `dispersion`),
+// then glm_aic (passing glm_loglik's result as `loglik`). For binomial
+// and poisson the order does not matter, because pearson_dispersion
+// always returns 1.0 there, regardless of when it runs. For gamma it
+// does matter: glm_loglik's shape parameter is 1/dispersion, so the
+// log-likelihood is wrong if a caller guesses 1.0 instead of calling
+// pearson_dispersion first. For gaussian, glm_loglik recomputes its own
+// sigma^2 from deviance/n directly and does not read `dispersion` at
+// all — a different quantity from pearson_dispersion's deviance/df_residual.
+// The parameter still exists on every family's signature, so a fitting
+// loop calls pearson_dispersion once and passes the same value through
+// for every family, uniformly, rather than special-casing gaussian.
+//
+// The binomial response y is a PROPORTION in [0, 1], not a 0/1 count: the
+// weight w is the trial count, so 7 successes out of 10 trials is
+// y = 0.7, w = 10. A plain 0/1 logistic fit is the special case w = 1.
+
+// Sigma of the per-observation deviance contributions, already doubled —
+// a caller never multiplies by 2 again. The four families:
+//   gaussian  Σ w·(y − mu)²                   (no extra 2x: the family's
+//             own algebra already cancels it, unlike the other three)
+//   binomial  2 Σ w·[ y·ln(y/mu) + (1 − y)·ln((1 − y)/(1 − mu)) ]
+//   poisson   2 Σ w·[ y·ln(y/mu) − (y − mu) ]
+//   gamma     2 Σ w·[ −ln(y/mu) + (y − mu)/mu ]
+//
+// A binomial or Poisson y of exactly 0, and a binomial y of exactly 1,
+// make a y·ln(y/mu) term compute 0·ln(0), which is NaN in IEEE unless
+// defined as 0 by convention. This is not an edge case: every plain 0/1
+// logistic fit has y exactly 0 and exactly 1, and the same 0·ln(0) is what
+// an all-zero Poisson count hits. Both terms are defined as 0 at that
+// point, so the common case returns a value instead of NaN.
+double deviance(Family f, const std::vector<double> &y, const std::vector<double> &mu,
+                const std::vector<double> &w);
+
+// The log-likelihood at the fitted mu. See the dispersion argument's
+// contract above this block; call pearson_dispersion first.
+//   gaussian  −n/2·(ln 2π σ² + 1),  σ² = deviance/n, n = y.size()
+//             (matches lm_core::loglik; +inf at zero deviance)
+//   binomial  Σ [ LogChoose(w, w·y) + w·y·ln mu + w·(1 − y)·ln(1 − mu) ]
+//   poisson   Σ w·[ y·ln mu − mu − lgamma(y + 1) ]
+//   gamma     shape = 1/dispersion, through std::lgamma
+//
+// LogChoose is distributions.hpp's (stats_duck::detail::LogChoose,
+// stats_duck WITH an underscore). This file adds no new special function.
+//
+// Finite even when mu sits at its clamped boundary (kMuEps or
+// 1 - kMuEps) and the matching y is exactly 0 or 1: w·y·ln(mu) and
+// w·(1 − y)·ln(1 − mu) use the same 0·ln(·) := 0 convention the deviance
+// above does, checked on y so the log is never evaluated when its
+// coefficient is 0. Found while building this task's fixture generator: a
+// perfectly separated binomial fit drives mu to the exact boundary, where
+// statsmodels itself does not clamp, and an unguarded term there is
+// 0·(−inf), which is NaN rather than the 0 the limit requires.
+double glm_loglik(Family f, const std::vector<double> &y, const std::vector<double> &mu,
+                   const std::vector<double> &w, double dispersion);
+
+// Akaike information criterion: −2·loglik + 2·(rank + d). d is 1 for
+// gaussian and gamma, whose dispersion is an estimated parameter (R's
+// convention), and 0 for binomial and poisson, whose dispersion is fixed
+// at 1. statsmodels' own .aic never adds the extra parameter for any
+// family, so this project's aic is exactly 2 more than statsmodels'
+// reports for gaussian and gamma, and equal to it for binomial and
+// poisson.
+//
+// The Gaussian log-likelihood is +inf at zero deviance, so its aic is
+// −inf. Both pass through as values rather than becoming NULL: ±Inf is
+// representable under docs/fitter_conventions.md.
+double glm_aic(Family f, double loglik, std::size_t rank);
+
+// The dispersion (scale) parameter, by Pearson's chi-square:
+//   Σ w·(y − mu)² / variance(f, mu) / df_residual
+// for gaussian and gamma. Exactly 1.0 for binomial and poisson,
+// regardless of the data, so a caller never has to know which families
+// estimate a dispersion and which do not.
+double pearson_dispersion(Family f, const std::vector<double> &y, const std::vector<double> &mu,
+                           const std::vector<double> &w, std::size_t df_residual);
 
 } // namespace statsduck
