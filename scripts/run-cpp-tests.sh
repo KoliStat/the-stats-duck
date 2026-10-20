@@ -70,6 +70,9 @@ build_and_run test_lin_hyp \
 build_and_run test_optimize \
   "$ROOT/test/cpp/test_optimize.cpp"
 
+build_and_run test_cluster_ids \
+  "$ROOT/test/cpp/test_cluster_ids.cpp"
+
 build_and_run test_estimability \
   "$ROOT/test/cpp/test_estimability.cpp"
 
