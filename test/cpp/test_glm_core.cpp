@@ -20,8 +20,8 @@
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
-#include <limits>
 #include <cstdio>
+#include <limits>
 #include <string>
 
 static int g_checks = 0;
@@ -235,9 +235,9 @@ static void test_loglik_aic_dispersion() {
 	check(close_rel(statsduck::glm_aic(statsduck::Family::kGamma, -10.0, 3), 28.0, 1e-15),
 	      "gamma aic: d = 1, same as gaussian for the same loglik and rank");
 
-	// The gaussian log-likelihood is +inf at zero deviance (a perfect fit),
-	// matching lm_core::loglik; the resulting aic is -inf. Both pass through
-	// as values rather than becoming NULL (docs/fitter_conventions.md).
+	// The gaussian log-likelihood is +inf at zero deviance, a perfect fit.
+	// This matches lm_core::loglik. The resulting aic is -inf. Both pass
+	// through as values rather than becoming NULL (docs/fitter_conventions.md).
 	const std::vector<double> yperf = {1.0, 2.0, 3.0};
 	const double ll_perfect =
 	    statsduck::glm_loglik(statsduck::Family::kGaussian, yperf, yperf, {1.0, 1.0, 1.0}, 1.0);
@@ -247,9 +247,9 @@ static void test_loglik_aic_dispersion() {
 	      "and aic = -inf, passed through rather than becoming NULL");
 
 	// The computation order ruling: pearson_dispersion must run before
-	// glm_loglik for gamma, whose shape = 1/dispersion reads the argument.
-	// Passing 1.0 instead of the real dispersion gives a different, wrong
-	// log-likelihood, which this checks directly.
+	// glm_loglik for gamma. Gamma's shape is 1/dispersion, so it reads the
+	// argument directly. Passing 1.0 instead of the real dispersion gives
+	// a different, wrong log-likelihood. This checks that directly.
 	const std::vector<double> ygam = {4.0, 6.0};
 	const std::vector<double> mugam = {5.0, 5.0};
 	const std::vector<double> wgam = {1.0, 1.0};

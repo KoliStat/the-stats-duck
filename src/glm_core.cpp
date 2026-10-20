@@ -257,11 +257,11 @@ double deviance(Family f, const std::vector<double> &y, const std::vector<double
 		return total;
 	case Family::kBinomial:
 		for (std::size_t i = 0; i < n; i++) {
-			// y·ln(y/mu) is 0·ln(0) at y = 0, and the symmetric
-			// (1-y)·ln((1-y)/(1-mu)) term is 0·ln(0) at y = 1. Both are
-			// NaN in IEEE unless defined as 0 here, by the usual x·ln(x)
-			// convention at x = 0. Every plain 0/1 logistic fit hits this,
-			// so it is the common case, not an edge case.
+			// y·ln(y/mu) is 0·ln(0) at y = 0. The symmetric term,
+			// (1-y)·ln((1-y)/(1-mu)), is 0·ln(0) at y = 1. Both are NaN
+			// in IEEE unless defined as 0 here, by the usual x·ln(x)
+			// convention at x = 0. Every plain 0/1 logistic fit hits
+			// this. It is the common case, not an edge case.
 			double term = 0.0;
 			if (y[i] != 0.0) {
 				term += y[i] * std::log(y[i] / mu[i]);
@@ -297,9 +297,9 @@ double glm_loglik(Family f, const std::vector<double> &y, const std::vector<doub
 	const std::size_t n = y.size();
 	switch (f) {
 	case Family::kGaussian: {
-		// Ignores `dispersion`: sigma^2 is recomputed from deviance/n
+		// Ignores `dispersion`. Sigma^2 is recomputed from deviance/n
 		// directly below, matching lm_core::loglik. See the header for
-		// why this is a different quantity from the passed-in argument.
+		// why that is a different quantity from the passed-in argument.
 		const double nd = static_cast<double>(n);
 		const double sigma2 = deviance(f, y, mu, w) / nd;
 		const double two_pi = 2.0 * 3.14159265358979323846;
@@ -308,14 +308,15 @@ double glm_loglik(Family f, const std::vector<double> &y, const std::vector<doub
 	case Family::kBinomial: {
 		double total = 0.0;
 		for (std::size_t i = 0; i < n; i++) {
-			// w*y*ln(mu) and w*(1-y)*ln(1-mu): each skips its own log
-			// entirely when its coefficient (y, or 1-y) is exactly 0,
-			// the same 0*ln(.) := 0 convention the deviance above uses.
-			// mu can sit at its clamped boundary (kMuEps or 1 - kMuEps)
-			// for an extreme fit, where ln(mu) or ln(1 - mu) is a real,
-			// large negative number, not just a very small positive one;
-			// guarding on y keeps that number from ever being multiplied
-			// against a zero coefficient to produce NaN instead of 0.
+			// w*y*ln(mu) and w*(1-y)*ln(1-mu) each skip their own log
+			// entirely when their own coefficient (y, or 1-y) is exactly
+			// 0. This is the same 0*ln(.) := 0 convention the deviance
+			// above uses. mu can sit at its clamped boundary (kMuEps or
+			// 1 - kMuEps) for an extreme fit. There, ln(mu) or ln(1 - mu)
+			// is a real, large negative number, not just a very small
+			// positive one. Guarding on y keeps that number from ever
+			// being multiplied against a zero coefficient to produce NaN
+			// instead of 0.
 			if (y[i] != 0.0) {
 				total += w[i] * y[i] * std::log(mu[i]);
 			}
