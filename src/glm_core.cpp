@@ -315,12 +315,14 @@ double glm_loglik(Family f, const std::vector<double> &y, const std::vector<doub
 			// w*y*ln(mu) and w*(1-y)*ln(1-mu) each skip their own log
 			// entirely when their own coefficient (y, or 1-y) is exactly
 			// 0. This is the same 0*ln(.) := 0 convention the deviance
-			// above uses. mu can sit at its clamped boundary (kMuEps or
-			// 1 - kMuEps) for an extreme fit. There, ln(mu) or ln(1 - mu)
-			// is a real, large negative number, not just a very small
-			// positive one. Guarding on y keeps that number from ever
-			// being multiplied against a zero coefficient to produce NaN
-			// instead of 0.
+			// above uses. This guards an UNCLAMPED mu of exactly 0.0 or
+			// 1.0, not the clamped boundary: at mu = kMuEps, ln(mu) is
+			// about -23, an ordinary finite number, so 0*ln(kMuEps) is
+			// already 0 with no guard needed. link_inv always clamps mu,
+			// so the real risk is a caller that bypasses link_inv and
+			// passes a raw mu straight in. Guarding on y keeps a true
+			// ln(0) from ever being multiplied against a zero coefficient
+			// to produce NaN instead of 0.
 			if (y[i] != 0.0) {
 				total += w[i] * y[i] * std::log(mu[i]);
 			}

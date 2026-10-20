@@ -20,7 +20,9 @@
 // (gaussian, gamma), which is why those two designs below carry both
 // p_oracle (statsmodels' own reference) and p_expected (always normal,
 // which is what the kernel must produce). For binomial and poisson the
-// two columns are identical (self-check 5).
+// two columns are identical. Self-check 5 confirms this against
+// statsmodels' own .pvalues directly, not only against this script's own
+// z-reference formula.
 //
 // DELIBERATE DEVIATION 2, affecting DS4 and DS5's aic: statsmodels' own
 // .aic never counts the estimated dispersion as a parameter, for any
@@ -31,6 +33,19 @@
 // below are exactly 2 more than statsmodels' own .aic; DS1/DS2/DS3/DS6/
 // DS7/DS8 match statsmodels' .aic exactly.
 //
+// DS6 IS NOT SAFE TO CHECK AT THIS PROJECT'S USUAL TIGHT TOLERANCE. This
+// covers every one of its goldens, not only kDs6Beta and kDs6StdError: it
+// also covers kDs6Deviance, kDs6Loglik, and kDs6Aic. See the comment at
+// DS6's own definition below for the mechanism and for what a consumer
+// should assert on this design instead.
+//
+// SCOPE NOTE: only DS1 and DS2 (binomial) exercise a weight w != 1. The
+// w-scaled log-likelihood formula for poisson, gamma and gaussian is
+// UNVERIFIED against statsmodels for a genuinely varying w. A task that
+// adds per-row weights to one of those three families should re-derive
+// and verify that formula first, the way DS2 below was verified to need
+// the cbind(successes, failures) endog style rather than var_weights.
+//
 // Values carry 17 significant digits, which round-trips a double exactly.
 //
 // Self-checks that passed before this file was written:
@@ -38,7 +53,7 @@
 //   2. null_deviance matches an independent intercept-only fit on every design, worst relative gap 5.061e-16 (DS4)
 //   3. DS5 matches statsmodels OLS exactly, worst beta gap 0.000e+00, worst cov gap 7.105e-15; also reproduces test_lm_fit.cpp's ds1_hetero
 //   4. x10 trial counts on DS2 leaves beta unchanged (worst 3.331e-16) and scales deviance by 10.000000000000
-//   5. for binomial and poisson, p_oracle == p_expected, worst 0.000e+00
+//   5. statsmodels' own .pvalues matches a z reference for DS1 and DS3, worst 0.000e+00; and for binomial and poisson, p_oracle == p_expected, worst 0.000e+00
 #pragma once
 
 #include <cstddef>
@@ -156,7 +171,36 @@ inline constexpr double kDs5Loglik = -2.73618533411820515e+01;
 inline constexpr double kDs5Aic = 6.27237066823641030e+01;
 inline constexpr double kDs5Cov[9] = {4.30197288655079380e+00, -1.40244518800205942e-01, -5.23287599804695192e-01, -1.40244518800205942e-01, 1.69807925681187445e-02, 2.29470169839442054e-03, -5.23287599804695192e-01, 2.29470169839442054e-03, 1.01177222385040858e-01};
 
-// -- Ds6: binomial, perfectly separated at x1 = 4.5; statsmodels warns and reports huge beta/se at its iteration cap, not a well-defined MLE -- see the generator's docstring
+// -- Ds6: binomial, perfectly separated at x1 = 4.5.
+//
+// NONE of this design's goldens is safe to check at this project's usual
+// tight tolerance. That means kDs6Beta and kDs6StdError. It also means
+// kDs6Deviance, kDs6Loglik, and kDs6Aic.
+//
+// Beta and se are not a well-defined MLE. No finite beta maximizes a
+// perfectly separated likelihood. Statsmodels' huge reported beta and se
+// are only wherever its IRLS iteration cap happened to land.
+//
+// Deviance, loglik and aic have a separate problem. It is a real
+// structural gap, not a convergence artifact. DS6's beta pushes eta past
+// +-140. There, statsmodels' own raw, unclamped logistic rounds several
+// mu values to exactly 0.0 or exactly 1.0. This project's link_inv
+// clamps mu into [kMuEps, 1 - kMuEps] instead, and a real fitter always
+// goes through link_inv. Recomputing kDs6Deviance from this design's own
+// stored beta, through this project's clamped link_inv, gives 4.54e-09.
+// The golden below is statsmodels' own unclamped value, 3.34e-09. That
+// is a 36% relative gap, even though both agree the fit is essentially
+// perfect. A future fitter that reaches the exact statsmodels beta will
+// still not reproduce kDs6Deviance, kDs6Loglik, or kDs6Aic to tight
+// tolerance. The clamped and the unclamped computation genuinely
+// disagree at this scale. See gen_glm_fit_fixtures.py's own comment at
+// DS6 for the row-by-row mechanism.
+//
+// What to assert on this design instead: the separation flag fires. The
+// reported convergence flag is whatever the implementation produces; it
+// is not necessarily true convergence. The deviance is near zero, at a
+// loose, order-of-magnitude band, for example under 1e-6. It is never
+// an equality at this project's usual 1e-10 relative tolerance.
 inline constexpr std::size_t kDs6N = 8;
 inline constexpr std::size_t kDs6K = 2;
 inline constexpr std::size_t kDs6Rank = 2;

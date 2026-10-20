@@ -241,15 +241,19 @@ double deviance(Family f, const std::vector<double> &y, const std::vector<double
 // LogChoose is distributions.hpp's (stats_duck::detail::LogChoose,
 // stats_duck WITH an underscore). This file adds no new special function.
 //
-// Finite even when mu sits at its clamped boundary (kMuEps or
-// 1 - kMuEps) and the matching y is exactly 0 or 1. The terms w·y·ln(mu)
-// and w·(1 − y)·ln(1 − mu) use the same 0·ln(·) := 0 convention the
-// deviance above does. Each is checked on y, so the log is never
-// evaluated when its own coefficient is 0. This guard was found while
-// building this task's fixture generator. A perfectly separated binomial
-// fit drives mu to the exact boundary. statsmodels itself does not clamp
-// there, so an unguarded term at that point is 0·(−inf), which is NaN
-// rather than the 0 the limit requires.
+// Guarded against an UNCLAMPED mu of exactly 0.0 or exactly 1.0. This is
+// not the clamped boundary: at mu = kMuEps, ln(mu) is about −23, an
+// ordinary finite number, so 0·ln(kMuEps) is already 0 with no guard
+// needed. link_inv always clamps, so a mu that came from it never reaches
+// a true 0.0 or 1.0. The risk is a caller that bypasses link_inv and
+// passes a raw mu straight in. The terms w·y·ln(mu) and w·(1 − y)·ln(1 − mu)
+// use the same 0·ln(·) := 0 convention the deviance above does. Each is
+// checked on y, so the log is never evaluated when its own coefficient is
+// 0. Found while building this task's fixture generator: statsmodels does
+// not clamp mu, and a perfectly separated binomial fit there drives mu to
+// exactly 0.0 or exactly 1.0 in double precision. Feeding that raw mu
+// through an unguarded version of this formula gave 0·(−inf), which is
+// NaN rather than the 0 the limit requires.
 double glm_loglik(Family f, const std::vector<double> &y, const std::vector<double> &mu,
                    const std::vector<double> &w, double dispersion);
 

@@ -19,7 +19,29 @@ reports z_statistic against a normal reference for every family, while
 statsmodels switches to a t reference when dispersion is estimated. So for
 DS4 and DS5 the oracle's p-values differ from ours. Both are emitted: p_oracle
 is what statsmodels reports and p_expected is the normal-reference value the
-kernel must produce. For binomial and poisson the two are identical.
+kernel must produce. For binomial and poisson the two are identical. Self-check
+5 does not just assert this. It also reads statsmodels' own .pvalues for one
+binomial design (DS1) and one poisson design (DS3). Both match p_expected
+exactly, which confirms statsmodels really does default to a z reference
+there, not only that this script's own z-reference formula agrees with itself.
+
+DS6 IS NOT SAFE TO CHECK AT THIS PROJECT'S USUAL TIGHT TOLERANCE. That covers
+every one of its goldens: beta, se, deviance, loglik, aic, all of them. The
+comment at DS6's own definition below explains why: it is a real structural
+gap between a clamped and an unclamped mu at extreme eta, not an IRLS
+convergence artifact. That same comment says what a consumer should assert
+on this design instead.
+
+ANOTHER SCOPE NOTE: only DS1 and DS2 (binomial) exercise a weight w != 1.
+Poisson, gamma and gaussian are only tested here at w = 1. Their w-scaled
+log-likelihood formula is Sigma w times a bracket, and for poisson and gamma
+that bracket includes an lgamma term. This formula is UNVERIFIED against
+statsmodels for a genuinely varying w, on those three families. A task that
+adds per-row weights to poisson, gamma or gaussian should re-derive and
+verify that formula first. DS2 is the cautionary example: statsmodels' own
+var_weights path does NOT reproduce this project's binomial log-likelihood
+formula for a grouped design. The cbind(successes, failures) endog style
+does, and that is why DS2 is built that way.
 
 Self-checks that must hold before anything is written:
   1. DS1 and DS2 give the same coefficients and standard errors, because they
@@ -28,7 +50,9 @@ Self-checks that must hold before anything is written:
   3. DS5's coefficients and covariance match statsmodels OLS exactly
   4. scaling DS2's trial counts by 10 leaves the coefficients unchanged and
      scales the deviance by 10
-  5. for binomial and poisson, p_oracle == p_expected
+  5. for binomial and poisson, p_oracle == p_expected, and for one design of
+     each family this also equals statsmodels' own .pvalues, not just this
+     script's own formula compared against itself
 """
 
 import sys
@@ -476,12 +500,39 @@ null_dev5 = check_null_deviance("DS5", "gaussian", ds5_y, X5, "identity", None, 
 # ===========================================================================
 # DS6: binomial, perfectly separated. n=8, one predictor. Every y=0 row has
 # x1 below 4.5 and every y=1 row has x1 above it, so no finite beta
-# maximizes the likelihood: IRLS runs to its iteration cap and reports
-# "converged" with enormous coefficients and standard errors. That
-# instability is the point: a later task's separation flag is tested
-# against exactly this shape of output, not against a tight numerical
-# match, so the beta/se goldens below are only as reproducible as
-# statsmodels' own iteration cap makes them.
+# maximizes the likelihood. IRLS runs to its iteration cap and reports
+# "converged" with enormous coefficients and standard errors.
+#
+# NOT ONE of this design's goldens is safe to check at this project's usual
+# tight tolerance. That means beta and se, which is the obvious part: no
+# finite beta is the true MLE here, so whatever statsmodels' iteration cap
+# happens to land on is an artifact of that cap, not a stable target. It
+# also means deviance, loglik, and aic, which is the part a first reading
+# of this generator missed. The reason is structural, not a convergence
+# artifact, and it is worth spelling out.
+#
+# DS6's beta pushes eta past +-140. At that scale statsmodels' own raw,
+# unclamped logistic rounds several mu values to exactly 0.0 or exactly
+# 1.0 in double precision. This project's link_inv clamps mu into
+# [kMuEps, 1 - kMuEps] = [1e-10, 1 - 1e-10] instead, and a real fitter
+# always goes through link_inv. Recomputing this design's deviance from
+# its own stored beta, through this project's clamped link_inv, gives
+# 4.54e-09. The golden below, statsmodels' own unclamped value, is
+# 3.34e-09. That is a 36% relative gap, even though both numbers agree the
+# fit is essentially perfect. Six of DS6's eight rows drive the clamp: at
+# those rows the unclamped mu is far enough past kMuEps that the clamp
+# moves it by orders of magnitude, and at a deviance this close to zero
+# that movement is not a rounding-level difference, it is most of the
+# answer. A future fitter that reaches the exact statsmodels beta will
+# still not reproduce this design's deviance, loglik, or aic to tight
+# tolerance, because the clamped and the unclamped computation genuinely
+# disagree at this scale.
+#
+# What a consumer should assert on this design instead: the separation
+# warning fires, convergence is whatever the implementation reports (not
+# necessarily true convergence), and the deviance is near zero at a loose,
+# order-of-magnitude band, for example under 1e-6. Never an equality at
+# this project's usual 1e-10 relative tolerance.
 # ===========================================================================
 
 ds6_x1 = np.array([1, 2, 3, 4, 5, 6, 7, 8], float)
@@ -621,6 +672,29 @@ print(f"self-check 2 OK: null_deviance matches an independent intercept-only "
       file=sys.stderr)
 
 # ---- Self-check 5: for binomial and poisson, p_oracle == p_expected. ------
+# This has two parts. The loop below checks that this script's own
+# p_oracle and p_expected columns agree, which only confirms this script
+# is internally consistent with its own if/else in p_values(). The real
+# premise behind the whole z-vs-t deviation is that statsmodels itself
+# defaults to a z reference for binomial and poisson. That premise is
+# checked directly first, against statsmodels' own .pvalues, for one
+# binomial design (DS1) and one poisson design (DS3). A script that had
+# the wrong premise baked into both p_oracle and p_expected would still
+# pass the loop below; it cannot pass this first part by accident.
+worst5_premise = 0.0
+worst5_premise_where = "both DS1 and DS3"
+for label, res, p_ex in (("DS1", res1, p_ex1), ("DS3", res3, p_ex3)):
+    gap = float(np.max(np.abs(np.asarray(res.pvalues) - p_ex)))
+    if gap > worst5_premise:
+        worst5_premise, worst5_premise_where = gap, label
+# The band is arithmetic noise: both sides compute the same z-reference
+# p-value from the same z, once in this script via scipy and once inside
+# statsmodels, so they agree to the last few bits.
+if not worst5_premise < 1e-12:
+    fail(f"statsmodels' own .pvalues does not match a z reference "
+         f"(worst {worst5_premise:.3e} at {worst5_premise_where}); "
+         f"the z-vs-t premise behind this whole generator may be false")
+
 worst5 = 0.0
 worst5_where = "every binomial/poisson design"
 for label, po, pe in (
@@ -635,7 +709,9 @@ for label, po, pe in (
         worst5, worst5_where = gap, label
 if not worst5 < 1e-14:
     fail(f"p_oracle != p_expected for a binomial/poisson design (worst {worst5:.3e} at {worst5_where})")
-print(f"self-check 5 OK: for binomial and poisson, p_oracle == p_expected, "
+print(f"self-check 5 OK: statsmodels' own .pvalues matches a z reference for "
+      f"DS1 and DS3, worst {worst5_premise:.3e} at {worst5_premise_where}; "
+      f"and for binomial and poisson, p_oracle == p_expected, "
       f"worst {worst5:.3e} at {worst5_where}", file=sys.stderr)
 
 print("all self-checks OK", file=sys.stderr)
@@ -666,7 +742,9 @@ P("// switches to a t(df_residual) reference when the dispersion is estimated")
 P("// (gaussian, gamma), which is why those two designs below carry both")
 P("// p_oracle (statsmodels' own reference) and p_expected (always normal,")
 P("// which is what the kernel must produce). For binomial and poisson the")
-P("// two columns are identical (self-check 5).")
+P("// two columns are identical. Self-check 5 confirms this against")
+P("// statsmodels' own .pvalues directly, not only against this script's own")
+P("// z-reference formula.")
 P("//")
 P("// DELIBERATE DEVIATION 2, affecting DS4 and DS5's aic: statsmodels' own")
 P("// .aic never counts the estimated dispersion as a parameter, for any")
@@ -676,6 +754,19 @@ P("// parameter there) and d = 0 for binomial and poisson (dispersion fixed")
 P("// at 1, matching statsmodels for those two). So DS4's and DS5's aic")
 P("// below are exactly 2 more than statsmodels' own .aic; DS1/DS2/DS3/DS6/")
 P("// DS7/DS8 match statsmodels' .aic exactly.")
+P("//")
+P("// DS6 IS NOT SAFE TO CHECK AT THIS PROJECT'S USUAL TIGHT TOLERANCE. This")
+P("// covers every one of its goldens, not only kDs6Beta and kDs6StdError: it")
+P("// also covers kDs6Deviance, kDs6Loglik, and kDs6Aic. See the comment at")
+P("// DS6's own definition below for the mechanism and for what a consumer")
+P("// should assert on this design instead.")
+P("//")
+P("// SCOPE NOTE: only DS1 and DS2 (binomial) exercise a weight w != 1. The")
+P("// w-scaled log-likelihood formula for poisson, gamma and gaussian is")
+P("// UNVERIFIED against statsmodels for a genuinely varying w. A task that")
+P("// adds per-row weights to one of those three families should re-derive")
+P("// and verify that formula first, the way DS2 below was verified to need")
+P("// the cbind(successes, failures) endog style rather than var_weights.")
 P("//")
 P("// Values carry 17 significant digits, which round-trips a double exactly.")
 P("//")
@@ -688,7 +779,9 @@ P(f"//   3. DS5 matches statsmodels OLS exactly, worst beta gap {worst3_beta:.3e
   f"worst cov gap {worst3_cov:.3e}; also reproduces test_lm_fit.cpp's ds1_hetero")
 P(f"//   4. x10 trial counts on DS2 leaves beta unchanged (worst {worst4_beta:.3e}) "
   f"and scales deviance by {dev_ratio:.12f}")
-P(f"//   5. for binomial and poisson, p_oracle == p_expected, worst {worst5:.3e}")
+P(f"//   5. statsmodels' own .pvalues matches a z reference for DS1 and DS3, "
+  f"worst {worst5_premise:.3e}; and for binomial and poisson, p_oracle == "
+  f"p_expected, worst {worst5:.3e}")
 P("#pragma once")
 P()
 P("#include <cstddef>")
@@ -767,12 +860,39 @@ emit_design("Ds5", 12, 3, rank5, df5,
                  "statsmodels' own .aic (deviation 2)")
 
 # -- DS6: binomial, perfectly separated --------------------------------------
+P("// -- Ds6: binomial, perfectly separated at x1 = 4.5.")
+P("//")
+P("// NONE of this design's goldens is safe to check at this project's usual")
+P("// tight tolerance. That means kDs6Beta and kDs6StdError. It also means")
+P("// kDs6Deviance, kDs6Loglik, and kDs6Aic.")
+P("//")
+P("// Beta and se are not a well-defined MLE. No finite beta maximizes a")
+P("// perfectly separated likelihood. Statsmodels' huge reported beta and se")
+P("// are only wherever its IRLS iteration cap happened to land.")
+P("//")
+P("// Deviance, loglik and aic have a separate problem. It is a real")
+P("// structural gap, not a convergence artifact. DS6's beta pushes eta past")
+P("// +-140. There, statsmodels' own raw, unclamped logistic rounds several")
+P("// mu values to exactly 0.0 or exactly 1.0. This project's link_inv")
+P("// clamps mu into [kMuEps, 1 - kMuEps] instead, and a real fitter always")
+P("// goes through link_inv. Recomputing kDs6Deviance from this design's own")
+P("// stored beta, through this project's clamped link_inv, gives 4.54e-09.")
+P("// The golden below is statsmodels' own unclamped value, 3.34e-09. That")
+P("// is a 36% relative gap, even though both agree the fit is essentially")
+P("// perfect. A future fitter that reaches the exact statsmodels beta will")
+P("// still not reproduce kDs6Deviance, kDs6Loglik, or kDs6Aic to tight")
+P("// tolerance. The clamped and the unclamped computation genuinely")
+P("// disagree at this scale. See gen_glm_fit_fixtures.py's own comment at")
+P("// DS6 for the row-by-row mechanism.")
+P("//")
+P("// What to assert on this design instead: the separation flag fires. The")
+P("// reported convergence flag is whatever the implementation produces; it")
+P("// is not necessarily true convergence. The deviance is near zero, at a")
+P("// loose, order-of-magnitude band, for example under 1e-6. It is never")
+P("// an equality at this project's usual 1e-10 relative tolerance.")
 emit_design("Ds6", 8, 2, rank6, df6,
             {"Y": ds6_y, "X1": ds6_x1, "W": ds6_w},
-            res6.params, res6.bse, z6, p_or6, p_ex6, dev6, null_dev6, disp6, ll6, aic6, cov6,
-            note="binomial, perfectly separated at x1 = 4.5; statsmodels warns and reports "
-                 "huge beta/se at its iteration cap, not a well-defined MLE -- see the "
-                 "generator's docstring")
+            res6.params, res6.bse, z6, p_or6, p_ex6, dev6, null_dev6, disp6, ll6, aic6, cov6)
 
 # -- DS7: poisson, rank deficient (x3 = x1 + x2, dropped) --------------------
 P(f"// -- Ds7: poisson, rank deficient. x3 = x1 + x2; column 3 (0-based) is")

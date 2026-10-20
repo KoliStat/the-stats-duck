@@ -262,6 +262,18 @@ static void test_loglik_aic_dispersion() {
 	check(disp_gam != 1.0, "this gamma fit's dispersion is not 1.0, so the two orders can differ");
 	check(std::fabs(ll_right_order - ll_wrong_order) > 1e-6,
 	      "gamma log-likelihood genuinely depends on calling pearson_dispersion first");
+
+	// glm_loglik's binomial and poisson guard: direct test. The guard
+	// protects an UNCLAMPED mu of exactly 0.0 or 1.0, not the clamped
+	// boundary (see glm_core.hpp). link_inv itself never produces an
+	// unclamped mu, so this models a caller that bypasses link_inv and
+	// passes a raw mu straight in.
+	check(std::isfinite(statsduck::glm_loglik(statsduck::Family::kBinomial, {0.0}, {0.0}, {1.0}, 1.0)),
+	      "binomial loglik survives an unclamped mu of exactly 0.0, at y = 0");
+	check(std::isfinite(statsduck::glm_loglik(statsduck::Family::kBinomial, {1.0}, {1.0}, {1.0}, 1.0)),
+	      "binomial loglik survives an unclamped mu of exactly 1.0, at y = 1");
+	check(std::isfinite(statsduck::glm_loglik(statsduck::Family::kPoisson, {0.0}, {0.0}, {1.0}, 1.0)),
+	      "poisson loglik survives an unclamped mu of exactly 0.0, at y = 0");
 }
 
 static void test_zero_one_binomial_deviance() {
