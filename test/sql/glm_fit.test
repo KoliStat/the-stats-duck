@@ -10,8 +10,8 @@ require stats_duck
 # one-ulp gap between a decimal literal in a VALUES list and the oracle's own
 # double.
 #
-# The three exceptions are marked SELF-PIN where they appear: the DS1 probit
-# estimate and standard error, and the DS1 HC1 standard error.
+# The four exceptions are marked SELF-PIN where they appear: the DS1 probit
+# estimate and standard error, and the DS1 HC0 and HC1 standard errors.
 # glm_fit_fixtures.hpp carries no probit entry and no HC entry, so those
 # numbers come from this implementation. Each site says what makes it
 # defensible anyway. A change there is a change in this fitter, not a new

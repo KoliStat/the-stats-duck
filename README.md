@@ -251,6 +251,7 @@ Output columns (fixed schema):
 | `corr_matrix(data, variables [, method])`         | Long-format pairwise correlation matrix (`pearson` / `spearman` / `kendall`) |
 | `lm(data, y, x)` / `lm_summary(data, y, x)`       | OLS regression — `lm` returns per-term coefficients, `lm_summary` returns model R² / F / σ |
 | `lm_fit(y, x [, vcov [, cluster] [, add_intercept]])` | OLS regression **aggregate** (one model per `GROUP BY`) with classical, HC0–HC3, or CR0/CR1 cluster-robust standard errors |
+| `glm_fit(y, x [, family [, options]])`            | Generalized linear model **aggregate** (one model per `GROUP BY`), fit by iteratively reweighted least squares — gaussian, binomial, poisson, or gamma, with classical or robust covariance |
 | `lin_hyp(L, beta, cov, sigma2, df)`               | General linear hypothesis L·β = 0 against a fit — **scalar**; per-constraint estimates with standard errors, plus the joint sum of squares, F and chi-square |
 | `emmeans(L, beta, cov, df [, alpha [, adjust]])`  | Estimated marginal means for a fit — **scalar**; each mean with its standard error and confidence limits, every pairwise difference, and a multiplicity adjustment including Tukey |
 
@@ -449,6 +450,242 @@ shared header-only linear-algebra kernel (`(X'X)⁻¹`, the robust sandwich),
 validated against statsmodels — see `test/cpp/test_lm_fit.cpp`. The bias-reduced
 CR2/CR3 cluster estimators are a planned follow-up.
 
+### Generalized linear models (`glm_fit`)
+
+```sql
+glm_fit(y, x [, family [, options]])
+```
+
+`glm_fit` is the iterative sibling of `lm_fit`: an **aggregate**, one model
+per `GROUP BY` group, fit by iteratively reweighted least squares (IRLS).
+`family` defaults to `'gaussian'`, which makes `glm_fit(y, [x1, x2])` the
+same fit as `lm_fit(y, [x1, x2])` — concretely, not just in name:
+
+```sql
+SELECT printf('%.10f', abs((g).coefficients[2].estimate - (l).coefficients[2].estimate))
+FROM (SELECT glm_fit(y, [x1, x2]) AS g, lm_fit(y, [x1, x2]) AS l FROM ds5);
+--   0.0000000000
+```
+
+| Family     | Canonical link | Also supported             | Dispersion |
+| ---------- | --------------- | --------------------------- | ---------- |
+| `gaussian` | `identity`      | `log`, `inverse`            | estimated  |
+| `binomial` | `logit`         | `probit`, `cloglog`, `log`  | fixed at 1 |
+| `poisson`  | `log`           | `identity`, `sqrt`          | fixed at 1 |
+| `gamma`    | `inverse`       | `log`, `identity`           | estimated  |
+
+**Options go in one trailing STRUCT, read by field name**, because
+`glm_fit` has more optional inputs than a position could ever
+disambiguate — in particular `weights` and `offset`, which are both
+per-row `DOUBLE` columns. Field order does not matter:
+
+```sql
+-- these two calls give the same fit
+glm_fit(y, [x1, x2], 'binomial', {'link': 'probit', 'vcov': 'HC1'})
+glm_fit(y, [x1, x2], 'binomial', {'vcov': 'HC1', 'link': 'probit'})
+```
+
+| Field       | Type      | Per-row | Default                    | Notes |
+| ----------- | --------- | ------- | --------------------------- | ----- |
+| `link`      | `VARCHAR` | no      | the family's canonical link | |
+| `vcov`      | `VARCHAR` | no      | `'const'`                   | exactly what `lm_fit` accepts: `const`, `HC0`–`HC3`, `CR0`/`CR1` (`'cluster'` an alias for `CR1`) |
+| `intercept` | `BOOLEAN` | no      | `true`                      | prepends a constant column |
+| `weights`   | `DOUBLE`  | yes     | 1                            | prior weights; binomial trial counts |
+| `offset`    | `DOUBLE`  | yes     | 0                            | added to the linear predictor with a fixed coefficient of 1 |
+| `cluster`   | `VARCHAR` | yes     | none                         | required by `CR0`/`CR1`, rejected otherwise |
+
+An unrecognized field name is a bind error listing those six names.
+Omitting the struct entirely is the same as passing an empty one.
+
+A worked example per family, starting with gaussian:
+
+```sql
+SELECT (u).term, (u).estimate, (u).std_error
+FROM (SELECT unnest((glm_fit(y, [x1, x2])).coefficients) AS u FROM ds5);
+--   term         estimate  std_error
+--   (Intercept)  10.1206   2.0741
+--   x1            2.0579   0.1303
+--   x2           -0.9787   0.3181
+```
+
+The binomial response is a **proportion**, not a count, and `weights` is
+the trial count: 7 successes out of 10 trials is `y = 0.7`,
+`weights = 10`. Plain 0/1 data is the case where every weight is 1. A
+count of successes passed as `y` fails the `[0, 1]` domain check instead
+of silently being read as a proportion. The ten rows below are the same
+data as forty individual 0/1 rows grouped into cells, and the two ways of
+writing it give the same coefficients and the same standard errors:
+
+```sql
+-- 10 (x1, x2) cells, 4 trials each
+CREATE TABLE ds2 AS SELECT * FROM (VALUES
+  (0.25, 1.0, 0.0, 4.0), (0.5, 1.0, 1.0, 4.0), (0.25, 2.0, 0.0, 4.0),
+  (0.5, 2.0, 1.0, 4.0), (0.5, 3.0, 0.0, 4.0), (0.5, 3.0, 1.0, 4.0),
+  (0.5, 4.0, 0.0, 4.0), (0.75, 4.0, 1.0, 4.0), (0.5, 5.0, 0.0, 4.0),
+  (0.75, 5.0, 1.0, 4.0)
+) AS t(y, x1, x2, n_trials);
+
+SELECT (u).term, (u).estimate, (u).std_error
+FROM (SELECT unnest((glm_fit(y, [x1, x2], 'binomial', {'weights': n_trials})).coefficients) AS u FROM ds2);
+--   term         estimate  std_error
+--   (Intercept)  -1.3913   0.8801
+--   x1            0.3218   0.2385
+--   x2            0.8520   0.6640
+```
+
+Poisson with an offset for exposure (`ln()`, not DuckDB's base-10 `log()`):
+
+```sql
+CREATE TABLE ds3 AS SELECT * FROM (VALUES
+  (16.0, 0.0, 10.0), (29.0, 0.2, 20.0), (15.0, 0.4, 15.0), (10.0, 0.6, 5.0),
+  (59.0, 0.8, 30.0), (39.0, 1.0, 25.0), (30.0, 1.2, 10.0), (89.0, 1.4, 40.0),
+  (25.0, 1.6, 12.0), (60.0, 1.8, 18.0), (69.0, 2.0, 22.0), (21.0, 2.2, 8.0),
+  (52.0, 2.4, 14.0), (53.0, 2.6, 16.0), (91.0, 2.8, 19.0)
+) AS t(y, x1, exposure);
+
+SELECT (u).term, (u).estimate, (u).std_error
+FROM (SELECT unnest((glm_fit(y, [x1], 'poisson', {'offset': ln(exposure)})).coefficients) AS u FROM ds3);
+--   term         estimate  std_error
+--   (Intercept)  0.2311    0.0917
+--   x1           0.4398    0.0490
+```
+
+Gamma: its own canonical link is `inverse`, so `log` has to be asked for:
+
+```sql
+CREATE TABLE ds4 AS SELECT * FROM (VALUES
+  (1.2169, 0.0), (0.5808, 0.14285714285714285), (1.4591, 0.2857142857142857),
+  (2.8649, 0.42857142857142855), (2.3548, 0.5714285714285714),
+  (1.4105, 0.7142857142857142), (2.4365, 0.8571428571428571), (1.2456, 1.0),
+  (0.9774, 1.1428571428571428), (1.6468, 1.2857142857142856),
+  (2.7775, 1.4285714285714284), (1.301, 1.5714285714285714),
+  (3.1178, 1.7142857142857142), (3.5281, 1.857142857142857), (3.2777, 2.0)
+) AS t(y, x1);
+
+SELECT (u).term, (u).estimate, (u).std_error
+FROM (SELECT unnest((glm_fit(y, [x1], 'gamma', {'link': 'log'})).coefficients) AS u FROM ds4);
+--   term         estimate  std_error
+--   (Intercept)  0.2496    0.2057
+--   x1           0.4161    0.1751
+```
+
+`glm_fit` returns a single `STRUCT`:
+
+| Field                       | Type            | Notes |
+| ---------------------------- | --------------- | ----- |
+| `coefficients`               | `LIST<STRUCT>`  | one element per term: `term`, `estimate`, `std_error`, `z_statistic`, `p_value` |
+| `n`, `k`, `df_residual`      | `BIGINT`        | rows used, design columns (intercept included), `n − rank` |
+| `deviance`, `null_deviance`  | `DOUBLE`        | the fitted model's deviance, and the intercept-only model's |
+| `dispersion`                 | `DOUBLE`        | fixed at 1 for binomial and poisson; the Pearson estimate for gaussian and gamma |
+| `loglik`, `aic`              | `DOUBLE`        | |
+| `iterations`                 | `BIGINT`        | outer IRLS passes used; never the step-halvings inside one pass |
+| `converged`                  | `BOOLEAN`       | |
+| `separation`                 | `BOOLEAN`       | binomial only; always `false` for the other three families — see below |
+| `family`, `link`             | `VARCHAR`       | echoed canonically, not as the caller spelled them |
+| `has_intercept`              | `BOOLEAN`       | |
+| `vcov_type`                  | `VARCHAR`       | the estimator actually used |
+| `n_clusters`                 | `BIGINT`        | NULL unless `CR0`/`CR1` |
+| `rank`                       | `BIGINT`        | parameters actually estimated |
+| `cov`                        | `LIST<DOUBLE>`  | row-major k², in `coefficients` order |
+
+A few things worth stating plainly:
+
+- **`z_statistic` uses a normal reference for all four families, never a t
+  one.** R and statsmodels switch to a t reference for gaussian and gamma,
+  where the dispersion is estimated, so their p-values there are very
+  slightly larger than this function's — ours are very slightly smaller.
+  A caller who wants the t reference has `df_residual` and can compute it.
+- **`converged = false` returns the best iterate, not NULL.** A fit that
+  used every allowed iteration, or hit a step it could not recover from,
+  still reports its coefficients, its standard errors, and every other
+  field in full. `iterations` counts outer IRLS passes; it never counts
+  the step-halvings inside one pass.
+- **`deviance` and `null_deviance` stand in for `r_squared` and
+  `f_statistic`.** Neither of those generalizes past OLS. A reader who
+  wants a pseudo-R² can compute `1 - deviance / null_deviance` directly.
+
+**The separation flag has a blind spot in both directions.** `separation`
+is computed only for binomial fits — always `false` for the other three
+families. It is `true` when the fit did **not** converge and at least one
+fitted value has landed within `1e-10` of 0 or 1. Perfect separation makes
+a logistic coefficient diverge: every step still lowers the deviance by
+pushing the coefficient further out, so the loop never converges, and a
+caller looking only at `estimate` and `std_error` sees one huge number
+beside another with nothing to say why. `separation = true` is evidence of
+that. But the flag can also fire on severe near-separation, which it
+cannot tell apart from the perfect case, and it needs a non-converged fit
+to fire at all. A response with no variation at all — every `y` the same,
+which a `GROUP BY` over a rare outcome produces routinely — typically
+*converges* well before the iteration limit, because IRLS tests the
+deviance rather than the coefficients, and the deviance flattens near the
+boundary long before the coefficients do. Measured on an all-zero binomial
+response: the fit converges at iteration 23 with an intercept standard
+error around 40311, and `separation` stays `false` throughout. So
+`separation = true` is evidence of trouble, but `separation = false` is
+**not** evidence of a sound fit. A caller who wants that assurance has to
+look at the magnitude of `std_error` too.
+
+**A fitted value outside the family's support is a failed fit, not a
+computed one.** Poisson's `identity` link and binomial's `log` link can
+both reach an impossible fitted value that their canonical-link siblings
+(`log` and `logit`) cannot — a negative expected count, or a probability
+above 1. When that happens partway through fitting, the group comes back
+NULL instead of a value computed at an impossible mean, which is correct,
+because any number computed there would be wrong:
+
+```sql
+SELECT (a).n IS NULL, (b).n IS NULL
+FROM (SELECT glm_fit(y, [x1], 'poisson', {'link': 'identity'}) AS a,
+             glm_fit(y, [x1], 'poisson')                       AS b
+      FROM (VALUES
+        (2.0, -1.387), (0.0, 4.348), (1.0, 2.565), (0.0, 0.52),
+        (5.0, -0.029), (0.0, 2.755), (3.0, 2.156), (5.0, -4.418)) t(y, x1));
+--   true  false
+```
+
+This is a real behavioral difference from the canonical links, not a bug:
+the same data fits cleanly under `log`, and comes back NULL under
+`identity`, because only the second one can reach a negative fitted count.
+
+**The robust covariance estimators use score residuals, not response
+residuals**, so the formula differs from `lm_fit`'s in general. At
+gaussian with an identity link the two formulas reduce to the same number
+exactly, because the link's derivative and the family's variance function
+are both 1 there — which is why the `lm_fit` equivalence shown earlier
+holds for every covariance estimator, not only the classical one. The
+tests assert that reduction bit for bit:
+
+```sql
+SELECT printf('%.10f', abs((g).coefficients[2].std_error - (l).coefficients[2].std_error))
+FROM (SELECT glm_fit(y, [x1, x2], 'gaussian', {'vcov': 'HC3'}) AS g,
+             lm_fit(y, [x1, x2], 'HC3')                        AS l
+      FROM ds5);
+--   0.0000000000
+```
+
+**`lin_hyp` works against a `glm_fit` output unchanged.** It takes only
+coefficients and a covariance, so it does not care what produced them:
+
+```sql
+CREATE TABLE ds_bin AS SELECT * FROM (VALUES
+  (0.0, 1.0), (0.0, 2.0), (1.0, 3.0), (0.0, 4.0), (1.0, 5.0), (0.0, 6.0),
+  (1.0, 7.0), (1.0, 8.0), (0.0, 9.0), (1.0, 10.0), (1.0, 11.0), (1.0, 12.0)
+) AS t(y, x1);
+
+SELECT (h).df_num, printf('%.4f', (h).chisq)
+FROM (SELECT lin_hyp([[0, 1]],
+                     list_transform(g.coefficients, c -> c.estimate),
+                     g.cov, 1.0, g.df_residual) AS h
+      FROM (SELECT glm_fit(y, [x1], 'binomial') AS g FROM ds_bin));
+--   df_num  chisq
+--   1       2.5741
+```
+
+`sigma2` is `1.0` because `glm_fit`'s `cov` is already on the right scale;
+`df_residual` is the denominator df. `emmeans` works against a GLM the same
+way, but reports its means on a different scale than a reader might
+expect — see the next section.
+
 ### General linear hypothesis (`lin_hyp`)
 
 `lin_hyp` tests **L·β = 0** against a fit you already have. One row of `L` per
@@ -582,6 +819,41 @@ FROM (SELECT unnest((emmeans([[1,0,0],[0,1,0],[0,0,1]],
 
 `i` and `j` in `diffs` are **1-based**, so they index `means` directly.
 `means[(u).i]` is the first mean in a difference.
+
+**Against a GLM, the means come back on the link scale, not the response
+scale.** `emmeans` receives only `beta` and `cov`; it knows nothing about
+the link that produced them. A logistic fit's marginal means are log-odds,
+not probabilities, and a Poisson fit's are log rates, not counts.
+Cell-means coding makes this concrete: with no intercept, each coefficient
+of a logistic fit is already that cell's mean on the link scale.
+
+```sql
+-- three cells, binomial, no intercept: cell 1 is 1 success of 4
+CREATE TABLE ds_cells AS SELECT * FROM (VALUES
+  (1.0, 1.0, 0.0, 0.0), (0.0, 1.0, 0.0, 0.0), (0.0, 1.0, 0.0, 0.0), (0.0, 1.0, 0.0, 0.0),
+  (1.0, 0.0, 1.0, 0.0), (1.0, 0.0, 1.0, 0.0), (0.0, 0.0, 1.0, 0.0), (0.0, 0.0, 1.0, 0.0),
+  (1.0, 0.0, 0.0, 1.0), (1.0, 0.0, 0.0, 1.0), (1.0, 0.0, 0.0, 1.0), (0.0, 0.0, 0.0, 1.0)
+) AS t(y, g1, g2, g3);
+
+SELECT printf('%.4f', (e).means[1].estimate),
+       printf('%.4f', (e).means[2].estimate),
+       printf('%.4f', (e).means[3].estimate)
+FROM (SELECT emmeans([[1,0,0],[0,1,0],[0,0,1]],
+                     list_transform(g.coefficients, c -> c.estimate),
+                     g.cov, g.df_residual) AS e
+      FROM (SELECT glm_fit(y, [g1, g2, g3], 'binomial', {'intercept': false}) AS g FROM ds_cells));
+--   -1.0986  0.0000  1.0986
+```
+
+Cell 1's own success rate is 0.25, and `ln(0.25 / 0.75)` is `-1.0986` — the
+log-odds, not the `0.25` a reader expecting the response scale might look
+for. Converting back is on the caller: `1 / (1 + exp(-estimate))` inverts
+a logit mean, and the inverse differs by link. `lin_hyp`'s own hypothesis
+test needs no such conversion — whether `L·beta` is exactly zero holds or
+fails directly on the coefficient scale. But a nonzero point estimate from
+`lin_hyp`'s own `estimates` field carries the same link-scale caveat as a
+mean here, for the same reason: it is a linear combination of `beta`, not
+of the response.
 
 A mean can fail to be estimable three ways.
 
