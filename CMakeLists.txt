@@ -91,6 +91,7 @@ set(EXTENSION_SOURCES
     src/lin_hyp_function.cpp
     src/glm_core.cpp
     src/glm_fit_core.cpp
+    src/glm_fit_function.cpp
     src/emmeans.cpp
     src/emmeans_function.cpp
     src/table_one_function.cpp

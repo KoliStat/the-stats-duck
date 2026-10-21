@@ -1,0 +1,683 @@
+# name: test/sql/glm_fit.test
+# description: generalized linear models (glm_fit)
+# group: [stats_duck]
+
+require stats_duck
+
+# Golden values match test/cpp/glm_fit_fixtures.hpp (statsmodels 0.15.0
+# oracle). Floats are compared through printf('%.4f', …) so the text is
+# deterministic, which also keeps a DECIMAL-literal input one ulp away from
+# the oracle's own double harmless.
+#
+# A difference asserted to be zero is wrapped in abs(). printf renders a
+# negative value that rounds to zero as '-0.000000', and the sign of a
+# rounding error is not worth pinning.
+
+statement ok
+CREATE TABLE ds AS SELECT * FROM (VALUES
+  (1.0, 1.0, 2.0), (3.0, 2.0, 1.0), (5.0, 3.0, 4.0),
+  (7.0, 4.0, 3.0), (9.0, 5.0, 6.0), (11.0, 6.0, 5.0)
+) AS t(y, x1, x2);
+
+# A gaussian fit with an identity link is ordinary least squares, so glm_fit
+# and lm_fit must agree. This is the fastest way for a reader to convince
+# themselves the new fitter is sound.
+query II
+SELECT printf('%.10f', abs((g).coefficients[2].estimate - (l).coefficients[2].estimate)),
+       printf('%.10f', abs((g).coefficients[2].std_error - (l).coefficients[2].std_error))
+FROM (SELECT glm_fit(y, [x1, x2]) AS g, lm_fit(y, [x1, x2]) AS l FROM ds);
+----
+0.0000000000	0.0000000000
+
+# ── DS5: gaussian identity, the lm_fit cross-check ───────────────────────────
+# `ds` above fits y exactly, so every standard error there is 0 and the
+# comparison above cannot tell a wrong scale from a right one. DS5 has real
+# residuals, and it is the same design as lm_fit's own DS1, so the two fitters
+# are compared where the numbers are informative.
+statement ok
+CREATE TABLE ds5 AS SELECT * FROM (VALUES
+  (9.0, 1.0, 5.0), (8.0, 2.0, 3.0), (7.0, 3.0, 8.0), (14.0, 4.0, 2.0),
+  (12.0, 5.0, 7.0), (20.0, 6.0, 4.0), (15.0, 7.0, 9.0), (28.0, 8.0, 1.0),
+  (22.0, 9.0, 6.0), (31.0, 10.0, 3.0), (29.0, 11.0, 8.0), (55.0, 25.0, 4.0)
+) AS t(y, x1, x2);
+
+# Oracle coefficients, standard errors and term names.
+query TTTTTTTT
+SELECT printf('%.4f', (m.coefficients[1]).estimate),
+       printf('%.4f', (m.coefficients[2]).estimate),
+       printf('%.4f', (m.coefficients[3]).estimate),
+       printf('%.4f', (m.coefficients[1]).std_error),
+       printf('%.4f', (m.coefficients[2]).std_error),
+       printf('%.4f', (m.coefficients[3]).std_error),
+       (m.coefficients[1]).term,
+       (m.coefficients[3]).term
+FROM (SELECT glm_fit(y, [x1, x2], 'gaussian') AS m FROM ds5)
+----
+10.1206	2.0579	-0.9787	2.0741	0.1303	0.3181	(Intercept)	x2
+
+# Model-level scalars, the echoed family and link, and the normal reference.
+query TTTTTTTTTTT
+SELECT m.n, m.k, m.rank, m.df_residual,
+       printf('%.4f', m.deviance), printf('%.4f', m.null_deviance),
+       printf('%.4f', m.dispersion), printf('%.4f', m.loglik),
+       printf('%.4f', m.aic), m.family, m.link
+FROM (SELECT glm_fit(y, [x1, x2], 'gaussian') AS m FROM ds5)
+----
+12	3	3	9	67.1775	2045.6667	7.4642	-27.3619	62.7237	gaussian	identity
+
+# z_statistic, never t_statistic, and its p-value uses a normal reference for
+# every family. statsmodels reports t(9) here, which would give 0.0009 instead.
+query TTT
+SELECT printf('%.4f', (m.coefficients[1]).z_statistic),
+       printf('%.4e', (m.coefficients[1]).p_value),
+       printf('%.4f', (m.coefficients[3]).z_statistic)
+FROM (SELECT glm_fit(y, [x1, x2], 'gaussian') AS m FROM ds5)
+----
+4.8795	1.0638e-06	-3.0767
+
+# Every covariance estimator reduces to lm_fit's at gaussian identity, which is
+# the claim the kernel asserts at a band of 0 and this pins at the SQL surface.
+query TTTTTTTT
+SELECT printf('%.10f', abs((a).coefficients[2].std_error - (la).coefficients[2].std_error)),
+       printf('%.10f', abs((b).coefficients[2].std_error - (lb).coefficients[2].std_error)),
+       printf('%.10f', abs((c).coefficients[2].std_error - (lc).coefficients[2].std_error)),
+       printf('%.10f', abs((d).coefficients[2].std_error - (ld).coefficients[2].std_error)),
+       printf('%.10f', abs((a).cov[1] - (la).cov[1])),
+       printf('%.10f', abs((d).cov[1] - (ld).cov[1])),
+       (a).vcov_type, (d).vcov_type
+FROM (SELECT glm_fit(y, [x1, x2], 'gaussian')                     AS a,
+             glm_fit(y, [x1, x2], 'gaussian', {'vcov': 'HC0'})     AS b,
+             glm_fit(y, [x1, x2], 'gaussian', {'vcov': 'HC1'})     AS c,
+             glm_fit(y, [x1, x2], 'gaussian', {'vcov': 'HC3'})     AS d,
+             lm_fit(y, [x1, x2])        AS la,
+             lm_fit(y, [x1, x2], 'HC0') AS lb,
+             lm_fit(y, [x1, x2], 'HC1') AS lc,
+             lm_fit(y, [x1, x2], 'HC3') AS ld
+      FROM ds5)
+----
+0.0000000000	0.0000000000	0.0000000000	0.0000000000	0.0000000000	0.0000000000	const	HC3
+
+# A gaussian identity fit is solved by its first pass: the working weights are
+# all 1 and the working response is y, so IRLS is the normal-equations solve.
+# The second pass only confirms the deviance did not move, which is why
+# iterations is 2 and not 1. separation is always false outside binomial.
+query TTT
+SELECT m.iterations, m.converged, m.separation
+FROM (SELECT glm_fit(y, [x1, x2], 'gaussian') AS m FROM ds5)
+----
+2	true	false
+
+# family omitted defaults to gaussian with its canonical identity link.
+query TTTT
+SELECT m.family, m.link, m.has_intercept, m.n_clusters IS NULL
+FROM (SELECT glm_fit(y, [x1, x2]) AS m FROM ds5)
+----
+gaussian	identity	true	true
+
+# The family name is echoed canonically, not as the caller spelled it.
+query TT
+SELECT m.family, m.link
+FROM (SELECT glm_fit(y, [x1, x2], 'GAUSSIAN') AS m FROM ds5)
+----
+gaussian	identity
+
+# ── DS1: binomial 0/1 with a logit link ──────────────────────────────────────
+statement ok
+CREATE TABLE ds1 AS SELECT * FROM (VALUES
+  (1.0, 1.0, 0.0), (0.0, 1.0, 0.0), (0.0, 1.0, 0.0), (0.0, 1.0, 0.0),
+  (1.0, 1.0, 1.0), (1.0, 1.0, 1.0), (0.0, 1.0, 1.0), (0.0, 1.0, 1.0),
+  (1.0, 2.0, 0.0), (0.0, 2.0, 0.0), (0.0, 2.0, 0.0), (0.0, 2.0, 0.0),
+  (1.0, 2.0, 1.0), (1.0, 2.0, 1.0), (0.0, 2.0, 1.0), (0.0, 2.0, 1.0),
+  (1.0, 3.0, 0.0), (1.0, 3.0, 0.0), (0.0, 3.0, 0.0), (0.0, 3.0, 0.0),
+  (1.0, 3.0, 1.0), (1.0, 3.0, 1.0), (0.0, 3.0, 1.0), (0.0, 3.0, 1.0),
+  (1.0, 4.0, 0.0), (1.0, 4.0, 0.0), (0.0, 4.0, 0.0), (0.0, 4.0, 0.0),
+  (1.0, 4.0, 1.0), (1.0, 4.0, 1.0), (1.0, 4.0, 1.0), (0.0, 4.0, 1.0),
+  (1.0, 5.0, 0.0), (1.0, 5.0, 0.0), (0.0, 5.0, 0.0), (0.0, 5.0, 0.0),
+  (1.0, 5.0, 1.0), (1.0, 5.0, 1.0), (1.0, 5.0, 1.0), (0.0, 5.0, 1.0)
+) AS t(y, x1, x2);
+
+query TTTTTTTT
+SELECT printf('%.4f', (m.coefficients[1]).estimate),
+       printf('%.4f', (m.coefficients[2]).estimate),
+       printf('%.4f', (m.coefficients[3]).estimate),
+       printf('%.4f', (m.coefficients[1]).std_error),
+       printf('%.4f', (m.coefficients[2]).std_error),
+       printf('%.4f', (m.coefficients[3]).std_error),
+       m.family, m.link
+FROM (SELECT glm_fit(y, [x1, x2], 'binomial') AS m FROM ds1)
+----
+-1.3913	0.3218	0.8520	0.8801	0.2385	0.6640	binomial	logit
+
+query TTTTTTTT
+SELECT m.n, m.k, m.df_residual,
+       printf('%.4f', m.deviance), printf('%.4f', m.null_deviance),
+       printf('%.4f', m.dispersion), printf('%.4f', m.loglik),
+       printf('%.4f', m.aic)
+FROM (SELECT glm_fit(y, [x1, x2], 'binomial') AS m FROM ds1)
+----
+40	3	37	51.9386	55.4518	1.0000	-25.9693	57.9386
+
+# cov is row-major k², in `coefficients` order, it is symmetric, and its
+# diagonal is std_error².
+#
+# cov[1] is checked against the oracle at a band of 1e-5 rather than as
+# rounded text. The oracle value is 0.7745493, which sits 7e-7 below the
+# 0.77455 boundary that %.4f rounds at, and this kernel evaluates its
+# covariance at the final fitted values where statsmodels uses the previous
+# iterate's working weights. That deviation is deliberate and measured at
+# 4.78e-07 on DS1 (src/include/glm_core.hpp), which is more than enough to
+# cross the boundary. Every other oracle value in this file sits at least
+# 1e-5 away from its own rounding boundary.
+query TTTTT
+SELECT len(m.cov),
+       abs(m.cov[1] - 7.745493208449530e-01) < 1e-5,
+       printf('%.4f', m.cov[5]),
+       printf('%.4f', pow((m.coefficients[2]).std_error, 2)),
+       abs(m.cov[2] - m.cov[4]) < 1e-12
+FROM (SELECT glm_fit(y, [x1, x2], 'binomial') AS m FROM ds1)
+----
+9	true	0.0569	0.0569	true
+
+# A probit link is requested by name and echoed canonically. The probit scale
+# compresses a logit coefficient by roughly 1.6, so the estimates must move.
+query TTTT
+SELECT m.link, m.converged,
+       printf('%.4f', (m.coefficients[2]).estimate),
+       printf('%.4f', (m.coefficients[2]).std_error)
+FROM (SELECT glm_fit(y, [x1, x2], 'binomial', {'link': 'PROBIT'}) AS m FROM ds1)
+----
+probit	true	0.1994	0.1455
+
+# ── The options struct's fields are read by name, never by position ──────────
+# A struct type is ordered, so these two are different DuckDB types carrying
+# the same meaning. Both must give the same fit.
+query TTTT
+SELECT printf('%.10f', abs((a).coefficients[2].estimate - (b).coefficients[2].estimate)),
+       printf('%.10f', abs((a).coefficients[2].std_error - (b).coefficients[2].std_error)),
+       (a).link = (b).link, (a).vcov_type = (b).vcov_type
+FROM (SELECT glm_fit(y, [x1, x2], 'binomial', {'link': 'probit', 'vcov': 'HC1'}) AS a,
+             glm_fit(y, [x1, x2], 'binomial', {'vcov': 'HC1', 'link': 'probit'}) AS b
+      FROM ds1)
+----
+0.0000000000	0.0000000000	true	true
+
+# A robust vcov changes the standard errors and leaves the estimates alone.
+query TTTTT
+SELECT printf('%.10f', abs((a).coefficients[2].estimate - (b).coefficients[2].estimate)),
+       printf('%.4f', (a).coefficients[2].std_error),
+       printf('%.4f', (b).coefficients[2].std_error),
+       (b).vcov_type, (b).n_clusters IS NULL
+FROM (SELECT glm_fit(y, [x1, x2], 'binomial') AS a,
+             glm_fit(y, [x1, x2], 'binomial', {'vcov': 'HC1'}) AS b
+      FROM ds1)
+----
+0.0000000000	0.2385	0.2467	HC1	true
+
+# ── DS2: the same data grouped, with `weights` as the trial count ────────────
+# The binomial response is a PROPORTION and `weights` is the number of trials,
+# so 1 of 4 is y = 0.25 with weight 4. DS2 is DS1 collapsed that way, and the
+# two fits must agree.
+statement ok
+CREATE TABLE ds2 AS SELECT * FROM (VALUES
+  (0.25, 1.0, 0.0, 4.0), (0.5, 1.0, 1.0, 4.0), (0.25, 2.0, 0.0, 4.0),
+  (0.5, 2.0, 1.0, 4.0), (0.5, 3.0, 0.0, 4.0), (0.5, 3.0, 1.0, 4.0),
+  (0.5, 4.0, 0.0, 4.0), (0.75, 4.0, 1.0, 4.0), (0.5, 5.0, 0.0, 4.0),
+  (0.75, 5.0, 1.0, 4.0)
+) AS t(y, x1, x2, n_trials);
+
+query TTTTTTTT
+SELECT printf('%.4f', (m.coefficients[1]).estimate),
+       printf('%.4f', (m.coefficients[2]).estimate),
+       printf('%.4f', (m.coefficients[3]).estimate),
+       printf('%.4f', (m.coefficients[2]).std_error),
+       m.n, m.df_residual,
+       printf('%.4f', m.deviance), printf('%.4f', m.aic)
+FROM (SELECT glm_fit(y, [x1, x2], 'binomial', {'weights': n_trials}) AS m FROM ds2)
+----
+-1.3913	0.3218	0.8520	0.2385	10	7	0.6728	25.3471
+
+# The grouped fit and the ungrouped one agree on every coefficient and every
+# standard error, which is the whole point of the trial-count weight.
+query TTTTTT
+SELECT printf('%.6f', abs((g).coefficients[1].estimate - (u).coefficients[1].estimate)),
+       printf('%.6f', abs((g).coefficients[2].estimate - (u).coefficients[2].estimate)),
+       printf('%.6f', abs((g).coefficients[3].estimate - (u).coefficients[3].estimate)),
+       printf('%.6f', abs((g).coefficients[1].std_error - (u).coefficients[1].std_error)),
+       printf('%.6f', abs((g).coefficients[2].std_error - (u).coefficients[2].std_error)),
+       printf('%.6f', abs((g).coefficients[3].std_error - (u).coefficients[3].std_error))
+FROM (SELECT glm_fit(y, [x1, x2], 'binomial', {'weights': n_trials}) AS g FROM ds2),
+     (SELECT glm_fit(y, [x1, x2], 'binomial') AS u FROM ds1)
+----
+0.000000	0.000000	0.000000	0.000000	0.000000	0.000000
+
+# An INTEGER weight is accepted: the options struct is cast into the shape the
+# aggregate declares, so a count column needs no ::DOUBLE from the caller.
+query TT
+SELECT m.n, printf('%.4f', (m.coefficients[2]).estimate)
+FROM (SELECT glm_fit(y, [x1, x2], 'binomial', {'weights': 4}) AS m FROM ds2)
+----
+10	0.3218
+
+# ── DS3: poisson with a log link and an offset ───────────────────────────────
+# The offset is ln(exposure), which is how a poisson model of a rate is fitted.
+# DuckDB's log() is base 10, so this is ln().
+statement ok
+CREATE TABLE ds3 AS SELECT * FROM (VALUES
+  (16.0, 0.0, 10.0), (29.0, 0.2, 20.0), (15.0, 0.4, 15.0), (10.0, 0.6, 5.0),
+  (59.0, 0.8, 30.0), (39.0, 1.0, 25.0), (30.0, 1.2, 10.0), (89.0, 1.4, 40.0),
+  (25.0, 1.6, 12.0), (60.0, 1.8, 18.0), (69.0, 2.0, 22.0), (21.0, 2.2, 8.0),
+  (52.0, 2.4, 14.0), (53.0, 2.6, 16.0), (91.0, 2.8, 19.0)
+) AS t(y, x1, exposure);
+
+query TTTTTTTTTT
+SELECT printf('%.4f', (m.coefficients[1]).estimate),
+       printf('%.4f', (m.coefficients[2]).estimate),
+       printf('%.4f', (m.coefficients[1]).std_error),
+       printf('%.4f', (m.coefficients[2]).std_error),
+       printf('%.4f', (m.coefficients[2]).z_statistic),
+       m.n, m.df_residual,
+       printf('%.4f', m.deviance), printf('%.4f', m.aic), m.link
+FROM (SELECT glm_fit(y, [x1], 'poisson', {'offset': ln(exposure)}) AS m FROM ds3)
+----
+0.2311	0.4398	0.0917	0.0490	8.9725	15	13	17.0978	102.5581	log
+
+# ── DS4: gamma with a log link ───────────────────────────────────────────────
+# gamma's canonical link is inverse, so the log link has to be asked for. The
+# dispersion is estimated here, unlike binomial and poisson where it is 1.
+statement ok
+CREATE TABLE ds4 AS SELECT * FROM (VALUES
+  (1.2169, 0.0), (0.5808, 0.14285714285714285), (1.4591, 0.2857142857142857),
+  (2.8649, 0.42857142857142855), (2.3548, 0.5714285714285714),
+  (1.4105, 0.7142857142857142), (2.4365, 0.8571428571428571), (1.2456, 1.0),
+  (0.9774, 1.1428571428571428), (1.6468, 1.2857142857142856),
+  (2.7775, 1.4285714285714284), (1.301, 1.5714285714285714),
+  (3.1178, 1.7142857142857142), (3.5281, 1.857142857142857), (3.2777, 2.0)
+) AS t(y, x1);
+
+query TTTTTTTTT
+SELECT printf('%.4f', (m.coefficients[1]).estimate),
+       printf('%.4f', (m.coefficients[2]).estimate),
+       printf('%.4f', (m.coefficients[1]).std_error),
+       printf('%.4f', (m.coefficients[2]).std_error),
+       printf('%.4f', (m.coefficients[2]).p_value),
+       printf('%.4f', m.deviance), printf('%.4f', m.dispersion),
+       printf('%.4f', m.aic), m.link
+FROM (SELECT glm_fit(y, [x1], 'gamma', {'link': 'log'}) AS m FROM ds4)
+----
+0.2496	0.4161	0.2057	0.1751	0.0175	2.4916	0.1751	39.5786	log
+
+# gamma's own canonical link is inverse, which is what a bare family gives.
+query T
+SELECT m.link FROM (SELECT glm_fit(y, [x1], 'gamma') AS m FROM ds4)
+----
+inverse
+
+# ── DS8: poisson with a cluster-robust covariance ────────────────────────────
+statement ok
+CREATE TABLE ds8 AS SELECT * FROM (VALUES
+  (5.0, 0.445, 'g0'), (8.0, -0.156, 'g0'), (9.0, 0.856, 'g0'),
+  (3.0, -0.347, 'g1'), (1.0, 0.711, 'g1'), (2.0, 0.577, 'g1'), (1.0, 0.165, 'g1'),
+  (0.0, 0.162, 'g2'), (0.0, 0.785, 'g2'), (1.0, 0.726, 'g2'), (0.0, -0.507, 'g2'),
+  (0.0, 0.113, 'g2'),
+  (0.0, 0.902, 'g3'), (2.0, 1.443, 'g3'), (0.0, 0.694, 'g3'), (0.0, 1.062, 'g3'),
+  (1.0, 1.353, 'g3'), (0.0, 0.338, 'g3'),
+  (1.0, 0.193, 'g4'), (2.0, 0.988, 'g4'), (1.0, 0.684, 'g4'), (1.0, 1.815, 'g4'),
+  (1.0, 1.555, 'g4'), (2.0, 1.807, 'g4'), (0.0, 0.927, 'g4')
+) AS t(y, x1, grp);
+
+# CR0 and CR1 against the oracle, with the cluster count reported and the
+# model-based standard errors for contrast.
+query TTTTTTTTT
+SELECT printf('%.4f', (a.coefficients[1]).std_error),
+       printf('%.4f', (a.coefficients[2]).std_error),
+       printf('%.4f', (b.coefficients[1]).std_error),
+       printf('%.4f', (b.coefficients[2]).std_error),
+       printf('%.4f', (c.coefficients[1]).std_error),
+       printf('%.4f', (c.coefficients[2]).std_error),
+       b.n_clusters, b.vcov_type, c.vcov_type
+FROM (SELECT glm_fit(y, [x1], 'poisson')                                          AS a,
+             glm_fit(y, [x1], 'poisson', {'vcov': 'CR0', 'cluster': grp})          AS b,
+             glm_fit(y, [x1], 'poisson', {'vcov': 'CR1', 'cluster': grp})          AS c
+      FROM ds8)
+----
+0.2197	0.2589	0.6516	0.3318	0.7442	0.3790	5	CR0	CR1
+
+# `cluster` is an alias for CR1, echoed as CR1, matching lm_fit.
+query TT
+SELECT m.vcov_type, printf('%.4f', (m.coefficients[2]).std_error)
+FROM (SELECT glm_fit(y, [x1], 'poisson', {'vcov': 'cluster', 'cluster': grp}) AS m FROM ds8)
+----
+CR1	0.3790
+
+# A non-text cluster key is cast for the caller, so an integer id works.
+query TT
+SELECT m.n_clusters, printf('%.4f', (m.coefficients[2]).std_error)
+FROM (SELECT glm_fit(y, [x1], 'poisson', {'vcov': 'CR1', 'cluster': grp[2:]::INTEGER}) AS m FROM ds8)
+----
+5	0.3790
+
+# ── DS7: a rank-deficient design is a fit, with the later column aliased ─────
+statement ok
+CREATE TABLE ds7 AS SELECT * FROM (VALUES
+  (2.0, 1.0, 5.0), (1.0, 2.0, 3.0), (4.0, 3.0, 8.0), (0.0, 4.0, 2.0),
+  (3.0, 5.0, 7.0), (2.0, 6.0, 4.0), (5.0, 7.0, 9.0), (1.0, 8.0, 1.0),
+  (3.0, 9.0, 6.0), (2.0, 10.0, 3.0), (6.0, 11.0, 8.0), (2.0, 12.0, 4.0)
+) AS t(y, x1, x2);
+
+query TTTTTTT
+SELECT m.k, m.rank, m.df_residual,
+       printf('%.4f', (m.coefficients[2]).estimate),
+       (m.coefficients[4]).estimate IS NULL,
+       (m.coefficients[4]).term,
+       m.cov[16] IS NULL
+FROM (SELECT glm_fit(y, [x1, x2, x1 + x2], 'poisson') AS m FROM ds7)
+----
+4	3	9	0.0552	true	x3	true
+
+# ── intercept: false drops the constant term ─────────────────────────────────
+query TTTT
+SELECT m.k, m.has_intercept, (m.coefficients[1]).term, m.rank
+FROM (SELECT glm_fit(y, [x1, x2], 'gaussian', {'intercept': false}) AS m FROM ds5)
+----
+2	false	x1	2
+
+# ── Misuse is a bind error, never a NULL group ───────────────────────────────
+statement error
+SELECT glm_fit(y, [x1], 'negbin') FROM ds1
+----
+unknown family 'negbin'
+
+statement error
+SELECT glm_fit(y, [x1], 'binomial', {'link': 'cauchit'}) FROM ds1
+----
+unknown link 'cauchit'
+
+statement error
+SELECT glm_fit(y, [x1], 'binomial', {'link': 'inverse'}) FROM ds1
+----
+the inverse link is not allowed for family binomial
+
+statement error
+SELECT glm_fit(y, [x1], 'binomial', {'vcov': 'HC9'}) FROM ds1
+----
+unknown vcov 'HC9'
+
+statement error
+SELECT glm_fit(y, [x1], 'binomial', {'weight': 1.0}) FROM ds1
+----
+unknown option 'weight'
+
+# The same error names every option a caller may use, so a typo is correctable
+# from the message alone.
+statement error
+SELECT glm_fit(y, [x1], 'binomial', {'offsets': 0.0}) FROM ds1
+----
+'link', 'vcov', 'intercept', 'weights', 'offset', 'cluster'
+
+statement error
+SELECT glm_fit(y, [x1], 'binomial', {'link': CASE WHEN x1 > 3 THEN 'logit' ELSE 'probit' END}) FROM ds1
+----
+'link' must be a constant value
+
+statement error
+SELECT glm_fit(y, [x1], 'binomial', {'vcov': CASE WHEN x1 > 3 THEN 'HC1' ELSE 'HC3' END}) FROM ds1
+----
+'vcov' must be a constant value
+
+statement error
+SELECT glm_fit(y, [x1], 'binomial', {'intercept': x1 > 3}) FROM ds1
+----
+'intercept' must be a constant value
+
+statement error
+SELECT glm_fit(y, [x1], 'poisson', {'vcov': 'CR1'}) FROM ds8
+----
+CR0/CR1 requires a cluster field
+
+statement error
+SELECT glm_fit(y, [x1], 'poisson', {'vcov': 'HC1', 'cluster': grp}) FROM ds8
+----
+cluster-robust
+
+statement error
+SELECT glm_fit(y, [x1], 'poisson', {'cluster': grp}) FROM ds8
+----
+cluster-robust
+
+# A non-constant family is a bind error too, like lm_fit's vcov.
+statement error
+SELECT glm_fit(y, [x1], CASE WHEN x1 > 3 THEN 'poisson' ELSE 'gaussian' END) FROM ds1
+----
+'family' must be a constant value
+
+# ── Data-shaped failures are a NULL group, never an error ────────────────────
+# A binomial response outside [0, 1].
+query T
+SELECT glm_fit(y, [x1], 'binomial') FROM (VALUES
+  (0.0, 1.0), (1.0, 2.0), (2.0, 3.0), (1.0, 4.0), (0.0, 5.0)) t(y, x1)
+----
+NULL
+
+# A negative poisson count.
+query T
+SELECT glm_fit(y, [x1], 'poisson') FROM (VALUES
+  (1.0, 1.0), (2.0, 2.0), (-1.0, 3.0), (3.0, 4.0), (4.0, 5.0)) t(y, x1)
+----
+NULL
+
+# A gamma response of exactly 0 (gamma needs y > 0).
+query T
+SELECT glm_fit(y, [x1], 'gamma') FROM (VALUES
+  (1.0, 1.0), (2.0, 2.0), (0.0, 3.0), (3.0, 4.0), (4.0, 5.0)) t(y, x1)
+----
+NULL
+
+# A negative prior weight. A weight of exactly 0 is dropped as missing data,
+# but a negative one is bad data and fails the group.
+query T
+SELECT glm_fit(y, [x1], 'gaussian', {'weights': w}) FROM (VALUES
+  (1.0, 1.0, 1.0), (2.0, 2.0, 1.0), (3.0, 3.0, -1.0),
+  (4.0, 4.0, 1.0), (5.0, 5.0, 1.0)) t(y, x1, w)
+----
+NULL
+
+# Too few rows: n must exceed the estimated rank.
+query T
+SELECT glm_fit(y, [x1], 'gaussian') FROM (VALUES (1.0, 2.0), (2.0, 3.0)) t(y, x1)
+----
+NULL
+
+# ── The listwise drop ────────────────────────────────────────────────────────
+# A NULL response, a NULL design element, a NULL weight and a NULL cluster key
+# each drop their own row.
+query TTTT
+SELECT (a).n, (b).n, (c).n, (d).n
+FROM (
+  SELECT glm_fit(CASE WHEN x1 = 1 THEN NULL ELSE y END, [x1], 'gaussian') AS a,
+         glm_fit(y, [CASE WHEN x1 = 1 THEN NULL ELSE x1 END], 'gaussian') AS b,
+         glm_fit(y, [x1], 'gaussian', {'weights': CASE WHEN x1 = 1 THEN NULL ELSE 1.0 END}) AS c,
+         glm_fit(y, [x1], 'gaussian',
+                 {'vcov': 'CR1', 'cluster': CASE WHEN x1 = 1 THEN NULL ELSE 'g' || (x1 % 3)::VARCHAR END}) AS d
+  FROM ds5
+)
+----
+11	11	11	11
+
+# A NaN is missing data at the vector layer, exactly like a NULL.
+query TT
+SELECT (a).n, (b).n
+FROM (
+  SELECT glm_fit(CASE WHEN x1 = 1 THEN 'nan'::DOUBLE ELSE y END, [x1], 'gaussian') AS a,
+         glm_fit(y, [x1], 'gaussian',
+                 {'offset': CASE WHEN x1 = 1 THEN 'nan'::DOUBLE ELSE 0.0 END}) AS b
+  FROM ds5
+)
+----
+11	11
+
+# A design row of a different length than the first seen fails the group.
+query T
+SELECT glm_fit(y, CASE WHEN x1 = 1 THEN [x1] ELSE [x1, x2] END, 'gaussian') FROM ds5
+----
+NULL
+
+# ── GROUP BY: one fit per group, and a failure stays inside its group ────────
+statement ok
+CREATE TABLE ds_multi AS SELECT * FROM (VALUES
+  ('a', 0.0, 1.0), ('a', 1.0, 2.0), ('a', 0.0, 3.0), ('a', 1.0, 4.0), ('a', 1.0, 5.0),
+  ('b', 0.0, 1.0), ('b', 2.0, 2.0), ('b', 1.0, 3.0), ('b', 0.0, 4.0), ('b', 1.0, 5.0),
+  ('c', 1.0, 1.0), ('c', 0.0, 2.0), ('c', 1.0, 3.0), ('c', 1.0, 4.0), ('c', 0.0, 5.0)
+) AS t(grp, y, x1);
+
+# Group b has a y of 2.0, which is outside binomial's [0, 1] support, so that
+# group is NULL while a and c fit normally. A domain failure must not abort the
+# query or contaminate its neighbours.
+query III
+SELECT grp, (g).n IS NULL, (g).converged
+FROM (SELECT grp, glm_fit(y, [x1], 'binomial') AS g FROM ds_multi GROUP BY grp)
+ORDER BY grp;
+----
+a	false	true
+b	true	NULL
+c	false	true
+
+# Every echoed name is NULL in the failed group too: a NULL STRUCT is NULL all
+# the way down, so a consumer cannot read a family off a group that never fit.
+query IIII
+SELECT grp, (g).family, (g).link, (g).vcov_type
+FROM (SELECT grp, glm_fit(y, [x1], 'binomial', {'vcov': 'HC1'}) AS g FROM ds_multi GROUP BY grp)
+ORDER BY grp;
+----
+a	binomial	logit	HC1
+b	NULL	NULL	NULL
+c	binomial	logit	HC1
+
+# ── A fitted value outside the family's support is a failed fit ──────────────
+# poisson allows an identity link and binomial allows a log link, and both can
+# reach an impossible fitted value: a negative expected count, or a probability
+# above 1. The support test catches those, so the group is NULL rather than a
+# number computed at an impossible mean. This differs from the canonical-link
+# siblings above, which fit the same data without complaint.
+query TT
+SELECT (a).n IS NULL, (b).n IS NULL
+FROM (
+  SELECT glm_fit(y, [x1], 'poisson', {'link': 'identity'}) AS a,
+         glm_fit(y, [x1], 'poisson') AS b
+  FROM (VALUES
+    (2.0, -1.387), (0.0, 4.348), (1.0, 2.565), (0.0, 0.52),
+    (5.0, -0.029), (0.0, 2.755), (3.0, 2.156), (5.0, -4.418)) t(y, x1)
+)
+----
+true	false
+
+query TT
+SELECT (a).n IS NULL, (b).n IS NULL
+FROM (
+  SELECT glm_fit(y, [x1], 'binomial', {'link': 'log'}) AS a,
+         glm_fit(y, [x1], 'binomial') AS b
+  FROM (VALUES
+    (0.0, 2.5763), (0.0, 0.236), (1.0, -1.4722), (0.0, -2.3383),
+    (1.0, -3.5882), (1.0, 2.0167), (0.0, 4.6552), (1.0, -4.8203)) t(y, x1)
+)
+----
+true	false
+
+# ── DS6: a separated binomial fit ───────────────────────────────────────────
+# y is 0 below x1 = 4.5 and 1 above it, so no finite coefficient maximizes the
+# likelihood: every step lowers the deviance by pushing beta further out. The
+# flag is a heuristic and it needs a non-converged fit, so a converged fit with
+# separation = false does NOT mean the response was informative — check
+# std_error too. Nothing here is asserted as a number: DS6's own goldens are
+# not safe at a tight tolerance (see test/cpp/glm_fit_fixtures.hpp).
+statement ok
+CREATE TABLE ds6 AS SELECT * FROM (VALUES
+  (0.0, 1.0), (0.0, 2.0), (0.0, 3.0), (0.0, 4.0),
+  (1.0, 5.0), (1.0, 6.0), (1.0, 7.0), (1.0, 8.0)
+) AS t(y, x1);
+
+query TTTTT
+SELECT m.separation, m.converged, m.iterations,
+       m.deviance < 1e-6, (m.coefficients[2]).std_error > 1e3
+FROM (SELECT glm_fit(y, [x1], 'binomial') AS m FROM ds6)
+----
+true	false	25	true	true
+
+# ── lin_hyp and emmeans against a GLM ───────────────────────────────────────
+# Both helpers take only the coefficients and the covariance, so they serve any
+# fit. Until glm_fit there was one fitter to serve, and these two queries are
+# what checks the claim.
+statement ok
+CREATE TABLE ds_bin AS SELECT * FROM (VALUES
+  (0.0, 1.0), (0.0, 2.0), (1.0, 3.0), (0.0, 4.0), (1.0, 5.0), (0.0, 6.0),
+  (1.0, 7.0), (1.0, 8.0), (0.0, 9.0), (1.0, 10.0), (1.0, 11.0), (1.0, 12.0)
+) AS t(y, x1);
+
+# A Type III test of one term on a logistic fit. lin_hyp needs no change to
+# serve a GLM: it takes the coefficients and the covariance, whatever produced
+# them. sigma2 is 1 because glm_fit's cov is already on the right scale, and
+# df_residual is the denominator df.
+query II
+SELECT (h).df_num, printf('%.4f', (h).chisq)
+FROM (SELECT lin_hyp([[0, 1]],
+                     list_transform(g.coefficients, c -> c.estimate),
+                     g.cov, 1.0, g.df_residual) AS h
+      FROM (SELECT glm_fit(y, [x1], 'binomial') AS g FROM ds_bin));
+----
+1	2.5741
+
+# The joint Wald statistic from lin_hyp over every slope must equal the
+# statistic from glm_fit's own coefficients, which is the same arithmetic
+# reached by two routes.
+query I
+SELECT printf('%.8f', abs((h).chisq - pow((g).coefficients[2].estimate / (g).coefficients[2].std_error, 2)))
+FROM (SELECT glm_fit(y, [x1], 'binomial') AS g,
+             lin_hyp([[0, 1]], list_transform(glm_fit(y, [x1], 'binomial').coefficients, c -> c.estimate),
+                     glm_fit(y, [x1], 'binomial').cov, 1.0, 1.0) AS h
+      FROM ds_bin);
+----
+0.00000000
+
+# Cell-means coding of three groups: with intercept false the three
+# coefficients are the three cell means on the LINK scale. Cell 1 is 1 of 4,
+# so its mean is ln(0.25/0.75) = -1.0986.
+statement ok
+CREATE TABLE ds_cells AS SELECT * FROM (VALUES
+  (1.0, 1.0, 0.0, 0.0), (0.0, 1.0, 0.0, 0.0), (0.0, 1.0, 0.0, 0.0), (0.0, 1.0, 0.0, 0.0),
+  (1.0, 0.0, 1.0, 0.0), (1.0, 0.0, 1.0, 0.0), (0.0, 0.0, 1.0, 0.0), (0.0, 0.0, 1.0, 0.0),
+  (1.0, 0.0, 0.0, 1.0), (1.0, 0.0, 0.0, 1.0), (1.0, 0.0, 0.0, 1.0), (0.0, 0.0, 0.0, 1.0)
+) AS t(y, g1, g2, g3);
+
+# The three cell means on the link scale, by hand: ln(1/3), ln(1), ln(3).
+query TTTT
+SELECT printf('%.4f', (m.coefficients[1]).estimate),
+       printf('%.4f', (m.coefficients[2]).estimate),
+       printf('%.4f', (m.coefficients[3]).estimate),
+       m.df_residual
+FROM (SELECT glm_fit(y, [g1, g2, g3], 'binomial', {'intercept': false}) AS m FROM ds_cells)
+----
+-1.0986	0.0000	1.0986	9
+
+# emmeans over a cell-means logistic fit gives marginal means on the LINK
+# scale, with Tukey-adjusted pairwise differences. The link scale is the
+# correct and only thing emmeans can report, because it is given beta and cov
+# and nothing about the link — so the README must say so.
+query III
+SELECT (e).k_compare, printf('%.4f', (e).means[1].estimate), (e).diffs[1].p_adjusted IS NOT NULL
+FROM (SELECT emmeans([[1,0,0],[0,1,0],[0,0,1]],
+                     list_transform(g.coefficients, c -> c.estimate),
+                     g.cov, g.df_residual) AS e
+      FROM (SELECT glm_fit(y, [g1, g2, g3], 'binomial', {'intercept': false}) AS g FROM ds_cells));
+----
+3	-1.0986	true
+
+# The marginal mean's standard error is the cell's own: 1/sqrt(n·p·(1−p)) is
+# 1/sqrt(4·0.25·0.75) = 1.1547 for cell 1 and 1/sqrt(4·0.5·0.5) = 1.0 for
+# cell 2.
+query TT
+SELECT printf('%.4f', (e).means[1].std_error), printf('%.4f', (e).means[2].std_error)
+FROM (SELECT emmeans([[1,0,0],[0,1,0],[0,0,1]],
+                     list_transform(g.coefficients, c -> c.estimate),
+                     g.cov, g.df_residual) AS e
+      FROM (SELECT glm_fit(y, [g1, g2, g3], 'binomial', {'intercept': false}) AS g FROM ds_cells));
+----
+1.1547	1.0000
