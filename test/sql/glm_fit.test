@@ -712,3 +712,58 @@ FROM (SELECT glm_fit(y, [x1], 'gaussian', {'weights': CASE WHEN x1 > 6 THEN 0.0 
      (SELECT glm_fit(y, [x1], 'gaussian') AS c FROM ds5 WHERE x1 <= 6)
 ----
 6	6	true	0.000000000000	0.000000000000	0.000000000000	0.000000000000	0.000000000000	0.000000000000
+
+# ── A saturating offset ─────────────────────────────────────────────────────
+# The kernel screens no offset magnitude up front. A fitted mean that has gone
+# non-finite is caught by the support test instead (MuInSupport in
+# src/glm_fit_core.cpp), and a first pass that fails that test has no previous
+# iterate to halve toward, so the fit fails. Either route is acceptable; a
+# reported result containing Inf is not.
+#
+# A CONSTANT offset of 1000 does not saturate, which is worth stating because
+# it looks as though it should. The IRLS working response subtracts the offset
+# before the solve, and with an intercept in the design the intercept simply
+# absorbs it: the fit converges with an intercept near -999.65 and every
+# reported quantity finite. e^1000 is never evaluated.
+query IIIIII
+SELECT (g).n, (g).converged,
+       printf('%.4f', (g).coefficients[1].estimate),
+       printf('%.4f', (g).coefficients[2].estimate),
+       isfinite((g).deviance), isfinite((g).coefficients[1].std_error)
+FROM (SELECT glm_fit(y, [x1], 'poisson', {'offset': 1000.0}) AS g FROM ds);
+----
+6	true	-999.6459	0.3590	true	true
+
+# Take the intercept away and the same offset has nothing to absorb it, so the
+# first fitted mean is e^1000, the support test rejects it, and the group is
+# NULL rather than Inf reaching the user.
+query I
+SELECT (g).n IS NULL
+FROM (SELECT glm_fit(y, [x1], 'poisson', {'offset': 1000.0, 'intercept': false}) AS g FROM ds);
+----
+true
+
+# With an intercept it is the part of the offset the design cannot absorb that
+# matters. x2 is not in this design, so an offset of 1000·x2 cannot be absorbed
+# and the group is NULL.
+query I
+SELECT (g).n IS NULL
+FROM (SELECT glm_fit(y, [x1], 'poisson', {'offset': x2 * 1000.0}) AS g FROM ds);
+----
+true
+
+# A merely large offset is a legitimate fit, so the check must not be a blunt
+# magnitude threshold.
+query II
+SELECT (g).converged, (g).n
+FROM (SELECT glm_fit(y, [x1], 'poisson', {'offset': 2.0}) AS g FROM ds);
+----
+true	6
+
+# A non-finite offset is dropped as missing data, like a NULL.
+query I
+SELECT (g).n
+FROM (SELECT glm_fit(y, [x1], 'poisson',
+                     {'offset': CASE WHEN x1 > 5 THEN 'inf'::DOUBLE ELSE 0.0 END}) AS g FROM ds);
+----
+5
