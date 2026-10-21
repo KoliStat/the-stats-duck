@@ -15,6 +15,11 @@
 // The second part is fit_glm: the loop that produces the fitted values,
 // its options, and its result.
 //
+// The two parts have one header and two sources. src/glm_core.cpp
+// implements the first part and src/glm_fit_core.cpp the second. The
+// header is deliberately not split: a caller wants one include for a
+// GLM, and the two halves are one contract.
+//
 // DuckDB-free and Eigen-free at the boundary, like linalg.hpp and
 // lm_core.hpp. This file includes lm_core.hpp for one reason: the Vcov
 // enum, which GlmResult reuses so a GLM's standard errors are named the
