@@ -456,19 +456,40 @@ struct GlmResult {
 // the trial counts and y is the proportion of successes, so 7 of 10 is
 // y = 0.7 and w = 10. Defaults to 1 for every row.
 //
-// A row of weight exactly 0 influences none of the estimates: not the
-// aliased set, not the solve, not the deviance, and not the support test
-// on the fitted mean. Its contribution is 0 either way. That invariant holds for a
-// caller reaching this kernel directly, which docs/kernel_api.md invites
-// a sibling repository to do, and not only through the aggregate.
+// A row of weight exactly 0 does not move `coefficients`: not through the
+// aliased set, not through the solve, not through the deviance, and not
+// through the support test on the fitted mean. Its contribution is 0 in
+// each of them.
 //
-// Two things such a row does affect. First `n`: the kernel counts every
-// row it is given, so a zero-weight row raises n and therefore
-// df_residual. Second, for gaussian only, `loglik` and `aic`: the
-// Σ ln(w)/2 term above takes ln(0) = −inf, so loglik is −inf and aic is
-// +inf, which is what R reports for the same input. Neither is reachable
-// through the SQL layer: it drops zero-weight rows at accumulation, like a
-// NULL, so they never arrive here by that path.
+// It does move several other fields, so do not read the line above as
+// "the row is ignored". The kernel counts every row it is given, so a
+// zero-weight row raises `n` and therefore `df_residual`. For gaussian
+// and gamma, where the dispersion is estimated rather than fixed at 1,
+// pearson_dispersion divides by df_residual and the covariance scales
+// with the result — so `dispersion`, every `cov` entry, `std_error`,
+// `z_statistic` and `p_value` all move with it. Measured on a 12-row
+// gaussian fit with one weight zeroed against the same fit with that row
+// removed: dispersion 11.1% lower, std_error 5.7% lower, p_value a factor
+// of 4.4 smaller. Binomial and poisson escape this, their dispersion
+// being fixed at 1, but their df_residual still moves.
+//
+// `loglik` and `aic` degenerate, differently by family. Gaussian takes
+// ln(0) = −inf in the Σ ln(w)/2 term above, so loglik is −inf and aic is
+// +inf; that is what R reports for the same input. Gamma goes NaN instead:
+// its branch forms k = 0 and then −k·ln(mu/k) is −0·ln(inf). SetD maps
+// NaN to SQL NULL.
+//
+// R does not agree with this kernel here, beyond the gaussian −Inf. R
+// excludes zero-weight rows from df.residual and warns that they are "not
+// used for calculating dispersion", so R's standard errors are the same
+// with the row and without it, and R's gamma logLik stays finite. Matching
+// R would be a behaviour change with its own tests, not a documentation
+// fix, so this records the difference instead of hiding it.
+//
+// None of it is reachable through the SQL layer, which drops zero-weight
+// rows at accumulation like a NULL (glm_fit_function.cpp). All of it is
+// reachable by a caller using this kernel directly, which
+// docs/kernel_api.md invites a sibling repository to do.
 //
 // offset: optional, length n, added to the linear predictor and not
 // estimated. A poisson model of a rate uses log(exposure) here.

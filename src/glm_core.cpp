@@ -320,10 +320,14 @@ double glm_loglik(Family f, const std::vector<double> &y, const std::vector<doub
 		// The prior-weight normalization, + Σ ln(w)/2. R carries it in
 		// gaussian()$aic as - sum(log(wt)); statsmodels carries it in
 		// Gaussian.loglike_obs as - log(scale/var_weights). It is the only
-		// place this branch reads the weights outside its deviance call,
-		// and without it the loglik and aic are off by exactly this
-		// amount while beta, the standard errors, the deviance and the
-		// dispersion all still match R. A weight of 0
+		// place this branch reads the weights outside its deviance call.
+		// Suppress it and the loglik is exactly Σ ln(w)/2 too low, while
+		// the aic is Σ ln(w) too high — twice the term, opposite sign,
+		// because aic = -2·loglik + 2·(rank + d). On the fixture in
+		// test_weighted_gaussian_loglik_against_r that is 5.8347 on the
+		// loglik and 11.6694 on the aic. Beta, the standard errors, the
+		// deviance and the dispersion are unchanged either way and all
+		// still match R. A weight of 0
 		// gives ln(0) = -inf here, so the loglik is -inf and the aic is
 		// +inf, which is what R reports for the same input. The header
 		// says so beside the zero-weight contract.

@@ -26,7 +26,8 @@ if res.cov_params_default is None:
     res.cov_params_default = sw.cov_white_simple(self, use_correction=False)
 ```
 
-`cov_HC0` through `cov_HC3` are defined on `OLSResults`, in
+`cov_HC0` through `cov_HC3` are defined on `RegressionResults`, which
+`OLSResults` inherits from, in
 `statsmodels/regression/linear_model.py`. `GLMResults`, in
 `statsmodels/genmod/generalized_linear_model.py`, defines none of them. So
 every one of the four names misses the `getattr` and falls through to the

@@ -336,7 +336,7 @@ Use `stats_duck::NormalCDF`, `NormalQuantile` and `NormalPDF` from `distribution
 
 Variance: `1` for Gaussian, `mu(1−mu)` for binomial, `mu` for Poisson, `mu²` for gamma.
 
-**`link_inv` clamps its result away from the boundary of the family's support.** An unclamped logit inverse underflows to exactly 0 around `eta = −745`, and the deviance then returns infinity for a case that should simply be a very small fitted probability. Clamp to `[kMuEps, 1 − kMuEps]` for the probability links and to `≥ kMuEps` for log, inverse and sqrt, with `kMuEps = 1e-10`. State the constant and the reason in the header, and note that the clamp is why `link_inv(link_eta(mu))` round-trips only for `mu` inside the clamped range — the test samples accordingly.
+**`link_inv` clamps its result away from the boundary of the family's support.** An unclamped logit inverse underflows to exactly 0 around `eta = −709.78` in the `1/(1 + exp(−eta))` form this kernel uses (−745.13 is the threshold for the `exp(eta)/(1 + exp(eta))` form, which it does not use), and the deviance then returns infinity for a case that should simply be a very small fitted probability. Clamp to `[kMuEps, 1 − kMuEps]` for the probability links and to `≥ kMuEps` for log, inverse and sqrt, with `kMuEps = 1e-10`. State the constant and the reason in the header, and note that the clamp is why `link_inv(link_eta(mu))` round-trips only for `mu` inside the clamped range — the test samples accordingly.
 
 - [ ] **Step 5: Run the test to see it pass**
 
@@ -467,7 +467,7 @@ gamma:     2 Σ w·[ −ln(y/mu) + (y − mu)/mu ]
 - [ ] **Step 5: Implement the log-likelihood, the AIC and the dispersion**
 
 ```
-gaussian loglik:  −n/2·(ln 2π σ² + 1),  σ² = deviance/n     // matches lm_core::loglik
+gaussian loglik:  −n/2·(ln 2π σ² + 1) + Σ ln(w)/2,  σ² = deviance/n   // matches lm_core::loglik at unit weights
 binomial loglik:  Σ [ LogChoose(w, w·y) + w·y·ln mu + w·(1−y)·ln(1−mu) ]
 poisson loglik:   Σ w·[ y·ln mu − mu − lgamma(y + 1) ]
 gamma loglik:     with shape = 1/dispersion, through std::lgamma

@@ -26,7 +26,8 @@
 // generates statsmodels' cov_type='cluster' for DS8 and nothing else
 // robust, so the statsmodels goldens carry no HC values at all. R supplies
 // those. STATSMODELS CANNOT SUPPLY A GLM'S HC2 OR HC3 AT ALL. In 0.15.0,
-// cov_HC0 through cov_HC3 are defined only on OLSResults, so a GLM's
+// cov_HC0 through cov_HC3 are defined only on RegressionResults, which
+// OLSResults inherits from and GLMResults does not, so a GLM's
 // cov_type request falls through to one undifferentiated routine and
 // returns HC0's numbers under all four names, labelled with the name that
 // was asked for. R is the only available oracle for a GLM's HC2 and HC3.
@@ -733,7 +734,8 @@ static void test_robust_oracles() {
 // THE HC ORACLE. statsmodels gives this project no HC golden for any
 // design: gen_glm_fit_fixtures.py generates cov_type='cluster' for DS8 and
 // nothing else robust. It also cannot give one for HC2 or HC3 on a GLM. In
-// 0.15.0, cov_HC0 through cov_HC3 exist only on OLSResults
+// 0.15.0, cov_HC0 through cov_HC3 exist only on RegressionResults
+// (OLSResults inherits them; nothing in GLMResults's MRO defines them)
 // (statsmodels/regression/linear_model.py), GLMResults defines none of
 // them, and statsmodels/base/covtype.py dispatches with
 // getattr(self, "cov_" + cov_type.upper(), None) and falls back to one
@@ -845,9 +847,11 @@ static void test_binomial_hc_against_r() {
 // matched R to 12 digits. This test is the fixture that was missing.
 //
 // DS5's y, x1 and x2 with prior weights 0.5, 1.0, 1.5, ... 6.0. The
-// weights are deliberately NOT constant and NOT all above 1: half of them
-// have a negative log, so the term's sign is exercised in both directions
-// and a constant-weight shortcut would not reproduce it.
+// weights are deliberately NOT constant and NOT all above 1. Of the
+// twelve, one (0.5) has a negative log, one (1.0) has a log of exactly
+// zero, and ten are positive — so the term is exercised in both
+// directions, and a constant-weight shortcut, where every ln(w) is 0,
+// would not reproduce it.
 //
 // Exact program, reproducible:
 //
@@ -964,12 +968,22 @@ static void test_canonical_gamma_and_sqrt_links_against_r() {
 	const statsduck::GlmResult g = statsduck::fit_glm(ds4_y, ds4_design(), gi);
 	check(g.ok && g.converged, "the gamma/inverse fit converges");
 
-	// The bands are the TOL_COEF family above, reused because both gaps
-	// have the cause that block describes: a non-linear fit stops a step
-	// short of the MLE, and this kernel and R stop at different points.
-	// MEASURED worsts, reprinted on every run: gamma/inverse 1.47e-07,
-	// which is the same order as DS4's 2.56e-07 against statsmodels on
-	// the log link, and poisson/sqrt 5.79e-16.
+	// The bands are the TOL_COEF family above. Of the two causes that
+	// block separates, this fit's gap is the SECOND one: the oracle's
+	// covariance, not this loop's stopping rule. Checked rather than
+	// assumed — refitting at tol = 1e-8, 1e-12, 1e-15 and 0 leaves the
+	// standard-error gap at 1.47e-07 every time, while beta already
+	// agrees with R to 1.3e-15. R computes vcov from fit$weights, the
+	// working weights of its last completed iteration, where this kernel
+	// recomputes them at the final fitted values. That is the same
+	// previous-iterate mechanism the block measures on DS7 and DS1, and
+	// the right comparison is their standard-error gaps, 1.95e-06 and
+	// 4.78e-07 — not DS4's 2.56e-07, which is a beta gap from the other
+	// cause.
+	//
+	// MEASURED worsts over every quantity each fit checks, reprinted on
+	// every run: gamma/inverse 9.84e-07, which is the dispersion, and
+	// poisson/sqrt 5.79e-16.
 	double worst_g = 0.0;
 	for (std::size_t j = 0; j < kDs4K; j++) {
 		worst_g = std::max(worst_g, rel_dev(at(g.beta, j), kRGiBeta[j]));
@@ -978,6 +992,12 @@ static void test_canonical_gamma_and_sqrt_links_against_r() {
 		check(close_rel(at(g.std_error, j), kRGiStdError[j], TOL_COEF),
 		      "and so does its standard error");
 	}
+	// Folded in, not just checked: a printed "worst" that skips a checked
+	// quantity is a smaller number than the test actually measures. The
+	// dispersion gap is the largest here, 6.7 times the beta and
+	// standard-error worsts.
+	worst_g = std::max(worst_g, rel_dev(g.deviance, kRGiDeviance));
+	worst_g = std::max(worst_g, rel_dev(g.dispersion, kRGiDispersion));
 	check(close_rel(g.deviance, kRGiDeviance, TOL_DEV), "the gamma/inverse deviance matches R");
 	check(close_rel(g.dispersion, kRGiDispersion, TOL_SCALE), "and its dispersion");
 
@@ -994,6 +1014,7 @@ static void test_canonical_gamma_and_sqrt_links_against_r() {
 		check(close_rel(at(p.std_error, j), kRPsStdError[j], TOL_COEF),
 		      "and so does its standard error");
 	}
+	worst_p = std::max(worst_p, rel_dev(p.deviance, kRPsDeviance));
 	check(close_rel(p.deviance, kRPsDeviance, TOL_DEV), "the poisson/sqrt deviance matches R");
 	std::printf("  R_MEASURED worst: gamma/inverse %.3g  poisson/sqrt %.3g\n", worst_g, worst_p);
 }
