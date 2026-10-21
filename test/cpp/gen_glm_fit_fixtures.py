@@ -115,15 +115,20 @@ def log_choose(a, b):
 def my_loglik(family, y, mu, w, dispersion):
     """Computed in the order the kernel uses: deviance, then dispersion, then
     this. Gaussian ignores `dispersion` and recomputes sigma^2 = deviance/n
-    directly (matching lm_core::loglik); only gamma's shape = 1/dispersion
-    reads the argument."""
+    directly (matching lm_core::loglik at unit weights); only gamma's
+    shape = 1/dispersion reads the argument."""
     y = np.asarray(y, float)
     mu = np.asarray(mu, float)
     w = np.asarray(w, float)
     if family == "gaussian":
         n = float(len(y))
         sigma2 = my_deviance(family, y, mu, w) / n
-        return float(-0.5 * n * (np.log(2.0 * np.pi * sigma2) + 1.0))
+        # + sum(ln w)/2 is the prior-weight normalization. statsmodels
+        # carries it in Gaussian.loglike_obs as -log(scale/var_weights) and
+        # R in gaussian()$aic as -sum(log(wt)). It is exactly 0 at unit
+        # weights, which is every gaussian design in this file, so it does
+        # not move DS5. A weighted gaussian design added later needs it.
+        return float(-0.5 * n * (np.log(2.0 * np.pi * sigma2) + 1.0) + 0.5 * np.sum(np.log(w)))
     if family == "binomial":
         # w*y*ln(mu) and w*(1-y)*ln(1-mu) are each a coefficient (w*y, or
         # w*(1-y)) times a log. The discovery that forced this guard: DS6's
@@ -264,8 +269,8 @@ worst_null_where = ""
 
 
 def check_null_deviance(label, family, y, X, link_name, offset, var_weights, res):
-    """Self-check 2, run once per design. `w` is accepted for a uniform
-    call shape across every design site but is not used directly here:
+    """Self-check 2, run once per design. `var_weights` is accepted for a
+    uniform call shape across every design site but is not used directly here:
     null_fit_deviance re-derives the right weight (var_weights or all-ones)
     for the intercept-only refit on its own."""
     global worst_null, worst_null_where

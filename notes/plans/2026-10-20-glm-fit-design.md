@@ -268,8 +268,11 @@ problem rather than a defect.
 `link_inv` clamps its output away from the boundary of the family's support
 — `mu` into `[eps, 1 − eps]` for binomial, `mu ≥ eps` for Poisson and gamma
 — because an unclamped `logit` inverse underflows to exactly 0 at
-`eta ≈ −745` and the deviance then returns infinity. The clamp value and the
-reason go in the header.
+`eta ≈ −709.78` and the deviance then returns infinity. That threshold is
+the one for `1/(1 + e^-eta)`, which is the form `link_inv` uses: its
+`e^-eta` overflows there. The algebraically equal `e^eta/(1 + e^eta)` would
+hold out to about `−745.13`. The clamp value and the reason go in the
+header.
 
 ### The IRLS loop
 
@@ -395,7 +398,7 @@ estimator.
 ### Log-likelihood and AIC
 
 ```
-gaussian:  −n/2 · (ln 2π σ² + 1),  σ² = deviance / n
+gaussian:  −n/2 · (ln 2π σ² + 1) + Σ ln(w)/2,  σ² = deviance / n
 binomial:  Σ [ lchoose(w, w·y) + w·y·ln mu + w·(1 − y)·ln(1 − mu) ]
 poisson:   Σ w · [ y·ln mu − mu − lgamma(y + 1) ]
 gamma:     Σ with shape 1/dispersion, through lgamma
@@ -403,10 +406,20 @@ gamma:     Σ with shape 1/dispersion, through lgamma
 
 `AIC = −2·loglik + 2·(rank + d)`, where `d` is 1 for Gaussian and gamma,
 whose dispersion is an estimated parameter, and 0 for binomial and Poisson.
-The Gaussian form matches `lm_core::loglik`, which is the Gaussian MLE value
-and is `+inf` at zero deviance; the AIC is then `−inf`, which passes through
-as a value rather than becoming NULL, because ±Inf is representable under
-the conventions doc.
+At unit weights the Gaussian form matches `lm_core::loglik`, which is the
+Gaussian MLE value and is `+inf` at zero deviance; the AIC is then `−inf`,
+which passes through as a value rather than becoming NULL, because ±Inf is
+representable under the conventions doc.
+
+`Σ ln(w)/2` is the prior-weight normalization. It is exactly 0 at unit
+weights, so it does not change any unweighted fit. R carries it in
+`gaussian()$aic` as `− sum(log(wt))`, and statsmodels in
+`Gaussian.loglike_obs` as `− log(scale/var_weights)`. Only the Gaussian
+branch needs it written out: the other three already multiply each
+observation's own log-density by `w`. A weight of exactly 0 makes the term
+`−inf`, so a Gaussian `loglik` is `−inf` and its `aic` `+inf`, which is what
+R reports for the same input. The SQL layer drops zero-weight rows at
+accumulation, so only a direct kernel caller can reach that.
 
 `LogChoose` already exists in `distributions.hpp`. `std::lgamma` covers the
 rest, so this section adds no new special functions.

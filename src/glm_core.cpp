@@ -317,11 +317,29 @@ double glm_loglik(Family f, const std::vector<double> &y, const std::vector<doub
 		const double nd = static_cast<double>(n);
 		const double sigma2 = deviance(f, y, mu, w) / nd;
 		const double two_pi = 2.0 * 3.14159265358979323846;
+		// The prior-weight normalization, + Σ ln(w)/2. R carries it in
+		// gaussian()$aic as - sum(log(wt)); statsmodels carries it in
+		// Gaussian.loglike_obs as - log(scale/var_weights). It is the only
+		// place this branch reads the weights outside its deviance call,
+		// and without it the loglik and aic are off by exactly this
+		// amount while beta, the standard errors, the deviance and the
+		// dispersion all still match R. A weight of 0
+		// gives ln(0) = -inf here, so the loglik is -inf and the aic is
+		// +inf, which is what R reports for the same input. The header
+		// says so beside the zero-weight contract.
+		double log_w = 0.0;
+		for (std::size_t i = 0; i < n; i++) {
+			log_w += std::log(w[i]);
+		}
 		// Two separate std::log calls, summed, not one log of a product.
 		// Mathematically the same value, but this is the exact sequence
 		// lm_core.cpp uses, kept identical so the two never drift apart
-		// by a rounding bit on the same input.
-		return -0.5 * nd * (std::log(two_pi) + std::log(sigma2) + 1.0);
+		// by a rounding bit on the same input. At unit weights every
+		// std::log(1.0) is exactly 0.0, so log_w is exactly 0.0 and this
+		// adds exactly 0.0 to that sequence's result. That is what keeps
+		// the lm_core match. test_gaussian_equals_lm_fit in
+		// test/cpp/test_glm_fit.cpp checks it on DS5 at a band of 0.0.
+		return -0.5 * nd * (std::log(two_pi) + std::log(sigma2) + 1.0) + 0.5 * log_w;
 	}
 	case Family::kBinomial: {
 		double total = 0.0;

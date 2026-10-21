@@ -229,9 +229,11 @@ Conventions worth knowing before consuming `GlmResult`:
   first place. `identity` is never clamped, because a gaussian mean has no
   boundary to clamp against. `kMuEps` is `1e-10`. Without the clamp, an
   extreme `eta` can push `mu` to the exact boundary — the logit inverse
-  underflows to exactly 0 around `eta ≈ −745` — and the deviance's
+  underflows to exactly 0 around `eta ≈ −709.78` — and the deviance's
   `log(mu)` then returns infinity for a fit that should report a very
-  small probability instead.
+  small probability instead. The threshold is where `e^-eta` overflows,
+  because `link_inv` computes `1/(1 + e^-eta)`; the algebraically equal
+  `e^eta/(1 + e^eta)` would hold out to about `−745.13` instead.
 - **A separate support test catches what the clamp cannot.** `link_inv`
   clamps the probability and strictly-positive links, but `identity` is
   never clamped, and `identity` is allowed for poisson while `log` is

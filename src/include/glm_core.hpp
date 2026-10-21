@@ -93,7 +93,13 @@ bool link_allowed(Family f, Link l);
 //
 // Without a clamp, an extreme eta can push mu all the way to the boundary
 // of its domain. For example, the logit inverse underflows to exactly 0
-// around eta = -745. A later task computes the deviance from mu, and the
+// around eta = -709.78. That threshold belongs to the form link_inv
+// actually uses, 1/(1 + e^-eta): its e^-eta overflows to infinity at the
+// same place link_deriv's e^eta does, which link_deriv's own comment
+// further down states as the same 709.78. The algebraically equal
+// e^eta/(1 + e^eta) would instead reach exactly 0 at about -745.13, which
+// is a figure for a form this file does not use. A later task computes
+// the deviance from mu, and the
 // deviance takes log(mu) or divides by mu. At mu = 0 that returns infinity
 // for a fit that should simply report a very small probability.
 //
@@ -235,14 +241,28 @@ double deviance(Family f, const std::vector<double> &y, const std::vector<double
 
 // The log-likelihood at the fitted mu. Call pearson_dispersion first. See
 // the dispersion argument's contract above this block.
-//   gaussian  −n/2·(ln 2π σ² + 1),  σ² = deviance/n, n = y.size()
-//             (matches lm_core::loglik; +inf at zero deviance)
+//   gaussian  −n/2·(ln 2π σ² + 1) + Σ ln(w)/2,  σ² = deviance/n,
+//             n = y.size() (+inf at zero deviance)
 //   binomial  Σ [ LogChoose(w, w·y) + w·y·ln mu + w·(1 − y)·ln(1 − mu) ]
 //   poisson   Σ w·[ y·ln mu − mu − lgamma(y + 1) ]
 //   gamma     shape = 1/dispersion, through std::lgamma
 //
 // LogChoose is distributions.hpp's (stats_duck::detail::LogChoose,
 // stats_duck WITH an underscore). This file adds no new special function.
+//
+// THE GAUSSIAN PRIOR-WEIGHT TERM, Σ ln(w)/2. R carries it in
+// gaussian()$aic as − sum(log(wt)); statsmodels carries it in
+// Gaussian.loglike_obs as − log(scale/var_weights). At unit weights the
+// term is exactly 0, so the returned value is lm_core::loglik's, bit for
+// bit. Under a non-unit weight the term is the whole difference between
+// this project's value and R's logLik. It was missing until the #22
+// whole-branch review measured a 12-row w = 3 fit against R.
+//
+// A weight of exactly 0 makes this term −inf, so the gaussian loglik is
+// −inf and the aic is +inf. R reports exactly that for the same input
+// (checked on glm(y ~ 1, family = gaussian, weights = c(1,1,1,1,0)) in
+// R 4.6.1). The fit_glm contract below records this beside `n`, which is
+// the other thing a zero-weight row moves, and lists what it does not.
 //
 // Guarded against an UNCLAMPED mu of exactly 0.0 or exactly 1.0. This is
 // not the clamped boundary: at mu = kMuEps, ln(mu) is about −23, an
@@ -436,16 +456,19 @@ struct GlmResult {
 // the trial counts and y is the proportion of successes, so 7 of 10 is
 // y = 0.7 and w = 10. Defaults to 1 for every row.
 //
-// A row of weight exactly 0 influences nothing: not the aliased set, not
-// the solve, not the deviance, and not the support test on the fitted
-// mean. Its contribution is 0 either way. That invariant holds for a
+// A row of weight exactly 0 influences none of the estimates: not the
+// aliased set, not the solve, not the deviance, and not the support test
+// on the fitted mean. Its contribution is 0 either way. That invariant holds for a
 // caller reaching this kernel directly, which docs/kernel_api.md invites
 // a sibling repository to do, and not only through the aggregate.
 //
-// The one thing such a row does affect is `n`: the kernel counts every
+// Two things such a row does affect. First `n`: the kernel counts every
 // row it is given, so a zero-weight row raises n and therefore
-// df_residual. The SQL layer drops those rows at accumulation, like a
-// NULL, so they do not reach here through that path.
+// df_residual. Second, for gaussian only, `loglik` and `aic`: the
+// Σ ln(w)/2 term above takes ln(0) = −inf, so loglik is −inf and aic is
+// +inf, which is what R reports for the same input. Neither is reachable
+// through the SQL layer: it drops zero-weight rows at accumulation, like a
+// NULL, so they never arrive here by that path.
 //
 // offset: optional, length n, added to the linear predictor and not
 // estimated. A poisson model of a rate uses log(exposure) here.
