@@ -1,34 +1,49 @@
 // Direct C++ unit tests for statsduck::fit_glm, the IRLS loop and its
-// classical covariance (#22).
+// classical and robust covariance (#22).
 //
-// The first test compares a gaussian identity-link fit against fit_lm on
-// the same data. Gaussian with an identity link IS ordinary least squares,
-// so the two fitters must agree exactly. That test comes first because it
-// catches the most for the least: fit_lm is already validated against
-// statsmodels, so this ties the new fitter to a checked one instead of to
-// a fresh set of constants.
+// The first two tests compare a gaussian identity-link fit against fit_lm
+// on the same data, first with the classical covariance and then with
+// each of the six robust estimators. Gaussian with an identity link IS
+// ordinary least squares, so the two fitters must agree exactly. Those
+// tests come first because they catch the most for the least: fit_lm is
+// already validated against statsmodels, so this ties the new fitter to a
+// checked one instead of to a fresh set of constants. Both bands are 0.0,
+// which passes only on exact equality, and both measure 0.
 //
 // The oracle comparisons come next, against the statsmodels goldens in
 // test/cpp/glm_fit_fixtures.hpp: DS1 binomial, DS3 poisson with an
-// offset, DS4 gamma, DS5 gaussian and DS7 rank deficient. Their band is
-// MEASURED rather than assumed, and the measurement is recorded beside
-// it and reprinted on every run.
+// offset, DS4 gamma, DS5 gaussian, DS7 rank deficient and DS8 clustered,
+// then DS8's CR0 and CR1 goldens for the robust sandwich. Every band is
+// MEASURED rather than assumed, and the measurement is recorded beside it
+// and reprinted on every run.
 //
-// Then the identities that need no oracle at all: null_deviance against
-// an independent intercept-only fit, grouped binomial against ungrouped,
-// a scaled trial count, and a deficient fit against the reduced design it
-// must reproduce bit for bit. Then the three mechanisms that have no
-// golden: the support test on the fitted mean, step halving, and the
-// probit and cloglog links, which are checked against an independent
-// Nelder-Mead minimization of the same deviance. Last, the input classes
-// that have no fit to report: no residual degrees of freedom, a
-// zero-weight row, and a design with no columns at all.
+// Then the identities that need no oracle at all: a weighted sandwich
+// against fit_lm on the sqrt(w)-scaled design, which is the only test
+// that exercises the prior weight inside the score and the leverage;
+// HC0 against CR0 with one cluster per row; an aliased column under every
+// estimator; the cluster-id convention against fit_lm's; null_deviance
+// against an independent intercept-only fit; grouped binomial against
+// ungrouped; a scaled trial count; and a deficient fit against the
+// reduced design it must reproduce bit for bit. Then the three mechanisms
+// that have no golden: the support test on the fitted mean, step halving,
+// and the probit and cloglog links, which are checked against an
+// independent Nelder-Mead minimization of the same deviance. Last, the
+// input classes that have no fit to report: no residual degrees of
+// freedom, a zero-weight row, and a design with no columns at all.
 //
-// DS2, DS6 and DS8 are not here. DS2's numbers are used, as the grouped
+// DS2 and DS6 are not fitted here. DS2's numbers are used, as the grouped
 // half of the grouping identity. DS6 is the separated design, whose
 // goldens the fixture header marks as unsafe to assert tightly, and it
-// belongs to the task that adds the separation flag. DS8 is clustered and
-// belongs to the task that adds the robust covariance.
+// belongs to the task that adds the separation flag.
+//
+// NO DESIGN HAS AN HC GOLDEN. gen_glm_fit_fixtures.py generates
+// statsmodels' cov_type='cluster' for DS8 and nothing else robust, so the
+// HC estimators have no oracle on a non-gaussian family. Two exact
+// identities stand in: HC0 is CR0 with one cluster per row, which puts
+// DS8's oracled CR0 behind the HC accumulation, and the weighted
+// sqrt(w)-scaled comparison above puts fit_lm's statsmodels-validated
+// HC2 and HC3 behind the leverage. A task that adds an HC golden should
+// extend that generator rather than hand-enter constants.
 //
 // Builds standalone (no DuckDB) via scripts/run-cpp-tests.sh. Exit 0 = pass.
 
@@ -308,7 +323,7 @@ static void test_robust_equals_lm_fit() {
 // rule on its own guarantees only about 1e-4. IRLS converges
 // quadratically, so the last step overshoots far past the criterion and
 // the real agreement is much tighter. The band below comes from running
-// the loop over DS1, DS3, DS4, DS5 and DS7 and printing the worst
+// the loop over DS1, DS3, DS4, DS5, DS7 and DS8 and printing the worst
 // relative deviation on every reported quantity. The suite still prints
 // those numbers on every run, on the TOL_MEASURED line, so a change in
 // them is visible rather than silent.
@@ -317,6 +332,12 @@ static void test_robust_equals_lm_fit() {
 //   beta 2.56e-07 (DS4)   std_error 1.95e-06 (DS7)   z 1.95e-06 (DS7)
 //   cov  6.00e-06 (DS1)   deviance and null_deviance 9.98e-15 (DS4)
 //   dispersion, loglik, aic 2.94e-08 (DS4)   p-value 8.88e-07 absolute (DS7)
+//
+// DS8 joined the table when the robust covariance landed, and it moved
+// none of those worsts: beta 6.86e-15, std_error and z 4.26e-08, cov
+// 8.51e-08, deviance 6.46e-16, scale 1.34e-16, p 9.87e-09 absolute. Its
+// standard-error gap is the same previous-iterate mechanism described
+// below, one order smaller than DS1's.
 //
 // The two worst cases have different causes, and both were checked
 // rather than assumed:
@@ -413,10 +434,19 @@ static const Fixture kFixtures[] = {
      ds7_design, nullptr, nullptr, kDs7K, kDs7Rank, kDs7DfResidual, kDs7Beta, kDs7StdError,
      kDs7ZStatistic, kDs7PExpected, kDs7Cov, kDs7Deviance, kDs7NullDeviance, kDs7Dispersion,
      kDs7Loglik, kDs7Aic},
+    // DS8's MODEL-BASED fit. The clustered estimators on the same design
+    // are oracled separately below. This row is here so that a
+    // disagreement there can be attributed to the sandwich rather than to
+    // the fit underneath it: the goldens for both come from the same
+    // statsmodels fit of the same data.
+    {"DS8 poisson clustered, model-based", statsduck::Family::kPoisson, statsduck::Link::kLog,
+     &ds8_y, ds8_design, nullptr, nullptr, kDs8K, kDs8Rank, kDs8DfResidual, kDs8Beta, kDs8StdError,
+     kDs8ZStatistic, kDs8PExpected, kDs8Cov, kDs8Deviance, kDs8NullDeviance, kDs8Dispersion,
+     kDs8Loglik, kDs8Aic},
 };
 
 static void test_oracles() {
-	std::printf("statsmodels goldens: DS1, DS3, DS4, DS5, DS7\n");
+	std::printf("statsmodels goldens: DS1, DS3, DS4, DS5, DS7, DS8\n");
 
 	double worst_beta = 0.0, worst_se = 0.0, worst_z = 0.0, worst_cov = 0.0;
 	double worst_dev = 0.0, worst_scale = 0.0, worst_p = 0.0;
@@ -492,6 +522,391 @@ static void test_oracles() {
 	std::printf("  TOL_MEASURED worst: beta %.3g  se %.3g  z %.3g  cov %.3g  dev %.3g  "
 	            "scale %.3g  p(abs) %.3g\n",
 	            worst_beta, worst_se, worst_z, worst_cov, worst_dev, worst_scale, worst_p);
+}
+
+// ── The robust oracle: a family where link_deriv and variance are not 1 ──
+//
+// The gaussian equivalence above proves the sandwich algebra. It cannot
+// prove the score formula, because at gaussian identity link_deriv and
+// variance are both exactly 1 and drop out. DS8 is poisson with a log
+// link, so link_deriv(eta) is e^eta and variance(mu) is mu, and neither
+// is 1 on any row. Its CR0 and CR1 goldens are what pin the score
+// formula.
+//
+// WHAT IS NOT HERE, and why. The fixture header carries no HC goldens
+// for any design: gen_glm_fit_fixtures.py generates statsmodels'
+// cov_type='cluster' for DS8 and nothing else robust. So an HC estimator
+// on a non-gaussian family has no golden to compare against. Rather than
+// leave that path with only the gaussian check, the HC meat is tied to
+// the CR meat here by an exact identity: with one cluster per row, CR0's
+// per-cluster score sum is a single score, so CR0 IS HC0. That makes
+// DS8's oracled CR0 cover the HC accumulation too, on the same
+// non-gaussian family.
+//
+// The bands below are MEASURED, and they come out far tighter than the
+// model-based bands above. Measured 2026-10-21 on DS8:
+//   CR0  se 1.70e-15  cov 3.97e-15  z 7.97e-15  p 3.44e-15 absolute
+//   CR1  se 1.94e-15  cov 3.92e-15  z 8.13e-15  p 3.44e-15 absolute
+// against the same fit's model-based cov at 8.51e-08. That difference is
+// informative rather than odd: Task 4 measured that the oracle's
+// model-based covariance is evaluated at the previous iterate's working
+// weights, and these numbers say that stale bread does not reach the
+// oracle's cluster path. What is left is the coefficient agreement, 6.86e-15,
+// propagated through a smooth function of beta.
+//
+// So the bands are set at 1e-12, which is 250 times the worst measured
+// gap. That is deliberately loose for a measurement at rounding level: the
+// point of this band is to catch a structural error, and the smallest
+// structural error here is large. Dropping CR1's finite-sample factor
+// changes the covariance by 30%. Dropping link_deriv from the score
+// changes it by orders of magnitude. 1e-12 still leaves room for another
+// platform's exp and log to land a few bits elsewhere.
+static const double TOL_ROBUST = 1e-12;
+
+struct RobustFixture {
+	const char *name;
+	statsduck::Vcov vcov;
+	const double *std_error;
+	const double *z_statistic;
+	const double *p_expected;
+	const double *cov;
+};
+
+static const RobustFixture kRobustFixtures[] = {
+    {"DS8 CR0", statsduck::Vcov::kCR0, kDs8Cr0StdError, kDs8Cr0ZStatistic, kDs8Cr0PExpected,
+     kDs8Cr0Cov},
+    {"DS8 CR1", statsduck::Vcov::kCR1, kDs8Cr1StdError, kDs8Cr1ZStatistic, kDs8Cr1PExpected,
+     kDs8Cr1Cov},
+};
+
+static void test_robust_oracles() {
+	std::printf("statsmodels robust goldens: DS8 poisson, CR0 and CR1\n");
+
+	for (const RobustFixture &f : kRobustFixtures) {
+		statsduck::GlmOptions go;
+		go.family = statsduck::Family::kPoisson;
+		go.link = statsduck::Link::kLog;
+		go.vcov = f.vcov;
+		const statsduck::GlmResult g =
+		    statsduck::fit_glm(ds8_y, ds8_design(), go, nullptr, nullptr, &ds8_clusters);
+		check(g.ok && g.converged, "the clustered fixture fits and converges");
+		check(g.n_clusters == kDs8NumClusters, "and reports the fixture's cluster count");
+		// df_residual is a property of the fit, so it does not move with
+		// the estimator even though the cluster-robust reference does.
+		check(g.df_residual == kDs8DfResidual, "df_residual is still n - rank");
+
+		double fs = 0.0, fz = 0.0, fc = 0.0, fp = 0.0, fb = 0.0;
+		for (std::size_t j = 0; j < kDs8K; j++) {
+			// beta against the MODEL-BASED golden: the estimator must not
+			// move the point estimate, and the oracle's own self-check
+			// pins its clustered beta equal to its model-based beta.
+			fb = std::max(fb, rel_dev(at(g.beta, j), kDs8Beta[j]));
+			fs = std::max(fs, rel_dev(at(g.std_error, j), f.std_error[j]));
+			fz = std::max(fz, rel_dev(at(g.z_statistic, j), f.z_statistic[j]));
+			fp = std::max(fp, std::fabs(at(g.p_value, j) - f.p_expected[j]));
+			check(close_rel(at(g.beta, j), kDs8Beta[j], TOL_COEF),
+			      "the clustered fit's coefficient is the model-based one");
+			check(close_rel(at(g.std_error, j), f.std_error[j], TOL_ROBUST),
+			      "robust standard error matches the oracle");
+			check(close_rel(at(g.z_statistic, j), f.z_statistic[j], TOL_ROBUST),
+			      "robust z statistic matches the oracle");
+			// p_expected, never p_oracle. For poisson the two are the same
+			// column, since statsmodels uses a normal reference there too.
+			check(std::fabs(at(g.p_value, j) - f.p_expected[j]) <= TOL_ROBUST,
+			      "robust p-value matches the normal-referenced expectation");
+		}
+		for (std::size_t e = 0; e < kDs8K * kDs8K; e++) {
+			fc = std::max(fc, rel_dev(at(g.cov, e), f.cov[e]));
+			check(close_rel(at(g.cov, e), f.cov[e], TOL_ROBUST),
+			      "robust covariance entry matches the oracle");
+		}
+		std::printf("  %-8s beta %.3g se %.3g z %.3g cov %.3g p(abs) %.3g (%d it)\n", f.name, fb,
+		            fs, fz, fc, fp, g.iterations);
+	}
+
+	// CR1 is CR0 times [G/(G-1)]*[(N-1)/(N-rank)], and the fixture carries
+	// that factor as its own constant. Checking the RATIO separates a wrong
+	// factor from a wrong meat: both estimators would have to be wrong by
+	// the same multiple to pass this and the two oracle rows above.
+	//
+	// The band is 1e-14, measured 1.70e-16. The ratio is one division of
+	// two numbers that differ by an exact constant factor, so rounding is
+	// all that can separate them, and 1e-14 is 59 times that.
+	statsduck::GlmOptions c0, c1;
+	c0.family = c1.family = statsduck::Family::kPoisson;
+	c0.link = c1.link = statsduck::Link::kLog;
+	c0.vcov = statsduck::Vcov::kCR0;
+	c1.vcov = statsduck::Vcov::kCR1;
+	const statsduck::GlmResult g0 =
+	    statsduck::fit_glm(ds8_y, ds8_design(), c0, nullptr, nullptr, &ds8_clusters);
+	const statsduck::GlmResult g1 =
+	    statsduck::fit_glm(ds8_y, ds8_design(), c1, nullptr, nullptr, &ds8_clusters);
+	double worst_ratio = 0.0;
+	for (std::size_t e = 0; e < kDs8K * kDs8K; e++) {
+		const double ratio = at(g1.cov, e) / at(g0.cov, e);
+		worst_ratio = std::max(worst_ratio, rel_dev(ratio, kDs8Cr1Factor));
+		check(close_rel(ratio, kDs8Cr1Factor, 1e-14),
+		      "CR1 is CR0 times the fixture's finite-sample factor");
+	}
+	std::printf("  CR1/CR0 against the fixture's factor %.12g: worst %.3g\n", kDs8Cr1Factor,
+	            worst_ratio);
+
+	// HC0 IS CR0 with one cluster per row. A cluster of one row has a
+	// score sum equal to that row's own score, so the two meats are the
+	// same sum of outer products. This is what gives the HC accumulation
+	// an oracled check on a non-gaussian family, since the CR0 above is
+	// the oracled one.
+	//
+	// The band is 1e-13, measured 2.17e-16. The two paths compute the same
+	// sum in a different order: HC0 squares the score first and then scales
+	// the outer product, while CR0 scales the design row first and then
+	// multiplies two scaled entries. Only rounding separates them, so the
+	// band is 460 times the measurement.
+	std::vector<int> one_per_row(kDs8N);
+	for (std::size_t i = 0; i < kDs8N; i++) {
+		one_per_row[i] = static_cast<int>(i);
+	}
+	statsduck::GlmOptions h0, s0;
+	h0.family = s0.family = statsduck::Family::kPoisson;
+	h0.link = s0.link = statsduck::Link::kLog;
+	h0.vcov = statsduck::Vcov::kHC0;
+	s0.vcov = statsduck::Vcov::kCR0;
+	const statsduck::GlmResult hc0 = statsduck::fit_glm(ds8_y, ds8_design(), h0);
+	const statsduck::GlmResult cr0_singletons =
+	    statsduck::fit_glm(ds8_y, ds8_design(), s0, nullptr, nullptr, &one_per_row);
+	check(hc0.ok && cr0_singletons.ok, "both the HC0 and the singleton-cluster fit succeed");
+	check(hc0.n_clusters == 0 && cr0_singletons.n_clusters == kDs8N,
+	      "and only the clustered one counts clusters");
+	double worst_hc = 0.0;
+	for (std::size_t e = 0; e < kDs8K * kDs8K; e++) {
+		worst_hc = std::max(worst_hc, rel_dev(at(hc0.cov, e), at(cr0_singletons.cov, e)));
+		check(close_rel(at(hc0.cov, e), at(cr0_singletons.cov, e), 1e-13),
+		      "HC0 equals CR0 with one cluster per row");
+	}
+	std::printf("  HC0 against singleton-cluster CR0 on DS8 poisson: worst %.3g\n", worst_hc);
+}
+
+// ── The weighted sandwich, which no gaussian unit-weight test reaches ────
+static void test_weighted_sandwich() {
+	std::printf("a weighted sandwich equals fit_lm's on the sqrt(w)-scaled design\n");
+
+	// This test exists because the gaussian equivalence above cannot see
+	// the prior weight at all. There every weight is 1, so the w factor in
+	// the score and the w factor in the hat diagonal are both
+	// multiplications by 1 and a build that omitted either would still
+	// pass. MEASURED: removing `h *= final_w[r]` from the hat diagonal
+	// leaves every check above passing while moving this test's HC2
+	// standard error by 24.8% and its HC3 standard error by 46.8%.
+	//
+	// The identity. Write W for the diagonal prior weights. For gaussian
+	// with an identity link the working weight IS the prior weight, so
+	// weighted least squares on (y, X) is ordinary least squares on
+	// (W^(1/2) y, W^(1/2) X). Under that transform every piece of the
+	// sandwich maps across exactly:
+	//   beta       (Xt W X)^-1 Xt W y is the OLS estimate on the scaled data
+	//   bread      Xt W X is the scaled design's Xt X
+	//   score      x_i w_i (y_i - mu_i) is the scaled row times its own
+	//              scaled residual, since each side contributes one w^(1/2)
+	//   leverage   w_i x_i' (Xt W X)^-1 x_i is the scaled design's own
+	//              hat diagonal, which is where the w factor shows up
+	//   dispersion sum w (y - mu)^2 / (n - rank) is the scaled RSS over the
+	//              same df, so it equals fit_lm's sigma squared
+	// fit_lm has no weights argument, so the scaled design is how it is
+	// asked the same question. Its intercept column has to be scaled too,
+	// which is why intercept is false below and the scaled constant is
+	// passed as the first predictor column.
+	//
+	// The weights are perfect squares so that every sqrt is exact in
+	// binary, and x and y are small integers. That removes the scaling
+	// itself as a source of difference and leaves only the solve.
+	//
+	// SCOPE NOTE: this is the first weighted non-binomial fit in the
+	// suite. The fixture header records that the w-scaled LOG-LIKELIHOOD
+	// is unverified against statsmodels for gaussian, poisson and gamma.
+	// Nothing here asserts a log-likelihood, an AIC or a deviance. The
+	// quantities compared are beta, the dispersion, the standard errors
+	// and the covariance, and the identity above derives each of them
+	// independently of that formula.
+	const std::vector<double> y = {3, 5, 4, 9, 7, 6, 12, 10};
+	const std::vector<double> x = {1, 2, 3, 4, 5, 6, 7, 8};
+	const std::vector<double> w = {1, 4, 9, 16, 1, 4, 9, 16};
+	const std::vector<int> cl = {0, 0, 1, 1, 2, 2, 3, 3};
+	const std::size_t n = y.size();
+	Mat X(n, 1);
+	for (std::size_t i = 0; i < n; i++) {
+		X(i, 0) = x[i];
+	}
+	std::vector<double> y_scaled(n, 0.0);
+	Mat X_scaled(n, 2);
+	for (std::size_t i = 0; i < n; i++) {
+		const double s = std::sqrt(w[i]);
+		y_scaled[i] = s * y[i];
+		X_scaled(i, 0) = s;        // the scaled intercept column
+		X_scaled(i, 1) = s * x[i]; // the scaled predictor
+	}
+
+	// The band is 1e-12. Measured worst over all seven estimators:
+	// beta 0, dispersion 1.13e-16, standard error 1.14e-15, covariance
+	// 2.48e-15, all on HC2. The two fitters reach the same numbers by
+	// different arithmetic: this kernel multiplies by w once, fit_lm
+	// multiplies by sqrt(w) twice. So the agreement is rounding, and the
+	// band is 400 times it. A structural difference is far larger, as the
+	// 24.8% measurement above shows.
+	const statsduck::Vcov all[] = {statsduck::Vcov::kConst, statsduck::Vcov::kHC0,
+	                               statsduck::Vcov::kHC1,   statsduck::Vcov::kHC2,
+	                               statsduck::Vcov::kHC3,   statsduck::Vcov::kCR0,
+	                               statsduck::Vcov::kCR1};
+	for (const statsduck::Vcov v : all) {
+		statsduck::GlmOptions go;
+		go.family = statsduck::Family::kGaussian;
+		go.link = statsduck::Link::kIdentity;
+		go.vcov = v;
+		statsduck::LmOptions lo;
+		lo.vcov = v;
+		lo.intercept = false; // the scaled design carries its own constant
+		const statsduck::GlmResult g = statsduck::fit_glm(y, X, go, &w, nullptr, &cl);
+		const statsduck::LmResult o = statsduck::fit_lm(y_scaled, X_scaled, lo, &cl);
+		check(g.ok && o.ok, "both the weighted and the scaled fit succeed");
+		check(g.k == o.k && g.rank == o.rank && g.df_residual == o.df_residual,
+		      "with the same k, rank and residual df");
+		double worst = 0.0;
+		for (std::size_t j = 0; j < o.k; j++) {
+			worst = std::max(worst, rel_dev(at(g.beta, j), at(o.beta, j)));
+			worst = std::max(worst, rel_dev(at(g.std_error, j), at(o.std_error, j)));
+			check(close_rel(at(g.beta, j), at(o.beta, j), 1e-12), "the same coefficient");
+			check(close_rel(at(g.std_error, j), at(o.std_error, j), 1e-12),
+			      "the same weighted standard error");
+		}
+		for (std::size_t e = 0; e < o.cov.size(); e++) {
+			worst = std::max(worst, rel_dev(at(g.cov, e), at(o.cov, e)));
+			check(close_rel(at(g.cov, e), at(o.cov, e), 1e-12), "the same covariance entry");
+		}
+		worst = std::max(worst, rel_dev(g.dispersion, o.sigma * o.sigma));
+		check(close_rel(g.dispersion, o.sigma * o.sigma, 1e-12),
+		      "and the dispersion is the scaled fit's sigma squared");
+		std::printf("  %-5s weighted: worst gap %.3g, se0 %.12g\n", vname(v), worst,
+		            at(g.std_error, 0));
+	}
+}
+
+// ── An aliased column stays NaN under every estimator ────────────────────
+static void test_aliased_under_every_estimator() {
+	std::printf("an aliased column is NaN under every estimator\n");
+
+	// DS7's x3 is x1 + x2, so x3 is the aliased column. The scatter back
+	// into k-space writes only the kept rows and columns of the reduced
+	// covariance, so the aliased row and column must stay NaN whichever
+	// estimator filled that covariance. A sandwich that wrote into the
+	// wrong index, or that returned a rank x rank matrix the scatter
+	// misread, would show up here as a finite number where NaN belongs.
+	//
+	// Three clusters over twelve rows gives DS7 a cluster-robust fit as
+	// well, so the CR path is covered by the same rule. The ids are dense
+	// 0, 1 and 2, which is the kernel's documented contract.
+	const std::vector<int> cl = {0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2};
+	const statsduck::Vcov all[] = {statsduck::Vcov::kConst, statsduck::Vcov::kHC0,
+	                               statsduck::Vcov::kHC1,   statsduck::Vcov::kHC2,
+	                               statsduck::Vcov::kHC3,   statsduck::Vcov::kCR0,
+	                               statsduck::Vcov::kCR1};
+	for (const statsduck::Vcov v : all) {
+		statsduck::GlmOptions go;
+		go.family = statsduck::Family::kPoisson;
+		go.link = statsduck::Link::kLog;
+		go.vcov = v;
+		const statsduck::GlmResult g =
+		    statsduck::fit_glm(ds7_y, ds7_design(), go, nullptr, nullptr, &cl);
+		check(g.ok, "the deficient fit succeeds");
+		check(g.k == kDs7K && g.rank == kDs7Rank, "with one column dropped");
+		const std::size_t ja = kDs7AliasedColumn;
+		check(std::isnan(at(g.beta, ja)), "the aliased coefficient is NaN");
+		check(std::isnan(at(g.std_error, ja)), "so is its standard error");
+		check(std::isnan(at(g.z_statistic, ja)), "so is its z statistic");
+		check(std::isnan(at(g.p_value, ja)), "so is its p-value");
+		for (std::size_t b = 0; b < g.k; b++) {
+			check(std::isnan(at(g.cov, ja * g.k + b)), "its whole covariance row is NaN");
+			check(std::isnan(at(g.cov, b * g.k + ja)), "and its whole covariance column");
+		}
+		// Every other entry is finite, so the NaN marks the aliased term
+		// rather than a covariance that failed to be computed.
+		for (std::size_t a = 0; a < g.k; a++) {
+			for (std::size_t b = 0; b < g.k; b++) {
+				if (a == ja || b == ja) {
+					continue;
+				}
+				check(std::isfinite(at(g.cov, a * g.k + b)), "and every kept entry is finite");
+			}
+		}
+	}
+}
+
+// ── The cluster-id convention is lm_core's ───────────────────────────────
+static void test_cluster_id_convention() {
+	std::printf("the cluster count follows lm_core's max-id convention\n");
+
+	// DECISION, recorded here because it sets CR1's [G/(G-1)] factor:
+	// glm_fit derives G from the LARGEST id plus one, exactly as fit_lm
+	// does, rather than from the number of distinct ids. So {0, 2, 4, 6, 8}
+	// gives G = 9 even though only five labels appear.
+	//
+	// Both headers require DENSE 0-based labels, and densify_clusters is
+	// the supported producer, so on every supported path the largest id
+	// plus one IS the distinct count. Keeping the rule identical to
+	// fit_lm's is what makes the gaussian equivalence test above a real
+	// check instead of one restricted to dense inputs, and it keeps the
+	// two fitters from reporting different CR1 numbers for the same ids,
+	// which would be a worse defect than a documented precondition.
+	// Tightening the rule belongs in one change across both fitters.
+	//
+	// What this test asserts is that AGREEMENT, not that the number is the
+	// right count: it fits the same sparse ids through both kernels and
+	// requires the same G and the same covariance. An empty cluster
+	// contributes a zero score sum, so only the factor and n_clusters
+	// move, and they move together in both fitters.
+	//
+	// The band is 0.0, which close_rel passes only on exact equality,
+	// because this is the same gaussian identity reduction as the test
+	// above and it measures 0 there too.
+	std::vector<int> sparse(kDs8N, 0);
+	for (std::size_t i = 0; i < kDs8N; i++) {
+		sparse[i] = 2 * ds8_clusters[i]; // 0, 2, 4, 6, 8 — dense ids doubled
+	}
+	for (const statsduck::Vcov v : {statsduck::Vcov::kCR0, statsduck::Vcov::kCR1}) {
+		statsduck::GlmOptions go;
+		go.family = statsduck::Family::kGaussian;
+		go.link = statsduck::Link::kIdentity;
+		go.vcov = v;
+		statsduck::LmOptions lo;
+		lo.vcov = v;
+		const statsduck::GlmResult g =
+		    statsduck::fit_glm(ds8_y, ds8_design(), go, nullptr, nullptr, &sparse);
+		const statsduck::LmResult o = statsduck::fit_lm(ds8_y, ds8_design(), lo, &sparse);
+		check(g.ok && o.ok, "both fitters accept a sparse id vector");
+		check(g.n_clusters == o.n_clusters, "and agree on the cluster count");
+		check(g.n_clusters == 9, "which is the largest id plus one, not the distinct count");
+		for (std::size_t e = 0; e < o.cov.size(); e++) {
+			check(close_rel(at(g.cov, e), at(o.cov, e), 0.0),
+			      "and on every covariance entry under that convention");
+		}
+	}
+
+	// A negative id and a single cluster are still failures, under glm as
+	// under lm. These are the two conditions the convention does screen.
+	statsduck::GlmOptions go;
+	go.family = statsduck::Family::kGaussian;
+	go.link = statsduck::Link::kIdentity;
+	go.vcov = statsduck::Vcov::kCR1;
+	std::vector<int> negative(kDs8N, 0);
+	negative[3] = -1;
+	const statsduck::GlmResult neg =
+	    statsduck::fit_glm(ds8_y, ds8_design(), go, nullptr, nullptr, &negative);
+	check(!neg.ok && !neg.error.empty(), "a negative cluster id is a failed fit");
+	const std::vector<int> one(kDs8N, 0);
+	const statsduck::GlmResult single =
+	    statsduck::fit_glm(ds8_y, ds8_design(), go, nullptr, nullptr, &one);
+	check(!single.ok && !single.error.empty(), "and so is a single cluster");
+	const statsduck::GlmResult missing = statsduck::fit_glm(ds8_y, ds8_design(), go);
+	check(!missing.ok && !missing.error.empty(), "and so is a cluster estimator with no ids");
+	std::printf("  sparse ids give G = 9 in both fitters; negative, single and missing ids fail\n");
 }
 
 // ── The identities that need no oracle ───────────────────────────────────
@@ -1129,6 +1544,10 @@ int main() {
 	test_gaussian_equals_lm_fit();
 	test_robust_equals_lm_fit();
 	test_oracles();
+	test_robust_oracles();
+	test_weighted_sandwich();
+	test_aliased_under_every_estimator();
+	test_cluster_id_convention();
 	test_identities();
 	test_fitted_mean_stays_in_support();
 	test_step_halving();
