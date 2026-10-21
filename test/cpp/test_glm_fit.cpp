@@ -15,17 +15,26 @@
 // offset, DS4 gamma, DS5 gaussian, DS7 rank deficient and DS8 clustered,
 // then DS8's CR0 and CR1 goldens for the cluster-robust sandwich. Against
 // R 4.6.1: DS1's HC0 through HC3, derived from R's own fit$weights and
-// hatvalues(). Every band is MEASURED rather than assumed, and the
+// hatvalues(); a WEIGHTED gaussian fit's loglik and aic, which no
+// statsmodels fixture here covers because every gaussian design in the
+// generated header has unit weights; and gamma with its canonical inverse
+// link beside poisson with a sqrt link, the two links nothing else in this
+// file fits. Every band is MEASURED rather than assumed, and the
 // measurement is recorded beside it and reprinted on every run.
 //
 // TWO ORACLES, BECAUSE NEITHER COVERS EVERYTHING. gen_glm_fit_fixtures.py
 // generates statsmodels' cov_type='cluster' for DS8 and nothing else
 // robust, so the statsmodels goldens carry no HC values at all. R supplies
-// those. statsmodels is also not installed on this machine, so whether it
-// offers HC2 and HC3 for a GLM could not be checked; its HC path is
-// written around OLS response residuals. A task that wants HC fixtures in
-// the generated header should extend that generator; until then the R
-// values live in this file, with the exact R program beside them.
+// those. STATSMODELS CANNOT SUPPLY A GLM'S HC2 OR HC3 AT ALL. In 0.15.0,
+// cov_HC0 through cov_HC3 are defined only on OLSResults, so a GLM's
+// cov_type request falls through to one undifferentiated routine and
+// returns HC0's numbers under all four names, labelled with the name that
+// was asked for. R is the only available oracle for a GLM's HC2 and HC3.
+// Extending the generator would therefore commit HC0's numbers three more
+// times, as HC1, HC2 and HC3 goldens. The mechanism, the measurements and
+// the OLS control are in
+// notes/engineering/2026-10-statsmodels-hc-for-a-glm.md. The R values live
+// in this file, with the exact R program beside them.
 //
 // Then the identities that need no oracle at all. HC2 and HC3 against
 // HC0 on a design whose weighted hat diagonals are all equal, which is
@@ -212,6 +221,14 @@ static void test_gaussian_equals_lm_fit() {
 	}
 	worst = std::max(worst, rel_dev(g.dispersion, o.sigma * o.sigma));
 	check(close_rel(g.dispersion, o.sigma * o.sigma, 1e-12), "dispersion is sigma squared");
+	// The log-likelihood at a band of 0.0, which passes only on exact
+	// equality. glm_core's gaussian branch computes it through lm_core's
+	// own sequence of log calls so the two can never differ by a rounding
+	// bit (commit 0245a1d), and the Σ ln(w)/2 prior-weight term added
+	// afterwards is exactly 0.0 at DS5's unit weights. Nothing asserted
+	// that equality until this line; the comment in glm_core.cpp was the
+	// only record of it.
+	check(close_rel(g.loglik, o.loglik, 0.0), "the same log-likelihood as fit_lm, bit for bit");
 	std::printf("  worst relative gap against fit_lm: %.3g (%d iterations)\n", worst, g.iterations);
 	check(g.converged, "an identity-link gaussian fit converges");
 	check(g.iterations <= 3, "and does so in very few iterations, since it is linear");
@@ -715,10 +732,18 @@ static void test_robust_oracles() {
 //
 // THE HC ORACLE. statsmodels gives this project no HC golden for any
 // design: gen_glm_fit_fixtures.py generates cov_type='cluster' for DS8 and
-// nothing else robust. statsmodels is also not installed on this machine,
-// so the statsmodels route could not even be checked for whether it offers
-// HC2 and HC3 for a GLM at all; its HC code is written around OLS response
-// residuals. R 4.6.1 is installed, so R is the oracle here.
+// nothing else robust. It also cannot give one for HC2 or HC3 on a GLM. In
+// 0.15.0, cov_HC0 through cov_HC3 exist only on OLSResults
+// (statsmodels/regression/linear_model.py), GLMResults defines none of
+// them, and statsmodels/base/covtype.py dispatches with
+// getattr(self, "cov_" + cov_type.upper(), None) and falls back to one
+// cov_white_simple call. So GLM(...).fit(cov_type=X) returns identical bse
+// for X = HC0, HC1, HC2 and HC3, labelled with whichever name was asked
+// for. Measured on this very design: all four come back as
+// 8.69158508520134210e-01 on the intercept, against R's four distinct
+// values below. R is the only available oracle for a GLM's HC2 and HC3,
+// which is why R is the oracle here. The mechanism and the OLS control
+// are in notes/engineering/2026-10-statsmodels-hc-for-a-glm.md.
 //
 // The values below come from R's OWN machinery, not from a second copy of
 // this kernel's algebra. fit$weights are R's working weights and
@@ -807,6 +832,170 @@ static void test_binomial_hc_against_r() {
 		worst_cov = std::max(worst_cov, fc);
 	}
 	std::printf("  R_MEASURED worst: se %.3g  cov %.3g\n", worst_se, worst_cov);
+}
+
+// ── A WEIGHTED gaussian fit's loglik and aic, against R 4.6.1 ───────────
+//
+// THE GAP THIS CLOSES. Every gaussian fixture in this suite carries unit
+// weights, and the gaussian loglik's prior-weight term Σ ln(w)/2 is
+// exactly 0 there. So the term was simply absent from glm_core.cpp and
+// nothing failed. The #22 whole-branch review measured a 12-row w = 3 fit
+// through SQL and found loglik off by Σ ln(w)/2 and aic off by Σ ln(w),
+// while beta, the standard errors, the deviance and the dispersion all
+// matched R to 12 digits. This test is the fixture that was missing.
+//
+// DS5's y, x1 and x2 with prior weights 0.5, 1.0, 1.5, ... 6.0. The
+// weights are deliberately NOT constant and NOT all above 1: half of them
+// have a negative log, so the term's sign is exercised in both directions
+// and a constant-weight shortcut would not reproduce it.
+//
+// Exact program, reproducible:
+//
+//   y  <- c(9, 8, 7, 14, 12, 20, 15, 28, 22, 31, 29, 55)
+//   x1 <- c(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 25)
+//   x2 <- c(5, 3, 8, 2, 7, 4, 9, 1, 6, 3, 8, 4)
+//   w  <- seq(0.5, 6, by = 0.5)
+//   fit <- glm(y ~ x1 + x2, family = gaussian, weights = w)
+//   coef(fit); sqrt(diag(vcov(fit))); fit$deviance
+//   summary(fit)$dispersion; logLik(fit); AIC(fit)
+//
+// R's AIC for a gaussian glm is −2·logLik + 2·(rank + 1), the same d = 1
+// convention this project uses, so the aic below is R's number directly.
+// The deviation of 2 recorded at the fixture header is against
+// statsmodels' .aic, not against R's AIC.
+//
+// FOR THE RECORD, measured by suppressing the term and refitting this
+// same data: loglik −3.47270392197173408e+01 and aic
+// 7.74540784394346815e+01. That is Σ ln(w)/2 = 5.83472416447127173 lower
+// on the loglik and Σ ln(w) higher on the aic, which is the whole error.
+static const double kRWgBeta[3] = {1.16926234165278515e+01, 1.96279043475914361e+00,
+                                   -1.00771938143776585e+00};
+static const double kRWgStdError[3] = {2.31498611912133123e+00, 1.21091449186467831e-01,
+                                       3.22633123616013207e-01};
+static const double kRWgDeviance = 2.29262916812073911e+02;
+static const double kRWgNullDeviance = 7.59658974358974319e+03;
+static const double kRWgDispersion = 2.54736574235637683e+01;
+static const double kRWgLoglik = -2.88923150552460584e+01;
+static const double kRWgAic = 6.57846301104921167e+01;
+
+static void test_weighted_gaussian_loglik_against_r() {
+	std::printf("R 4.6.1 goldens: a WEIGHTED gaussian fit's loglik and aic\n");
+
+	std::vector<double> w(kDs5N);
+	for (std::size_t i = 0; i < kDs5N; i++) {
+		w[i] = 0.5 * static_cast<double>(i + 1); // 0.5, 1.0, ... 6.0
+	}
+	statsduck::GlmOptions go;
+	go.family = statsduck::Family::kGaussian;
+	go.link = statsduck::canonical_link(go.family);
+	const statsduck::GlmResult g = statsduck::fit_glm(ds5_y, ds5_design(), go, &w);
+	check(g.ok && g.converged, "the weighted gaussian fit converges");
+	check(g.rank == 3 && g.df_residual == 9, "rank 3 on 12 rows, as R reports");
+
+	// The band is 1e-12 on every quantity. A gaussian identity fit is one
+	// weighted solve in both this kernel and R, so there is no iteration
+	// difference to absorb: MEASURED worsts are 1.74e-15 on the fit and
+	// 4.32e-16 on the loglik and aic. The band is 1e-12 rather than
+	// tighter so that a future change in accumulation order is a
+	// reviewable difference rather than a failure here, which is the same
+	// reason test_gaussian_equals_lm_fit gives for its own 1e-12. Both
+	// numbers reprint on every run.
+	double worst_fit = 0.0, worst_ll = 0.0;
+	for (std::size_t j = 0; j < 3; j++) {
+		worst_fit = std::max(worst_fit, rel_dev(at(g.beta, j), kRWgBeta[j]));
+		worst_fit = std::max(worst_fit, rel_dev(at(g.std_error, j), kRWgStdError[j]));
+		check(close_rel(at(g.beta, j), kRWgBeta[j], 1e-12), "the coefficient matches R");
+		check(close_rel(at(g.std_error, j), kRWgStdError[j], 1e-12),
+		      "and so does the standard error");
+	}
+	worst_fit = std::max(worst_fit, rel_dev(g.deviance, kRWgDeviance));
+	worst_fit = std::max(worst_fit, rel_dev(g.null_deviance, kRWgNullDeviance));
+	worst_fit = std::max(worst_fit, rel_dev(g.dispersion, kRWgDispersion));
+	check(close_rel(g.deviance, kRWgDeviance, 1e-12), "the deviance matches R");
+	check(close_rel(g.null_deviance, kRWgNullDeviance, 1e-12), "and the null deviance");
+	check(close_rel(g.dispersion, kRWgDispersion, 1e-12), "and the dispersion");
+
+	// The two this test exists for.
+	worst_ll = std::max(rel_dev(g.loglik, kRWgLoglik), rel_dev(g.aic, kRWgAic));
+	check(close_rel(g.loglik, kRWgLoglik, 1e-12), "the WEIGHTED loglik matches R's logLik");
+	check(close_rel(g.aic, kRWgAic, 1e-12), "and the aic matches R's AIC");
+	std::printf("  R_MEASURED worst: fit %.3g  loglik and aic %.3g\n", worst_fit, worst_ll);
+}
+
+// ── Gamma's canonical inverse link, and poisson with a sqrt link ────────
+//
+// THE GAP THIS CLOSES. Five of the seven links were FITTED in this suite:
+// identity, log, logit, probit and cloglog. Inverse and sqrt were not.
+// Inverse is gamma's canonical link, so `glm_fit(y, x, 'gamma')` with no
+// options ran a path no test reached past test_glm_core's scalar round
+// trips, and the SQL test's only gamma/inverse assertion was that the
+// echoed link name reads `inverse`. Both are pinned here.
+//
+// The link is taken from canonical_link rather than written out, so this
+// also covers the dispatch the SQL layer uses when no link is given.
+//
+// Exact program, reproducible. ds4_y, ds4_x1, ds3_y and ds3_x1 are the
+// fixture header's own kDs4Y, kDs4X1, kDs3Y and kDs3X1. DS3's offset is
+// left out: it is log(exposure), which belongs to a log link, not a sqrt
+// one.
+//
+//   gi <- glm(ds4_y ~ ds4_x1, family = Gamma(link = "inverse"))
+//   coef(gi); sqrt(diag(vcov(gi))); gi$deviance; summary(gi)$dispersion
+//   ps <- glm(ds3_y ~ ds3_x1, family = poisson(link = "sqrt"))
+//   coef(ps); sqrt(diag(vcov(ps))); ps$deviance
+//
+// R converges in 5 iterations on the gamma fit and 4 on the poisson one,
+// and reports converged = TRUE for both.
+static const double kRGiBeta[2] = {7.47491429760872572e-01, -2.15607528609750299e-01};
+static const double kRGiStdError[2] = {1.28482737851597334e-01, 8.89993177989926582e-02};
+static const double kRGiDeviance = 2.45752408342686168e+00;
+static const double kRGiDispersion = 1.75336550725355450e-01;
+static const double kRPsBeta[2] = {4.60327965048774068e+00, 1.36695326105509052e+00};
+static const double kRPsStdError[2] = {2.45798020062543698e-01, 1.49403576166799196e-01};
+static const double kRPsDeviance = 1.42809802502182748e+02;
+
+static void test_canonical_gamma_and_sqrt_links_against_r() {
+	std::printf("R 4.6.1 goldens: gamma/inverse (canonical) and poisson/sqrt\n");
+
+	statsduck::GlmOptions gi;
+	gi.family = statsduck::Family::kGamma;
+	gi.link = statsduck::canonical_link(gi.family);
+	check(gi.link == statsduck::Link::kInverse, "gamma's canonical link is inverse");
+	const statsduck::GlmResult g = statsduck::fit_glm(ds4_y, ds4_design(), gi);
+	check(g.ok && g.converged, "the gamma/inverse fit converges");
+
+	// The bands are the TOL_COEF family above, reused because both gaps
+	// have the cause that block describes: a non-linear fit stops a step
+	// short of the MLE, and this kernel and R stop at different points.
+	// MEASURED worsts, reprinted on every run: gamma/inverse 1.47e-07,
+	// which is the same order as DS4's 2.56e-07 against statsmodels on
+	// the log link, and poisson/sqrt 5.79e-16.
+	double worst_g = 0.0;
+	for (std::size_t j = 0; j < kDs4K; j++) {
+		worst_g = std::max(worst_g, rel_dev(at(g.beta, j), kRGiBeta[j]));
+		worst_g = std::max(worst_g, rel_dev(at(g.std_error, j), kRGiStdError[j]));
+		check(close_rel(at(g.beta, j), kRGiBeta[j], TOL_COEF), "the gamma coefficient matches R");
+		check(close_rel(at(g.std_error, j), kRGiStdError[j], TOL_COEF),
+		      "and so does its standard error");
+	}
+	check(close_rel(g.deviance, kRGiDeviance, TOL_DEV), "the gamma/inverse deviance matches R");
+	check(close_rel(g.dispersion, kRGiDispersion, TOL_SCALE), "and its dispersion");
+
+	statsduck::GlmOptions ps;
+	ps.family = statsduck::Family::kPoisson;
+	ps.link = statsduck::Link::kSqrt;
+	const statsduck::GlmResult p = statsduck::fit_glm(ds3_y, ds3_design(), ps);
+	check(p.ok && p.converged, "the poisson/sqrt fit converges");
+	double worst_p = 0.0;
+	for (std::size_t j = 0; j < kDs3K; j++) {
+		worst_p = std::max(worst_p, rel_dev(at(p.beta, j), kRPsBeta[j]));
+		worst_p = std::max(worst_p, rel_dev(at(p.std_error, j), kRPsStdError[j]));
+		check(close_rel(at(p.beta, j), kRPsBeta[j], TOL_COEF), "the poisson coefficient matches R");
+		check(close_rel(at(p.std_error, j), kRPsStdError[j], TOL_COEF),
+		      "and so does its standard error");
+	}
+	check(close_rel(p.deviance, kRPsDeviance, TOL_DEV), "the poisson/sqrt deviance matches R");
+	std::printf("  R_MEASURED worst: gamma/inverse %.3g  poisson/sqrt %.3g\n", worst_g, worst_p);
 }
 
 // ── The hat diagonal uses the WORKING weight, not the prior weight ──────
@@ -2003,6 +2192,8 @@ int main() {
 	test_oracles();
 	test_robust_oracles();
 	test_binomial_hc_against_r();
+	test_weighted_gaussian_loglik_against_r();
+	test_canonical_gamma_and_sqrt_links_against_r();
 	test_weighted_hat_diagonal();
 	test_finite_sample_factors_use_rank();
 	test_weighted_sandwich();
