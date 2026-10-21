@@ -1430,6 +1430,93 @@ static void test_no_residual_df() {
 	check(!b1.ok, "the n <= rank rule applies to binomial too");
 }
 
+// ── A response with no variation (Review Focus item 4) ───────────────────
+static void test_no_variation_response() {
+	std::printf("a response with no variation in y\n");
+
+	// Every row says the same thing. For binomial that is separation with
+	// no information at all: there is not even a threshold to find, only
+	// a constant answer. For poisson, an all-zero count drives mu toward
+	// 0 and the log link toward minus infinity. Either outcome is
+	// acceptable: a failed fit, or a finite result with converged and
+	// separation set honestly. Neither outcome allows a NaN in a field
+	// that reads as an estimate.
+	statsduck::GlmOptions sg;
+	sg.family = statsduck::Family::kBinomial;
+	sg.link = statsduck::Link::kLogit;
+	statsduck::GlmOptions pg;
+	pg.family = statsduck::Family::kPoisson;
+	pg.link = statsduck::Link::kLog;
+
+	const std::vector<double> all_zero(ds1_y.size(), 0.0);
+	const statsduck::GlmResult bz = statsduck::fit_glm(all_zero, ds1_design(), sg);
+	if (bz.ok) {
+		for (std::size_t j = 0; j < bz.k; j++) {
+			const double b = at(bz.beta, j);
+			check(!std::isnan(b), "an all-zero binomial response gives no NaN coefficient");
+		}
+		check(std::isfinite(bz.deviance), "and a finite deviance");
+		check(!bz.converged || bz.separation || std::isfinite(at(bz.std_error, 0)),
+		      "either it did not converge, or it is flagged, or the errors are finite");
+	}
+	// MEASURED: ok, and converged at iteration 23, inside the 25-iteration
+	// cap. beta is about (-24.57, 3e-14, 4e-14). The deviance is about
+	// 8.00e-09. The loop's own stopping rule calls this converged. The
+	// relative deviance change drops under tol. Beta is still large at
+	// that point, but finite. The three-condition heuristic needs a
+	// non-converged fit. This fit does not meet that condition. The flag
+	// does not fire. Yet an all-zero response carries no more information
+	// than DS6's separating one. What marks the fit instead is the
+	// standard error: about 40311 on the intercept, against a coefficient
+	// of -24.57. That is four orders of magnitude apart. This is a real
+	// limitation of the heuristic, not a defect in this test. The same
+	// limitation is written down beside the flag, in GlmResult::separation.
+
+	const std::vector<double> all_one(ds1_y.size(), 1.0);
+	const statsduck::GlmResult bo = statsduck::fit_glm(all_one, ds1_design(), sg);
+	check(bo.ok || !bo.error.empty(), "an all-one binomial response either fits or says why");
+	// MEASURED: the mirror image of all_zero. It converges at iteration
+	// 23. beta is about (24.57, 7e-15, 9e-14). The deviance and the
+	// standard errors are the same as all_zero's.
+	std::printf("  all-zero/all-one binomial: converged at %d it, beta0 %.6g / %.6g, se0 %.6g\n",
+	            bz.iterations, at(bz.beta, 0), at(bo.beta, 0), at(bz.std_error, 0));
+
+	// All-zero poisson counts. mu -> 0 and eta -> -inf under a log link.
+	const statsduck::GlmResult pz = statsduck::fit_glm(all_zero, ds1_design(), pg);
+	if (pz.ok) {
+		check(std::isfinite(pz.deviance), "an all-zero poisson deviance is finite");
+		check(!std::isnan(at(pz.beta, 0)), "and the intercept is not NaN");
+	}
+	// MEASURED: ok, and converged at iteration 22. beta is about (-24.62,
+	// -4e-13, -3e-13). The deviance is about 8.00e-09. The intercept's
+	// standard error is about 198777. separation stays false here no
+	// matter what. The family is poisson, not binomial, so the flag
+	// cannot apply.
+	std::printf("  all-zero poisson: converged at %d it, beta0 %.6g, se0 %.6g\n", pz.iterations,
+	            at(pz.beta, 0), at(pz.std_error, 0));
+
+	// A constant gaussian response is a legitimate fit with zero deviance.
+	const std::vector<double> all_five(ds5_y.size(), 5.0);
+	statsduck::GlmOptions gg;
+	gg.family = statsduck::Family::kGaussian;
+	const statsduck::GlmResult gc = statsduck::fit_glm(all_five, ds5_design(), gg);
+	check(gc.ok, "a constant gaussian response fits");
+	// The band is absolute, not close_rel's relative one. close_rel's
+	// ratio against a target of exactly 0.0 is diff / diff. That ratio is
+	// 1.0 for any nonzero value. So close_rel only ever passes here on
+	// bit-exact equality. The true residual is a rounding artifact, not
+	// an exact zero. beta recovers the intercept to within about 1.4e-15
+	// relative of 5. That leaves a per-row residual near 5e-15. Squared
+	// and summed over the rows, the deviance lands near 1e-28. Measured
+	// 8.44e-29. 1e-20 is nine orders of magnitude looser. It is still far
+	// below anything a real fitting defect would leave.
+	check(std::fabs(gc.deviance) <= 1e-20, "with a deviance at rounding level, not an estimate");
+	check(close_rel(at(gc.beta, 0), 5.0, 1e-10), "an intercept of 5");
+	check(!gc.separation, "and no separation claim");
+	std::printf("  constant-5 gaussian: converged at %d it, deviance %.3g, beta0 %.17g\n",
+	            gc.iterations, gc.deviance, at(gc.beta, 0));
+}
+
 // ── The fitted mean never leaves the family's support ────────────────────
 
 // Smallest and largest fitted mean, recomputed from the reported
@@ -1927,6 +2014,7 @@ int main() {
 	test_probit_and_cloglog();
 	test_separation();
 	test_no_residual_df();
+	test_no_variation_response();
 	test_zero_weight_rows_do_not_set_the_rank();
 	test_zero_column_design();
 
