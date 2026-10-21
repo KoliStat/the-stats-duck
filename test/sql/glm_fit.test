@@ -5,9 +5,17 @@
 require stats_duck
 
 # Golden values match test/cpp/glm_fit_fixtures.hpp (statsmodels 0.15.0
-# oracle). Floats are compared through printf('%.4f', …) so the text is
-# deterministic. That text also absorbs the one-ulp gap between a decimal
-# literal in a VALUES list and the oracle's own double.
+# oracle), with three exceptions. Floats are compared through
+# printf('%.4f', …) so the text is deterministic. That text also absorbs the
+# one-ulp gap between a decimal literal in a VALUES list and the oracle's own
+# double.
+#
+# The three exceptions are marked SELF-PIN where they appear: the DS1 probit
+# estimate and standard error, and the DS1 HC1 standard error.
+# glm_fit_fixtures.hpp carries no probit entry and no HC entry, so those
+# numbers come from this implementation. Each site says what makes it
+# defensible anyway. A change there is a change in this fitter, not a new
+# disagreement with statsmodels.
 #
 # A difference asserted to be zero is wrapped in abs(). printf renders a
 # negative value that rounds to zero as '-0.000000', and the sign of a
@@ -180,7 +188,14 @@ FROM (SELECT glm_fit(y, [x1, x2], 'binomial') AS m FROM ds1)
 9	true	0.0569	0.0569	true
 
 # A probit link is requested by name and echoed canonically. The probit scale
-# compresses a logit coefficient by roughly 1.6, so the estimates must move.
+# compresses a logit coefficient by roughly 1.6, so the estimates must move:
+# 0.3218 / 0.1994 = 1.61.
+#
+# SELF-PIN. There is no probit fixture. These two numbers are not arbitrary:
+# 0.1994 satisfies the probit score equations to 4.2e-07 when those are
+# evaluated from the extension's own pnorm and dnorm rather than through
+# glm_core, and test_glm_fit.cpp checks the probit path against a Nelder-Mead
+# search of the deviance.
 query TTTT
 SELECT m.link, m.converged,
        printf('%.4f', (m.coefficients[2]).estimate),
@@ -225,16 +240,44 @@ FROM (SELECT glm_fit(y, [x1], 'gaussian', o) AS m FROM ds_opts)
 4	2.0000
 
 # A robust vcov changes the standard errors and leaves the estimates alone.
-query TTTTT
+#
+# SELF-PIN on the HC0 and HC1 numbers: there is no HC fixture for DS1. The
+# last column removes the need for one. HC1 is HC0 scaled by n / (n - rank),
+# so the ratio of the two standard errors is sqrt(40 / 37) exactly, and the
+# query asserts that rather than asserting it in prose.
+query TTTTTTT
 SELECT printf('%.10f', abs((a).coefficients[2].estimate - (b).coefficients[2].estimate)),
        printf('%.4f', (a).coefficients[2].std_error),
+       printf('%.4f', (c).coefficients[2].std_error),
        printf('%.4f', (b).coefficients[2].std_error),
-       (b).vcov_type, (b).n_clusters IS NULL
+       (b).vcov_type, (b).n_clusters IS NULL,
+       printf('%.12f', abs((b).coefficients[2].std_error / (c).coefficients[2].std_error
+                           - sqrt(40.0 / 37.0)))
 FROM (SELECT glm_fit(y, [x1, x2], 'binomial') AS a,
-             glm_fit(y, [x1, x2], 'binomial', {'vcov': 'HC1'}) AS b
+             glm_fit(y, [x1, x2], 'binomial', {'vcov': 'HC1'}) AS b,
+             glm_fit(y, [x1, x2], 'binomial', {'vcov': 'HC0'}) AS c
       FROM ds1)
 ----
-0.0000000000	0.2385	0.2467	HC1	true
+0.0000000000	0.2385	0.2372	0.2467	HC1	true	0.000000000000
+
+# ── Two per-row options at once, in both orders ─────────────────────────────
+# The runtime options struct is built by a by-name struct cast, so a swapped
+# pair has to land in the right children. Every other case in this file
+# carries at most one per-row field, where the caller's order and this file's
+# order agree and a swap would be invisible. Here `weights` and `offset` carry
+# different columns, so the two orders agreeing means something: genuinely
+# exchanging their roles, as the third fit does, gives 2.0274.
+query TTTT
+SELECT printf('%.12f', abs((a).coefficients[2].estimate - (b).coefficients[2].estimate)),
+       printf('%.4f', (a).coefficients[2].estimate),
+       printf('%.4f', (b).coefficients[2].estimate),
+       printf('%.4f', (c).coefficients[2].estimate)
+FROM (SELECT glm_fit(y, [x1], 'gaussian', {'weights': x2, 'offset': x1 * 0.5})  AS a,
+             glm_fit(y, [x1], 'gaussian', {'offset': x1 * 0.5, 'weights': x2})  AS b,
+             glm_fit(y, [x1], 'gaussian', {'weights': x1 * 0.5, 'offset': x2})  AS c
+      FROM ds5)
+----
+0.000000000000	1.6231	1.6231	2.0274
 
 # ── DS2: the same data grouped, with `weights` as the trial count ────────────
 # The binomial response is a PROPORTION and `weights` is the number of trials,
@@ -451,6 +494,20 @@ statement error
 SELECT glm_fit(y, [x1], 'binomial', {'intercept': x1 > 3}) FROM ds1
 ----
 'intercept' must be a constant value
+
+# A constant of the wrong type is misuse too, and it has to raise a
+# BinderException naming this function and this option. Writing 'false' for a
+# boolean is an ordinary mistake; without the check it escaped as DuckDB's own
+# "Could not convert string 'false' to INT8", which names neither.
+statement error
+SELECT glm_fit(y, [x1], 'binomial', {'intercept': 'false'}) FROM ds1
+----
+glm_fit: 'intercept' must be a BOOLEAN constant, true or false, not VARCHAR
+
+statement error
+SELECT glm_fit(y, [x1], 'binomial', {'intercept': 1}) FROM ds1
+----
+glm_fit: 'intercept' must be a BOOLEAN constant, true or false, not INTEGER
 
 statement error
 SELECT glm_fit(y, [x1], 'poisson', {'vcov': 'CR1'}) FROM ds8

@@ -140,8 +140,8 @@ struct GlmFitBindData : public FunctionData {
 	}
 
 	// Copied by assignment rather than field by field as lm_fit's is. There
-	// are nine fields here against lm_fit's three, and assignment cannot
-	// forget one.
+	// are ten fields to carry here — six in GlmOptions and four of this
+	// struct's own — against lm_fit's three, and assignment cannot forget one.
 	unique_ptr<FunctionData> Copy() const override {
 		auto c = make_uniq<GlmFitBindData>();
 		*c = *this;
@@ -288,6 +288,10 @@ static bool ReadOptions(ClientContext &context, AggregateFunction &function,
 			throw BinderException("glm_fit: unknown option '%s' — valid options are %s", name,
 			                      OptionNameList());
 		}
+		// Defensive only. struct_pack's own collision set is case-insensitive,
+		// so DuckDB rejects {'link': 'logit', 'LINK': 'probit'} with
+		// "Duplicate struct entry name" before this bind runs. Nothing known
+		// reaches this branch.
 		if (seen[match]) {
 			throw BinderException("glm_fit: option '%s' was given twice", kOptionNames[match].name);
 		}
@@ -313,9 +317,22 @@ static bool ReadOptions(ClientContext &context, AggregateFunction &function,
 			}
 			break;
 		}
-		case OptField::kIntercept:
-			bd.opts.intercept = const_value(f, "intercept").GetValue<bool>();
+		case OptField::kIntercept: {
+			// The type is checked before the read. GetValue<bool>() on
+			// anything else escapes as DuckDB's own cast error, which named
+			// neither this function nor this option: {'intercept': 'false'}
+			// gave "Could not convert string 'false' to INT8", INT8 being
+			// DuckDB's storage name for bool. Writing 'false' for a boolean is
+			// an ordinary mistake, and misuse has to raise a BinderException.
+			const Value v = const_value(f, "intercept");
+			if (v.type().id() != LogicalTypeId::BOOLEAN) {
+				throw BinderException("glm_fit: 'intercept' must be a BOOLEAN constant, "
+				                      "true or false, not %s",
+				                      v.type().ToString());
+			}
+			bd.opts.intercept = BooleanValue::Get(v);
 			break;
+		}
 		case OptField::kWeights:
 			want_weights = true;
 			break;
@@ -449,6 +466,15 @@ static void GlmFitUpdate(Vector inputs[], AggregateInputData &aggr_input, idx_t,
 	// The per-row options, read out of the options struct by the child index
 	// the bind recorded. The struct's own validity is read too: a NULL struct
 	// supplies no value for any field it carries.
+	//
+	// Each child index is composed through the struct's own selection vector,
+	// child_sel[parent_sel[i]], which is the idiom Vector::RecursiveToUnified-
+	// Format uses. That is correct for a flat struct, a constant struct, and a
+	// dictionary over a flat struct, because StructVector::GetEntries recurses
+	// through a dictionary to its child. The one shape it would read out of
+	// order is a dictionary whose struct child is itself not flat, so the two
+	// selections would need a third composition. No query is known to produce
+	// that shape, and lm_fit reads its list child the same way.
 	UnifiedVectorFormat opt_fmt, w_fmt, off_fmt, cl_fmt;
 	const double *w_vals = nullptr;
 	const double *off_vals = nullptr;
