@@ -274,9 +274,47 @@ Convergence is R's criterion, `|dev − dev_prev| / (|dev| + 0.1) < tol`, with
 `tol` 1e-8 and at most 25 iterations. When a step produces a non-finite
 deviance, a fitted value outside the family's support, or an increased
 deviance, the step is halved, at most **25 times per iteration**, matching
-R's inner loop. Exhausting the halvings stops the fit with
-`converged = false` and the best iterate so far. Step halving is what keeps
-a probit or cloglog fit from diverging on its first step.
+R's inner loop. Step halving is what keeps a cloglog fit from diverging.
+The first version of this spec said "a probit or cloglog fit"; a probit fit
+was then measured never to halve at all, 0 times over 40,000 random fits, so
+the claim holds for cloglog only.
+
+**Halving starts at the second pass, not the first.** This paragraph said
+otherwise in the first version of this spec, and that was wrong. The
+starting `mu` is essentially the saturated model for Poisson and gamma, so
+its deviance is at or near zero — measured at exactly 0 for gamma and
+Gaussian on this issue's own fixtures — and **every** first step therefore
+increases the deviance. Halving on an increase at pass 1 is worse than a
+stall: `beta` starts as the zero vector, so halving averages toward zeros
+rather than back toward the starting `mu`, which is a different model and
+not a shorter step. Running the rule as first written collapsed every
+fixture to all-zero coefficients while still reporting `ok = true`,
+including the Gaussian identity fit, which is a one-step exact solve. R
+reaches the same place from the same structure: its `coefold` is NULL on
+the first iteration, which is why it stops there rather than halving.
+
+**The support check is a halving trigger, not something the clamp
+provides.** `link_inv` clamps the probability links and the strictly
+positive ones, but the identity link is deliberately unclamped, and the
+identity link is allowed for Poisson while the log link is allowed for
+binomial. Without an explicit per-family validity test on `mu`, a Poisson
+identity fit can report `converged = true` with a negative fitted mean and
+a binomial log fit with a probability above 1, because the deviance's
+`y·ln(y/mu)` term is skipped at `y = 0` and so returns a finite number
+instead of NaN. A negative `variance(mu)` then makes a working weight
+negative, which reaches the normal matrix and turns the solve into a
+minimum-norm solution of an indefinite system. The validity test and a
+negative-weight screen are both required.
+
+**Exhausting the halvings does not by itself mean the fit failed.** When
+the halved step's relative deviance change is below `tol`, the fit has
+converged and reports `converged = true`. The IRLS direction is a strict
+descent direction for the deviance while `XᵀWX` is positive definite, so a
+step that 25 halvings cannot improve is one whose score is at rounding
+level. Measured over 180,000 random fits across nine family and link pairs,
+that branch reported convergence 14 times and a pattern search from each
+reported `beta` could not improve any of them. Otherwise the fit stops with
+`converged = false` and the best iterate so far.
 
 `iterations` counts outer IRLS iterations, not halvings. A fit that
 converges on its third pass reports 3 whether or not steps were halved
