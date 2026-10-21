@@ -575,7 +575,7 @@ FROM (SELECT unnest((glm_fit(y, [x1], 'gamma', {'link': 'log'})).coefficients) A
 | ---------------------------- | --------------- | ----- |
 | `coefficients`               | `LIST<STRUCT>`  | one element per term: `term`, `estimate`, `std_error`, `z_statistic`, `p_value` |
 | `n`, `k`, `df_residual`      | `BIGINT`        | rows used, design columns (intercept included), `n − rank` |
-| `deviance`, `null_deviance`  | `DOUBLE`        | the fitted model's deviance, and the intercept-only model's |
+| `deviance`, `null_deviance`  | `DOUBLE`        | the fitted model's deviance, and the intercept-only model's. `null_deviance` is NULL when the intercept-only fit fails on its own, which a successful main fit does not rule out |
 | `dispersion`                 | `DOUBLE`        | fixed at 1 for binomial and poisson; the Pearson estimate for gaussian and gamma |
 | `loglik`, `aic`              | `DOUBLE`        | |
 | `iterations`                 | `BIGINT`        | outer IRLS passes used; never the step-halvings inside one pass |
@@ -603,6 +603,12 @@ A few things worth stating plainly:
 - **`deviance` and `null_deviance` stand in for `r_squared` and
   `f_statistic`.** Neither of those generalizes past OLS. A reader who
   wants a pseudo-R² can compute `1 - deviance / null_deviance` directly.
+  Guard that expression against a NULL `null_deviance`: it is computed by
+  actually fitting the intercept-only model, that fit can fail on its own,
+  and the main fit still succeeds and reports everything else. The #22
+  whole-branch review measured the frequency over random designs: 0 of
+  79,965 canonical-link fits with unit weights and no offset, and 868 of
+  63,121 fits with a random offset — 1.4%, mostly gamma with `inverse`.
 
 **The separation flag has a blind spot in both directions.** `separation`
 is computed only for binomial fits — always `false` for the other three

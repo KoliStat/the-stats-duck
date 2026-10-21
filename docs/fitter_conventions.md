@@ -191,6 +191,20 @@ Fields 0–14 are shipped; 12–14 landed with lm_fit Increment A (#34, #35).
   its bands in one place (1e-6 for coefficients, standard errors, σ and
   R²; 1e-3 for the F statistic; 1e-2 relative for p-values) but does not
   yet say why the F and p bands are looser. New fitters must say why.
+- **A claim about evidence names its evidence.** Any sentence of the form
+  "matches the oracle", "documented elsewhere", "validated against X", or
+  "with N exceptions" must name the file and symbol a reader can check, and
+  must name each exception at its own site as well as in the count. A claim
+  that was not actually run is not written down.
+- **Where a count and a list disagree, the list wins — so do not write the
+  count.** "The exceptions are A, B and C, each marked at its own site" is
+  checkable and cannot fall out of date on its own. "With three exceptions"
+  above a list of four is a defect that exists only because the count was
+  written. The `test/sql/glm_fit.test` header had it twice over: first a
+  list of three where the file held four, then, after commit `22ea3b2`
+  corrected the list and the count beside it, a second count two lines
+  above that still read three. The header now carries the list and no
+  count at all.
 - **Two test layers, both required.** Standalone C++ goldens
   (`scripts/run-cpp-tests.sh`, no DuckDB) cover the kernel and core math.
   sqllogictest files (`test/sql/*.test`) cover the SQL surface, with float

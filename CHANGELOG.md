@@ -45,13 +45,18 @@ that name is preserved across releases for backward compatibility.
   the same) can still report `separation = false`. Validated against
   statsmodels' `sm.GLM` for one fit per family — binomial/`logit`,
   poisson/`log`, gamma/`log`, and gaussian/`identity`. The
-  heteroskedasticity-consistent standard errors have no statsmodels GLM
-  fixture either, so those are validated against R 4.6.1 instead. The
-  other links, including gamma's own canonical `inverse`, are checked
-  through link round-trip identities and, for `probit` and `cloglog`, an
-  independent Nelder-Mead minimization of the deviance. Gaussian with an
-  identity link is additionally checked against `lm_fit` itself —
-  coefficients and the full covariance, for every estimator. The API
+  heteroskedasticity-consistent standard errors are validated against
+  R 4.6.1, because statsmodels 0.15.0 cannot produce a GLM's `HC2` or
+  `HC3` at all: it defines `cov_HC0`–`cov_HC3` only for OLS, so a GLM
+  returns HC0's numbers under all four names
+  (`notes/engineering/2026-10-statsmodels-hc-for-a-glm.md`). Gamma with its
+  canonical `inverse` link, poisson with `sqrt`, and a weighted gaussian
+  fit's `loglik` and `aic` are validated against R 4.6.1 as well. `probit`
+  and `cloglog` are checked against an independent Nelder-Mead
+  minimization of the deviance, and every link additionally through its
+  round-trip identity. Gaussian with an identity link is additionally
+  checked against `lm_fit` itself: coefficients and the full covariance
+  under every estimator, and the log-likelihood to the last bit. The API
   boundary is the DuckDB-free header
   `src/include/glm_core.hpp`, with implementation split across
   `src/glm_core.cpp` (families, links, closed-form statistics) and

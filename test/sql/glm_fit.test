@@ -5,17 +5,21 @@
 require stats_duck
 
 # Golden values match test/cpp/glm_fit_fixtures.hpp (statsmodels 0.15.0
-# oracle), with three exceptions. Floats are compared through
+# oracle), except where a site is marked SELF-PIN. Floats are compared through
 # printf('%.4f', …) so the text is deterministic. That text also absorbs the
 # one-ulp gap between a decimal literal in a VALUES list and the oracle's own
 # double.
 #
-# The four exceptions are marked SELF-PIN where they appear: the DS1 probit
-# estimate and standard error, and the DS1 HC0 and HC1 standard errors.
+# The SELF-PIN sites are the DS1 probit estimate and standard error, and the
+# DS1 HC0 and HC1 standard errors.
 # glm_fit_fixtures.hpp carries no probit entry and no HC entry, so those
 # numbers come from this implementation. Each site says what makes it
 # defensible anyway. A change there is a change in this fitter, not a new
-# disagreement with statsmodels.
+# disagreement with statsmodels. The HC gap is not a generator gap that
+# somebody could close: statsmodels 0.15.0 cannot produce a GLM's HC2 or
+# HC3 at all, and returns HC0's numbers under all four names. See
+# notes/engineering/2026-10-statsmodels-hc-for-a-glm.md. R 4.6.1 is the
+# oracle for those, in test/cpp/test_glm_fit.cpp.
 #
 # A difference asserted to be zero is wrapped in abs(). printf renders a
 # negative value that rounds to zero as '-0.000000', and the sign of a
@@ -752,20 +756,26 @@ CREATE TABLE ds_bin AS SELECT * FROM (VALUES
 
 # A Type III test of one term on a logistic fit. lin_hyp needs no change to
 # serve a GLM: it takes the coefficients and the covariance, whatever produced
-# them. sigma2 is 1 because glm_fit's cov is already on the right scale, and
-# df_residual is the denominator df.
+# them. `sigma2` takes the fit's own dispersion, not a constant: `g.dispersion`
+# is 1.0 here because binomial's dispersion is fixed at 1. For a gaussian or
+# gamma fit, where dispersion is the Pearson estimate, a literal 1.0 would be
+# silently wrong. `df_residual` is the denominator df. This is the same worked
+# example the README carries, written the same way on purpose.
 query II
 SELECT (h).df_num, printf('%.4f', (h).chisq)
 FROM (SELECT lin_hyp([[0, 1]],
                      list_transform(g.coefficients, c -> c.estimate),
-                     g.cov, 1.0, g.df_residual) AS h
+                     g.cov, g.dispersion, g.df_residual) AS h
       FROM (SELECT glm_fit(y, [x1], 'binomial') AS g FROM ds_bin));
 ----
 1	2.5741
 
 # The joint Wald statistic from lin_hyp over every slope must equal the
 # statistic from glm_fit's own coefficients, which is the same arithmetic
-# reached by two routes.
+# reached by two routes. The 1.0 and 1.0 below are NOT the example to copy:
+# the asserted `chisq` reads neither `sigma2` nor `df` (src/lin_hyp.cpp sets
+# chisq = w, while ss = w·sigma2 and the p-values take df), so both
+# arguments are placeholders here. The query above it is the worked example.
 query I
 SELECT printf('%.8f', abs((h).chisq - pow((g).coefficients[2].estimate / (g).coefficients[2].std_error, 2)))
 FROM (SELECT glm_fit(y, [x1], 'binomial') AS g,
