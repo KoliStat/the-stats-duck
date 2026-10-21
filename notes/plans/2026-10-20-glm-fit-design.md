@@ -30,7 +30,7 @@ flag for binomial fits.
 | Family | Canonical link | Also supported | Dispersion |
 | --- | --- | --- | --- |
 | `gaussian` | `identity` | `log`, `inverse` | estimated |
-| `binomial` | `logit` | `probit`, `cloglog` | fixed at 1 |
+| `binomial` | `logit` | `probit`, `cloglog`, `log` | fixed at 1 |
 | `poisson` | `log` | `identity`, `sqrt` | fixed at 1 |
 | `gamma` | `inverse` | `log`, `identity` | estimated |
 
@@ -124,6 +124,22 @@ of the design row, the weight, the offset or the cluster key is NULL, NaN or
 infinite. A design row whose length differs from the first one seen fails
 the whole group. A group with too few surviving rows is a failed fit, which
 is a NULL result and not an error.
+
+**Which layer owns which rule, stated because an earlier version of this
+spec left it ambiguous.** The listwise drop is the SQL aggregate's rule, and
+it is the only layer that can drop a row: it sees the whole group before it
+fits. The kernel has no drop policy, because `fit_glm` receives vectors a
+caller has already assembled and cannot silently shorten them. So a
+non-finite weight or offset is **dropped** when it arrives through
+`glm_fit`, and **refused** when it arrives through `fit_glm` — the same
+input, two different outcomes, by design rather than by oversight. The
+Domain violations list below is the kernel's, so it is what a direct caller
+meets. A SQL caller never meets the weight and offset entries there, because
+those rows are gone before the kernel runs.
+
+A row whose prior weight is exactly 0 is dropped too, by the same layer and
+for a different reason: it influences no estimate, so counting it would
+inflate `df_residual` and deflate the dispersion.
 
 ### The result STRUCT
 
