@@ -406,7 +406,7 @@ static void test_identities() {
 	      "and scales the deviance by the same factor");
 
 	// A rank-deficient design: the later column of a dependent set is
-	// aliased. DS7 is a poisson fixture, so it is fitted as one — a
+	// aliased. DS7 is a poisson fixture, so it is fitted as one. A
 	// binomial fit of counts above 1 is a domain failure, not a fit.
 	statsduck::GlmOptions pg;
 	pg.family = statsduck::Family::kPoisson;
@@ -462,12 +462,47 @@ static void test_no_residual_df() {
 	check(!b1.ok, "the n <= rank rule applies to binomial too");
 }
 
+// ── A design with no columns at all ──────────────────────────────────────
+static void test_zero_column_design() {
+	std::printf("a zero-column design is a fit, with or without an intercept\n");
+
+	// A zero-column design is a legitimate input, not misuse. With an
+	// intercept the prepended constant is the only column, which is how
+	// null_deviance is computed, and the identity test above covers that
+	// case. Without an intercept there are no parameters at all, so mu is
+	// the link inverse of the offset alone and there is nothing to
+	// iterate.
+	statsduck::GlmOptions po;
+	po.family = statsduck::Family::kPoisson;
+	po.link = statsduck::Link::kLog;
+	po.intercept = false;
+	const std::vector<double> off(kDs3N, 1.0);
+	const statsduck::GlmResult g =
+	    statsduck::fit_glm(ds3_y, Mat(kDs3N, 0), po, nullptr, &off);
+	check(g.ok, "an offset-only fit succeeds");
+	check(g.k == 0 && g.rank == 0, "with no parameters");
+	check(g.df_residual == kDs3N, "so every row is a residual degree of freedom");
+	check(g.iterations == 0 && g.converged, "and nothing to iterate");
+	check(g.terms.empty() && g.beta.empty() && g.cov.empty(), "no terms and no covariance");
+
+	// mu is exactly link_inv(offset), so the deviance is the closed form
+	// at that one fitted value. e^1 for every row here.
+	const std::vector<double> mu(kDs3N, statsduck::link_inv(statsduck::Link::kLog, 1.0));
+	const std::vector<double> w(kDs3N, 1.0);
+	check(close_rel(g.deviance, statsduck::deviance(statsduck::Family::kPoisson, ds3_y, mu, w),
+	                1e-12),
+	      "and the deviance is the one at link_inv(offset)");
+	check(close_rel(g.null_deviance, g.deviance, 1e-12),
+	      "its own null model is the same model, so null_deviance matches");
+}
+
 int main() {
 	std::printf("== test_glm_fit ==\n");
 	test_gaussian_equals_lm_fit();
 	test_oracles();
 	test_identities();
 	test_no_residual_df();
+	test_zero_column_design();
 
 	std::printf("\n%d checks, %d failures\n", g_checks, g_fail);
 	if (g_fail == 0) {

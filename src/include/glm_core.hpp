@@ -454,7 +454,14 @@ struct GlmResult {
 //   - kCR0 or kCR1 with no cluster ids, with ids that are not dense
 //     non-negative labels, or with fewer than two clusters;
 //   - a first step whose deviance or coefficients are not finite, which
-//     the paragraph on step halving above explains.
+//     the paragraph on step halving above explains; or a first weighted
+//     solve that fails outright, which means the design is numerically
+//     singular at the starting values;
+//   - a final Xt W X that cannot be inverted, which leaves the standard
+//     errors undefined even though the coefficients converged.
+// A later iteration that fails one of those last two is NOT a failure:
+// the loop stops there and reports the iterate it had already accepted,
+// with converged false.
 // A rank-deficient design is NOT one of them: it is a fit, with the
 // dependent columns aliased.
 GlmResult fit_glm(const std::vector<double> &y, const linalg::Mat &X_pred, const GlmOptions &opts,
