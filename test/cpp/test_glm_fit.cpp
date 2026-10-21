@@ -475,6 +475,41 @@ static void test_no_residual_df() {
 	check(!b1.ok, "the n <= rank rule applies to binomial too");
 }
 
+// ── The aliased set comes from the positive-weight rows ──────────────────
+static void test_zero_weight_rows_do_not_set_the_rank() {
+	std::printf("a zero-weight row cannot change the rank\n");
+
+	// x1 is zero on every row of positive weight and non-zero only on the
+	// row whose weight is 0. Over all five rows the intercept and x1 are
+	// independent, so a rank computed from the full design would be 2 and
+	// the fit would try to estimate x1 from a row that carries no weight.
+	// Xt W X is then singular: its x1 row and column are all zeros, the
+	// Cholesky fails, and the inverse behind the standard errors fails
+	// with it, so the whole fit comes back as a failure.
+	//
+	// Restricted to the positive-weight rows, x1 is a zero column. It is
+	// dropped, the fit runs on the intercept alone, and x1 is reported
+	// aliased. That is the behaviour this checks, and it is why the set
+	// is computed from the positive-weight rows.
+	const std::vector<double> y = {1.0, 2.0, 3.0, 4.0, 99.0};
+	const std::vector<double> w = {1.0, 1.0, 1.0, 1.0, 0.0};
+	Mat x(5, 1);
+	x(4, 0) = 1.0; // every other entry is 0
+	statsduck::GlmOptions go;
+	go.family = statsduck::Family::kGaussian;
+	const statsduck::GlmResult g = statsduck::fit_glm(y, x, go, &w);
+	check(g.ok, "the fit succeeds");
+	check(g.k == 2 && g.rank == 1, "x1 is dropped, so the rank is 1 of 2");
+	check(std::isnan(at(g.beta, 1)), "and x1 is reported aliased");
+	// The intercept is the weighted mean of the four rows that count. The
+	// zero-weight row carries y = 99 and would move it to 21.8.
+	check(close_rel(at(g.beta, 0), 2.5, 1e-12), "the zero-weight row does not move the estimate");
+	// n counts every row given to the kernel, including the zero-weight
+	// one, so df_residual is 5 - 1. The SQL layer drops such rows at
+	// accumulation instead, which is where that decision belongs.
+	check(g.n == 5 && g.df_residual == 4, "n counts the row the kernel was given");
+}
+
 // ── A design with no columns at all ──────────────────────────────────────
 static void test_zero_column_design() {
 	std::printf("a zero-column design is a fit, with or without an intercept\n");
@@ -515,6 +550,7 @@ int main() {
 	test_oracles();
 	test_identities();
 	test_no_residual_df();
+	test_zero_weight_rows_do_not_set_the_rank();
 	test_zero_column_design();
 
 	std::printf("\n%d checks, %d failures\n", g_checks, g_fail);
