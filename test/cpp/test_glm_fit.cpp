@@ -420,11 +420,54 @@ static void test_identities() {
 	check(rd.df_residual == rd.n - rd.rank, "df_residual counts the rank, not k");
 }
 
+// ── No residual degrees of freedom (Review Focus item 3) ─────────────────
+static void test_no_residual_df() {
+	std::printf("a fit with no residual df fails, before any division\n");
+
+	// The dispersion divides by n - rank, so one row with one predictor
+	// plus an intercept divides by zero and would put Inf or NaN across
+	// the whole result. The decision has to be made before any division.
+	Mat tiny(1, 1);
+	tiny(0, 0) = 2.0;
+	statsduck::GlmOptions tg;
+	tg.family = statsduck::Family::kGaussian;
+	const statsduck::GlmResult t1 = statsduck::fit_glm({5.0}, tiny, tg);
+	check(!t1.ok, "one row with an intercept and one predictor is a failed fit");
+	check(!t1.error.empty(), "and says why");
+
+	// Two rows and two parameters is exactly saturated: n == rank, so
+	// still no df.
+	Mat two(2, 1);
+	two(0, 0) = 1.0;
+	two(1, 0) = 2.0;
+	const statsduck::GlmResult t2 = statsduck::fit_glm({3.0, 7.0}, two, tg);
+	check(!t2.ok, "a saturated gaussian fit has no residual df and fails");
+
+	// Three rows and two parameters is the smallest fit that works.
+	Mat three(3, 1);
+	three(0, 0) = 1.0;
+	three(1, 0) = 2.0;
+	three(2, 0) = 4.0;
+	const statsduck::GlmResult t3 = statsduck::fit_glm({3.0, 7.0, 11.0}, three, tg);
+	check(t3.ok && t3.df_residual == 1, "three rows and two parameters leaves one df");
+	check(std::isfinite(t3.dispersion), "and a finite dispersion");
+
+	// Binomial and poisson have a fixed dispersion, so they do not divide
+	// at all. They still need df_residual to be meaningful, so the rule is
+	// uniform.
+	statsduck::GlmOptions bg;
+	bg.family = statsduck::Family::kBinomial;
+	bg.link = statsduck::Link::kLogit;
+	const statsduck::GlmResult b1 = statsduck::fit_glm({1.0}, tiny, bg);
+	check(!b1.ok, "the n <= rank rule applies to binomial too");
+}
+
 int main() {
 	std::printf("== test_glm_fit ==\n");
 	test_gaussian_equals_lm_fit();
 	test_oracles();
 	test_identities();
+	test_no_residual_df();
 
 	std::printf("\n%d checks, %d failures\n", g_checks, g_fail);
 	if (g_fail == 0) {
