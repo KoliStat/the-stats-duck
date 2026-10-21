@@ -864,7 +864,7 @@ static void test_probit_and_cloglog() {
 
 // ── The aliased set comes from the positive-weight rows ──────────────────
 static void test_zero_weight_rows_do_not_set_the_rank() {
-	std::printf("a zero-weight row cannot change the rank\n");
+	std::printf("a zero-weight row changes neither the rank nor the support test\n");
 
 	// x1 is zero on every row of positive weight and non-zero only on the
 	// row whose weight is 0. Over all five rows the intercept and x1 are
@@ -902,6 +902,65 @@ static void test_zero_weight_rows_do_not_set_the_rank() {
 	// one, so df_residual is 5 - 1. The SQL layer drops such rows at
 	// accumulation instead, which is where that decision belongs.
 	check(g.n == 5 && g.df_residual == 4, "n counts the row the kernel was given");
+
+	// The non-gaussian sibling, which is the case that matters: the
+	// support test on the fitted mean is a no-op for gaussian, where any
+	// finite mean is in the support, so the test above does not exercise
+	// it at all.
+	//
+	// Four ordinary rows at weight 1 lie exactly on mu = 10 - 2x, so the
+	// poisson identity fit of them is beta = (10, -2). A fifth row
+	// carries weight 0 and an extreme covariate, x = 100000, which puts
+	// its OWN fitted mean at about -200000: far outside the poisson
+	// support, and entirely irrelevant to the fit, because the row
+	// influences no estimate.
+	//
+	// A support test that ignored the prior weight would fail this whole
+	// fit on that one row. The two controls below separate the mechanism
+	// from the arithmetic: dropping the row, and giving it an ordinary
+	// covariate, must both give the same answer.
+	const std::vector<double> py = {8.0, 6.0, 4.0, 2.0, 0.0};
+	const std::vector<double> pw = {1.0, 1.0, 1.0, 1.0, 0.0};
+	Mat px(5, 1);
+	px(0, 0) = 1.0;
+	px(1, 0) = 2.0;
+	px(2, 0) = 3.0;
+	px(3, 0) = 4.0;
+	px(4, 0) = 100000.0; // the extreme covariate, on the weightless row
+	statsduck::GlmOptions po;
+	po.family = statsduck::Family::kPoisson;
+	po.link = statsduck::Link::kIdentity;
+	const statsduck::GlmResult p = statsduck::fit_glm(py, px, po, &pw);
+	check(p.ok, "a zero-weight row with an extreme covariate does not fail a poisson fit");
+	check(p.converged, "which still converges");
+	check(close_rel(at(p.beta, 0), 10.0, 1e-9), "to the intercept its positive-weight rows imply");
+	check(close_rel(at(p.beta, 1), -2.0, 1e-9), "and their slope");
+
+	// Control 1: the same four rows with the fifth dropped entirely.
+	Mat px4(4, 1);
+	for (std::size_t i = 0; i < 4; i++) {
+		px4(i, 0) = static_cast<double>(i + 1);
+	}
+	const statsduck::GlmResult p4 =
+	    statsduck::fit_glm({8.0, 6.0, 4.0, 2.0}, px4, po);
+	check(p4.ok && close_rel(at(p4.beta, 1), at(p.beta, 1), 1e-9),
+	      "dropping the row entirely gives the same slope");
+
+	// Control 2: the same five rows with an ordinary covariate on the
+	// weightless one. The band is 1e-9 on all four of these because a
+	// poisson identity fit of exactly-on-the-line data converges to the
+	// line, and the measured agreement is 1e-15 or better; 1e-9 leaves
+	// room for the iteration to stop one step earlier on another
+	// platform without ever admitting a different line.
+	Mat px_ord = px;
+	px_ord(4, 0) = 5.0;
+	const statsduck::GlmResult p5 = statsduck::fit_glm(py, px_ord, po, &pw);
+	check(p5.ok && close_rel(at(p5.beta, 1), at(p.beta, 1), 1e-9),
+	      "and so does an ordinary covariate on it");
+	std::printf("  poisson identity, weightless x = 1e5: beta (%.12g, %.12g); row dropped "
+	            "(%.12g, %.12g); ordinary covariate (%.12g, %.12g)\n",
+	            at(p.beta, 0), at(p.beta, 1), at(p4.beta, 0), at(p4.beta, 1), at(p5.beta, 0),
+	            at(p5.beta, 1));
 }
 
 // ── A design with no columns at all ──────────────────────────────────────

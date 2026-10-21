@@ -390,10 +390,18 @@ struct GlmResult {
 //
 // weights: optional, length n, the PRIOR weights. For binomial these are
 // the trial counts and y is the proportion of successes, so 7 of 10 is
-// y = 0.7 and w = 10. Defaults to 1 for every row. The kernel counts
-// every row it is given in `n`, including a row of weight 0. The SQL
-// layer drops zero-weight rows at accumulation, like a NULL, so they do
-// not reach here and do not inflate df_residual.
+// y = 0.7 and w = 10. Defaults to 1 for every row.
+//
+// A row of weight exactly 0 influences nothing: not the aliased set, not
+// the solve, not the deviance, and not the support test on the fitted
+// mean. Its contribution is 0 either way. That invariant holds for a
+// caller reaching this kernel directly, which docs/kernel_api.md invites
+// a sibling repository to do, and not only through the aggregate.
+//
+// The one thing such a row does affect is `n`: the kernel counts every
+// row it is given, so a zero-weight row raises n and therefore
+// df_residual. The SQL layer drops those rows at accumulation, like a
+// NULL, so they do not reach here through that path.
 //
 // offset: optional, length n, added to the linear predictor and not
 // estimated. A poisson model of a rate uses log(exposure) here.
@@ -413,8 +421,9 @@ struct GlmResult {
 //     solve (Xt W X) beta = Xt W z over the kept columns
 //     eta = X beta + offset,  mu = link_inv(eta)
 //     halve the step, at most 25 times, while it is bad: the new
-//     coefficients or the new deviance are not finite, a fitted mean has
-//     left the family's support, or the deviance increased
+//     coefficients or the new deviance are not finite, a fitted mean on
+//     a POSITIVE-WEIGHT row has left the family's support, or the
+//     deviance increased
 //     stop when |dev - dev_prev| / (|dev| + 0.1) < opts.tol
 //
 // The support test is R's validmu, and it is not redundant with
@@ -425,6 +434,12 @@ struct GlmResult {
 // expected count or to a fitted probability above 1, and every quantity
 // computed from those fitted values is then wrong. See MuInSupport in
 // glm_core.cpp for the mechanism and for the two inputs that found it.
+//
+// The test looks only at rows of positive prior weight, which is the same
+// rule the normal matrix and the aliased set follow. A zero-weight row
+// influences no estimate, but a fitted mean is still computed for it from
+// its own covariates, so testing it would let one weightless row with an
+// extreme covariate fail a fit that is sound over every row that counts.
 //
 // The solve is linalg::cholesky_solve on Xt W X, falling back to
 // linalg::svd_solve when the Cholesky reports the matrix is not positive

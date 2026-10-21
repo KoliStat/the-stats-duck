@@ -458,9 +458,25 @@ bool MuInSupport(Family f, double mu) {
 	return false; // unreachable
 }
 
-bool AllMuInSupport(Family f, const std::vector<double> &mu) {
-	for (const double m : mu) {
-		if (!MuInSupport(f, m)) {
+// The same test over a whole fitted-value vector, SKIPPING the rows whose
+// prior weight is not positive.
+//
+// The weight filter is not a refinement, it is required. A zero-weight
+// row influences no estimate, and this file's contract says its
+// contribution is 0 either way. But evaluate() computes a fitted mean for
+// every row it is given, so a weightless row's own covariates produce
+// their own eta and mu. Without the filter, one weightless row carrying
+// an extreme covariate fails a fit that is perfectly good over every row
+// that counts. The finite-deviance test does not catch that either: the
+// poisson deviance skips the y*ln(y/mu) term at y = 0, so a weightless
+// zero-count row contributes 0 however extreme its own mu is. The filter
+// mirrors the one in normal_matrix, for the same reason.
+bool AllMuInSupport(Family f, const std::vector<double> &mu, const std::vector<double> &w) {
+	for (std::size_t i = 0; i < mu.size(); i++) {
+		if (!(w[i] > 0.0)) {
+			continue;
+		}
+		if (!MuInSupport(f, mu[i])) {
 			return false;
 		}
 	}
@@ -760,7 +776,7 @@ GlmResult FitGlm(const std::vector<double> &y, const linalg::Mat &X_pred, const 
 			// so the support test never reads a stale mu_new.
 			auto step_is_bad = [&]() {
 				return !AllFinite(beta_new) || !std::isfinite(dev_new) ||
-				       !AllMuInSupport(opts.family, mu_new) || dev_new > dev;
+				       !AllMuInSupport(opts.family, mu_new, w) || dev_new > dev;
 			};
 
 			// Halve the step while it is bad. The first pass has no
@@ -778,7 +794,7 @@ GlmResult FitGlm(const std::vector<double> &y, const linalg::Mat &X_pred, const 
 			}
 
 			if (!AllFinite(beta_new) || !std::isfinite(dev_new) ||
-			    !AllMuInSupport(opts.family, mu_new)) {
+			    !AllMuInSupport(opts.family, mu_new, w)) {
 				if (iter == 1) {
 					return GlmFail("glm_fit: the first step produced a non-finite deviance or a "
 					               "fitted mean outside the family's support (the starting values "
