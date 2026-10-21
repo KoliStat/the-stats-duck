@@ -14,7 +14,6 @@
 #include "duckdb/planner/expression.hpp"
 #include "duckdb/planner/expression/bound_function_expression.hpp"
 
-#include <algorithm>
 #include <cmath>
 #include <string>
 #include <vector>
@@ -83,20 +82,19 @@ static LogicalType GlmFitResultType() {
 // `link`, `vcov` and `intercept` are constants, folded at bind time into the
 // bind data. `weights`, `offset` and `cluster` are per-row columns that stay in
 // the plan and are read in Update.
-enum class OptField : uint8_t { kLink, kVcov, kIntercept, kWeights, kOffset, kCluster };
+enum class OptField { kLink, kVcov, kIntercept, kWeights, kOffset, kCluster };
 
 struct OptionName {
 	const char *name;
 	OptField field;
-	bool per_row;
 };
 
 // Also the order the error message lists, so a caller reads the constants
 // first and the per-row columns second.
 static constexpr OptionName kOptionNames[] = {
-    {"link", OptField::kLink, false},        {"vcov", OptField::kVcov, false},
-    {"intercept", OptField::kIntercept, false}, {"weights", OptField::kWeights, true},
-    {"offset", OptField::kOffset, true},     {"cluster", OptField::kCluster, true},
+    {"link", OptField::kLink},       {"vcov", OptField::kVcov},
+    {"intercept", OptField::kIntercept}, {"weights", OptField::kWeights},
+    {"offset", OptField::kOffset},   {"cluster", OptField::kCluster},
 };
 
 static string OptionNameList() {
@@ -141,6 +139,9 @@ struct GlmFitBindData : public FunctionData {
 		return cluster_child >= 0;
 	}
 
+	// Copied by assignment rather than field by field as lm_fit's is. There
+	// are nine fields here against lm_fit's three, and assignment cannot
+	// forget one.
 	unique_ptr<FunctionData> Copy() const override {
 		auto c = make_uniq<GlmFitBindData>();
 		*c = *this;
@@ -178,16 +179,26 @@ static statsduck::Family ParseFamilyArg(ClientContext &context, Expression &expr
 }
 
 // The expression that produced struct field `idx`, when there is one to reach.
+//
 // A struct literal binds to a struct_pack call whose children are its fields
 // in order, so one constant field of an otherwise per-row struct can still be
-// folded. A struct that came from anywhere else — a column of struct type, for
-// instance — has no child expression here, and its constant-only fields are
-// then correctly rejected as non-constant.
+// folded. Only struct_pack is accepted. Another struct-returning function can
+// have the same number of children without those children being the fields:
+// struct_concat({'link': 'logit'}, {'weights': w}) has two children, and both
+// are structs rather than field values. Reading child 0 as `link` there gave
+// "unknown link '{'link': logit}'" before this guard.
+//
+// A struct from anywhere else — a column of struct type, or any other
+// function — has no child expression to reach, and its constant-only fields
+// are then rejected as non-constant.
 static optional_ptr<Expression> StructFieldExpr(Expression &expr, idx_t idx) {
 	if (expr.GetExpressionClass() != ExpressionClass::BOUND_FUNCTION) {
 		return nullptr;
 	}
 	auto &fn = expr.Cast<BoundFunctionExpression>();
+	if (fn.function.name != "struct_pack") {
+		return nullptr;
+	}
 	if (fn.children.size() != StructType::GetChildCount(expr.return_type) || idx >= fn.children.size()) {
 		return nullptr;
 	}
@@ -250,7 +261,9 @@ static bool ReadOptions(ClientContext &context, AggregateFunction &function,
 		}
 		auto child = StructFieldExpr(opts_expr, field_idx);
 		if (!child) {
-			throw BinderException("glm_fit: '%s' must be a constant value", what);
+			throw BinderException("glm_fit: '%s' must be a constant value — write the options "
+			                      "as a struct literal, as in {'link': 'probit'}",
+			                      what);
 		}
 		return EvalConst(context, *child, what);
 	};
@@ -261,7 +274,6 @@ static bool ReadOptions(ClientContext &context, AggregateFunction &function,
 	// indices the runtime reads.
 	child_list_t<LogicalType> per_row;
 	bool want_weights = false, want_offset = false, want_cluster = false;
-	bool vcov_given = false;
 
 	for (idx_t f = 0; f < fields.size(); f++) {
 		const string &name = fields[f].first;
@@ -299,7 +311,6 @@ static bool ReadOptions(ClientContext &context, AggregateFunction &function,
 				                      "or 'CR0'/'CR1' (clustered)",
 				                      v);
 			}
-			vcov_given = true;
 			break;
 		}
 		case OptField::kIntercept:
@@ -316,7 +327,6 @@ static bool ReadOptions(ClientContext &context, AggregateFunction &function,
 			break;
 		}
 	}
-	(void)vcov_given;
 
 	if (want_weights) {
 		bd.weights_child = static_cast<int>(per_row.size());
@@ -775,6 +785,9 @@ static void GlmFitFinalize(Vector &state_vector, AggregateInputData &input_data,
 		iter_d[idx] = static_cast<int64_t>(r.iterations);
 		conv_d[idx] = r.converged;
 		sep_d[idx] = r.separation;
+		// GlmResult carries no has_intercept field, so this comes from the
+		// bind. The kernel prepends a constant column exactly when
+		// opts.intercept is set, so the two agree by construction.
 		hint_d[idx] = opt.intercept;
 		if (r.n_clusters > 0) {
 			ncl_d[idx] = static_cast<int64_t>(r.n_clusters);
