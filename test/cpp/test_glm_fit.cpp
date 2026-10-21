@@ -16,9 +16,13 @@
 //
 // Then the identities that need no oracle at all: null_deviance against
 // an independent intercept-only fit, grouped binomial against ungrouped,
-// a scaled trial count, and the aliasing of a dependent column. Last, the
-// two input classes that have no fit to report: no residual degrees of
-// freedom, and a design with no columns at all.
+// a scaled trial count, and a deficient fit against the reduced design it
+// must reproduce bit for bit. Then the three mechanisms that have no
+// golden: the support test on the fitted mean, step halving, and the
+// probit and cloglog links, which are checked against an independent
+// Nelder-Mead minimization of the same deviance. Last, the input classes
+// that have no fit to report: no residual degrees of freedom, a
+// zero-weight row, and a design with no columns at all.
 //
 // DS2, DS6 and DS8 are not here. DS2's numbers are used, as the grouped
 // half of the grouping identity. DS6 is the separated design, whose
@@ -31,6 +35,7 @@
 #include "glm_core.hpp"
 
 #include "glm_fit_fixtures.hpp"
+#include "optimize.hpp" // statsduck::optimize::nelder_mead, for the probit and cloglog oracle
 
 #include <cmath>
 #include <cstddef>
@@ -379,6 +384,14 @@ static void test_identities() {
 	// null_deviance is the intercept-only model's deviance, computed two
 	// ways: inside the full fit, and by fitting that model here. A single
 	// golden number would not catch a wrong null model.
+	//
+	// Measured 0: the two are bitwise equal, because inside the full fit
+	// null_deviance comes from the same recursive call on the same inputs
+	// that this line makes directly. The band is 1e-10 rather than 0 to
+	// leave room for a future implementation that reaches the null model
+	// another way, as R does with a closed-form weighted mean. A change
+	// of that kind should still agree this closely, and should be
+	// reviewed rather than silently fail here.
 	const statsduck::GlmResult full = statsduck::fit_glm(ds1_y, ds1_design(), nb);
 	const statsduck::GlmResult nullfit = statsduck::fit_glm(ds1_y, Mat(ds1_y.size(), 0), nb);
 	check(nullfit.ok, "the intercept-only fit succeeds");
@@ -405,6 +418,15 @@ static void test_identities() {
 	std::printf("  grouped against ungrouped: worst beta %.3g, worst se %.3g\n", wb, ws);
 
 	// Scaling every trial count scales the deviance and leaves beta alone.
+	//
+	// Two bands, both measured. The coefficients agree to 5.9e-11, not
+	// exactly, because scaling the weights scales the working weights and
+	// so the whole solve: the two fits follow different floating-point
+	// paths to the same optimum and stop at slightly different iterates.
+	// 1e-8 is 170 times that. The deviance agrees to 2.2e-15, which is
+	// rounding, because the 10x factor comes straight out of the
+	// per-row sum; it shares the 1e-8 band for symmetry rather than
+	// needing it.
 	std::vector<double> w10 = ds2_w;
 	for (double &v : w10) {
 		v *= 10.0;
@@ -431,6 +453,33 @@ static void test_identities() {
 	check(std::isnan(at(rd.beta, rd.k - 1)), "the dependent column is aliased");
 	check(std::isfinite(at(rd.beta, 1)), "the kept columns are estimated");
 	check(rd.df_residual == rd.n - rd.rank, "df_residual counts the rank, not k");
+
+	// The sharpest statement about aliasing, and it needs no oracle: the
+	// deficient fit must BE the reduced fit. Dropping x3 leaves X_kept
+	// holding the same values as a design built from x1 and x2 alone, so
+	// the starting values, every working weight, every solve and every
+	// reported quantity are identical bit for bit. The band is 0.0, which
+	// close_rel passes only on exact equality. That is far stronger than
+	// the 2e-5 oracle band DS7's goldens carry above, and it is what
+	// would catch a scatter that mixed up a column index.
+	const statsduck::GlmResult reduced =
+	    statsduck::fit_glm(ds7_y, design(kDs7N, {kDs7X1, kDs7X2}), pg);
+	check(reduced.ok && reduced.k == 3 && reduced.rank == 3, "the reduced design fits too");
+	check(rd.iterations == reduced.iterations, "in the same number of passes");
+	for (std::size_t j = 0; j < 3; j++) {
+		check(close_rel(at(rd.beta, j), at(reduced.beta, j), 0.0),
+		      "the deficient fit's kept coefficients are bitwise the reduced fit's");
+		check(close_rel(at(rd.std_error, j), at(reduced.std_error, j), 0.0),
+		      "and so are its standard errors");
+		for (std::size_t b = 0; b < 3; b++) {
+			check(close_rel(at(rd.cov, j * rd.k + b), at(reduced.cov, j * reduced.k + b), 0.0),
+			      "and every covariance entry");
+		}
+	}
+	check(close_rel(rd.deviance, reduced.deviance, 0.0), "and the deviance");
+	check(close_rel(rd.dispersion, reduced.dispersion, 0.0), "and the dispersion");
+	check(close_rel(rd.loglik, reduced.loglik, 0.0), "and the log-likelihood");
+	check(rd.df_residual == reduced.df_residual, "and the residual degrees of freedom");
 }
 
 // ── No residual degrees of freedom (Review Focus item 3) ─────────────────
@@ -475,6 +524,344 @@ static void test_no_residual_df() {
 	check(!b1.ok, "the n <= rank rule applies to binomial too");
 }
 
+// ── The fitted mean never leaves the family's support ────────────────────
+
+// Smallest and largest fitted mean, recomputed from the reported
+// coefficients of a single-predictor fit with an intercept.
+static void mu_range(const statsduck::GlmResult &g, const std::vector<double> &x,
+                     statsduck::Link l, double &lo, double &hi) {
+	lo = std::numeric_limits<double>::quiet_NaN();
+	hi = lo;
+	if (g.beta.size() < 2) {
+		return; // a failed fit reports nothing to recompute from
+	}
+	for (std::size_t i = 0; i < x.size(); i++) {
+		const double mu = statsduck::link_inv(l, g.beta[0] + g.beta[1] * x[i]);
+		lo = (i == 0) ? mu : std::min(lo, mu);
+		hi = (i == 0) ? mu : std::max(hi, mu);
+	}
+}
+
+static void test_fitted_mean_stays_in_support() {
+	std::printf("the fitted mean never leaves the family's support\n");
+
+	// link_inv's clamp does not cover this. It clamps a probability link
+	// into [kMuEps, 1 - kMuEps], but the identity link is never clamped
+	// and the log link is clamped at the floor only, and both of those
+	// are allowed for a family whose support they can leave. The loop
+	// therefore tests the support of every proposed fitted mean and
+	// halves the step when it fails, which is what R's validmu does.
+	//
+	// Both inputs below are real failures found by a random search over
+	// the input space, not constructed cases. Without the support test
+	// each one returns ok = true and converged = true with a fitted mean
+	// outside its own support, and the reported deviance, dispersion,
+	// log-likelihood, AIC and standard errors are all computed there. The
+	// mechanism is specific: the binomial and poisson deviance skip the
+	// y*ln(y/mu) term at y = 0, so a negative mu at a zero-count row
+	// contributes a finite negative amount instead of NaN and the step is
+	// accepted.
+
+	// A poisson fit with an identity link. Without the support test this
+	// converges in 5 passes to beta = (2.638, -0.784), whose smallest
+	// fitted mean is -0.771: a negative expected count.
+	{
+		const std::vector<double> y = {2, 0, 1, 0, 5, 0, 3, 5};
+		const std::vector<double> x = {-1.387, 4.348, 2.565, 0.520, -0.029, 2.755, 2.156, -4.418};
+		Mat X(8, 1);
+		for (std::size_t i = 0; i < 8; i++) {
+			X(i, 0) = x[i];
+		}
+		statsduck::GlmOptions po;
+		po.family = statsduck::Family::kPoisson;
+		po.link = statsduck::Link::kIdentity;
+		const statsduck::GlmResult g = statsduck::fit_glm(y, X, po);
+		double lo = 0.0, hi = 0.0;
+		mu_range(g, x, po.link, lo, hi);
+		// Either outcome is acceptable: a failed fit, or a fit whose every
+		// fitted mean is positive. A converged fit with a negative
+		// expected count is not. This one fails, because the violation
+		// happens on the first pass, which has no previous coefficient
+		// vector to halve toward.
+		check(!g.ok || lo > 0.0, "a poisson fit never reports a negative expected count");
+		check(!g.ok || std::isfinite(g.deviance), "and its deviance is finite");
+		check(!g.ok == !g.error.empty(), "a failed fit says why and a successful one does not");
+	}
+
+	// A binomial fit with a log link. Without the support test this
+	// converges in 7 passes to a largest fitted probability of 1.445.
+	{
+		const std::vector<double> y = {0, 0, 1, 0, 1, 1, 0, 1};
+		const std::vector<double> x = {2.5763, 0.2360,  -1.4722, -2.3383,
+		                               -3.5882, 2.0167, 4.6552,  -4.8203};
+		Mat X(8, 1);
+		for (std::size_t i = 0; i < 8; i++) {
+			X(i, 0) = x[i];
+		}
+		statsduck::GlmOptions bo;
+		bo.family = statsduck::Family::kBinomial;
+		bo.link = statsduck::Link::kLog;
+		const statsduck::GlmResult g = statsduck::fit_glm(y, X, bo);
+		double lo = 0.0, hi = 0.0;
+		mu_range(g, x, bo.link, lo, hi);
+		check(!g.ok || hi < 1.0, "a binomial fit never reports a probability above 1");
+		check(!g.ok || lo > 0.0, "nor one below 0");
+	}
+}
+
+// ── Step halving, the mechanism that keeps a bad step out ────────────────
+
+// The IRLS fixed point, measured in standard errors.
+//
+// At the maximum likelihood estimate the weighted score is zero for every
+// estimated coefficient:
+//   score_j = sum_i w_i (y_i - mu_i) * link_deriv(eta_i) / variance(mu_i) * x_ij
+// Exactly zero is not reachable in floating point, so the question is how
+// big the remaining score is on a scale that means something. The Newton
+// step it implies has j-th component of order std_error_j^2 * score_j, so
+// |score_j| * std_error_j is that step expressed in standard errors of
+// the estimate: dimensionless, and comparable across fits.
+//
+// Precondition: an intercept, exactly one predictor column, full rank,
+// and a family whose dispersion is fixed at 1. The dispersion scales the
+// score and the standard error by different powers, so the measure is
+// only calibrated for binomial and poisson.
+static double worst_score_in_se(const statsduck::GlmResult &g, statsduck::Family f,
+                                statsduck::Link l, const std::vector<double> &y,
+                                const std::vector<double> &x) {
+	if (g.beta.size() < 2) {
+		return std::numeric_limits<double>::quiet_NaN();
+	}
+	double worst = 0.0;
+	for (std::size_t j = 0; j < 2; j++) {
+		double s = 0.0;
+		for (std::size_t i = 0; i < y.size(); i++) {
+			const double eta = g.beta[0] + g.beta[1] * x[i];
+			const double mu = statsduck::link_inv(l, eta);
+			const double d = statsduck::link_deriv(l, eta);
+			s += (y[i] - mu) * d / statsduck::variance(f, mu) * (j == 0 ? 1.0 : x[i]);
+		}
+		worst = std::max(worst, std::fabs(s) * at(g.std_error, j));
+	}
+	return worst;
+}
+
+// How far from the exact stationary point a converged fit is allowed to
+// sit, in standard errors of the estimate (see worst_score_in_se).
+//
+// This band has a theoretical bound AND a measurement, and they agree.
+// The bound: the loop stops when the deviance change falls below
+// tol*(|dev| + 0.1), which is 1.7e-07 on the poisson fit below. Near the
+// optimum a coefficient error of c standard errors costs about c^2 in
+// deviance, so c is at most sqrt(1.7e-07) = 4.1e-04, and the score in
+// these units is about 2c, so about 1e-03. The measurements: 5.0e-05 on
+// the poisson identity halving fit, 5.8e-08 on the exhausted-halvings
+// fit, 1.9e-07 on probit and 2.2e-05 on cloglog. The band is 20 times
+// the worst of those and matches the bound, so it fails only when a fit
+// stops somewhere that is not a stationary point at all. That is what it
+// is for: removing the step halving puts the first of those fits 47
+// standard errors from zero.
+static const double TOL_SCORE = 1e-3;
+
+static void test_step_halving() {
+	std::printf("step halving, and the exhausted-halvings branch\n");
+
+	// Nothing else in this suite reaches the halving block: the committed
+	// fixtures take 77 IRLS passes between them and halve zero times. So
+	// without these inputs the mechanism this task reasons about most
+	// would have no test at all.
+	//
+	// Every input below was found by comparing two builds of the kernel,
+	// one with the halving and one without, over 40,000 seeded fits
+	// across ten family and link pairs. 327 of them differ structurally.
+	// The three kept here are the ones whose assertions SEPARATE the two
+	// builds, which a test that merely reaches the block would not: the
+	// measured no-halving outcome is written beside each.
+	//
+	// The kernel reports no halving count, so the assertions are on the
+	// outcome. They avoid the exact pass count on purpose, because that
+	// is the one quantity a last-bit difference in a platform's exp or
+	// log could move by one; converged and the deviance are far from any
+	// boundary here.
+	const std::vector<double> x = {1, 2, 3, 4, 5, 6, 7, 8};
+	Mat X(8, 1);
+	for (std::size_t i = 0; i < 8; i++) {
+		X(i, 0) = x[i];
+	}
+
+	// A poisson fit with an identity link. WITH halving: converges in 7
+	// passes to a deviance of 16.95. WITHOUT: the second pass leaves the
+	// support, the loop stops there, and it reports converged = false
+	// with the first pass's deviance of 93.83, five and a half times
+	// larger.
+	{
+		const std::vector<double> y = {1, 4, 2, 2, 0, 1, 8, 9};
+		statsduck::GlmOptions pi;
+		pi.family = statsduck::Family::kPoisson;
+		pi.link = statsduck::Link::kIdentity;
+		const statsduck::GlmResult g = statsduck::fit_glm(y, X, pi);
+		check(g.ok && g.converged, "a fit that needs step halving still converges");
+		check(g.deviance < 20.0, "to the deviance of 16.95 that halving reaches, not the 93.83 "
+		                         "the first pass alone leaves");
+		double lo = 0.0, hi = 0.0;
+		mu_range(g, x, pi.link, lo, hi);
+		check(lo > 0.0, "with every fitted mean inside the support");
+		// The real question is not whether it finished but whether it
+		// finished at the maximum likelihood estimate.
+		const double score = worst_score_in_se(g, pi.family, pi.link, y, x);
+		check(score < TOL_SCORE, "and at the IRLS fixed point, so halving did not move the answer");
+		std::printf("  halving, poisson identity: dev %.12g, score %.3g se, smallest mu %.4g\n",
+		            g.deviance, score, lo);
+	}
+
+	// The same shape in a second family, where the step halving rescues a
+	// gamma fit with an identity link. WITH halving: converges to a
+	// deviance of 5.639. WITHOUT: stops at pass 2, converged = false,
+	// deviance 57.98. No score check here: worst_score_in_se is only
+	// calibrated for a family whose dispersion is fixed at 1.
+	{
+		const std::vector<double> y = {3.6, 0.3, 2.3, 0.4, 0.7, 2.9, 3.8, 1.6};
+		statsduck::GlmOptions gi;
+		gi.family = statsduck::Family::kGamma;
+		gi.link = statsduck::Link::kIdentity;
+		const statsduck::GlmResult g = statsduck::fit_glm(y, X, gi);
+		check(g.ok && g.converged, "a gamma identity-link fit converges through its halvings");
+		check(g.deviance < 10.0, "to 5.639 rather than the 57.98 of the step before them");
+		double lo = 0.0, hi = 0.0;
+		mu_range(g, x, gi.link, lo, hi);
+		check(lo > 0.0, "and keeps every fitted mean positive");
+		std::printf("  halving, gamma identity: dev %.12g, smallest mu %.4g\n", g.deviance, lo);
+	}
+
+	// 25 halvings in one pass, which exhausts them. The step could not be
+	// made to lower the deviance, so the loop tests the convergence
+	// criterion on it and keeps the iterate it had already accepted. This
+	// is the branch the header's `converged` contract describes, and the
+	// converged assertion below is what separates it from a build that
+	// reports false there instead.
+	//
+	// This input was harder to find than it looks, and the first candidate
+	// was wrong. Of 671 exhaustions across the 40,000 seeded fits, 623 are
+	// inside the recursive intercept-only fit that produces
+	// null_deviance, whose converged flag nobody reads. Only 48 happen in
+	// a fit that is reported, and only 8 of those are inside tol and so
+	// set converged through this branch. This is one of the 8: the
+	// exhaustion lands on pass 5 with a relative deviance change of
+	// 1.2e-16, a last-bit increase at a fit that has already converged,
+	// which is exactly the case the branch exists for.
+	{
+		const std::vector<double> y = {5, 3, 8, 8, 0, 6, 4, 5};
+		statsduck::GlmOptions po;
+		po.family = statsduck::Family::kPoisson;
+		po.link = statsduck::Link::kLog;
+		const statsduck::GlmResult g = statsduck::fit_glm(y, X, po);
+		check(g.ok, "a fit that exhausts its halvings still reports a result");
+		check(g.converged, "and reports converged, because the step it could not improve was "
+		                   "already inside tol");
+		const double score = worst_score_in_se(g, po.family, po.link, y, x);
+		check(score < TOL_SCORE, "which the score confirms: it is at the fixed point");
+		std::printf("  exhausted halvings: dev %.12g, score %.3g se\n", g.deviance, score);
+	}
+}
+
+// ── The probit and cloglog links, which nothing else fits ────────────────
+// The IRLS answer against an independent Nelder-Mead minimization of the
+// same deviance. The deviance is flat at its minimum, so it agrees far
+// more tightly than the coefficients do: measured 6.6e-16 on probit and
+// 1.0e-11 on cloglog, against coefficients at 5.8e-08 and 1.6e-05. The
+// coefficient band is 12 times the worst of those, and the gap is the
+// stopping rule again, not a disagreement about where the optimum is:
+// cloglog's 1.6e-05 is the same 2.2e-05 standard errors TOL_SCORE
+// measured, converted by its own standard-error-to-estimate ratio of
+// 0.84. Two different optima would differ by far more than either band.
+static const double TOL_NM_DEV = 1e-9;
+static const double TOL_NM_COEF = 2e-4;
+
+static void test_probit_and_cloglog() {
+	std::printf("probit and cloglog fits, with no oracle\n");
+
+	// No other test in this suite fits a probit or a cloglog model, so
+	// the loop's use of link_eta, link_inv and link_deriv for those two
+	// links is otherwise never executed. There is no golden for them, so
+	// these are identities instead.
+	const std::vector<double> y = {1, 0, 0, 0, 1, 1, 0, 0, 1, 0, 1, 1, 0, 0, 1, 1};
+	const std::vector<double> x = {1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8, 8};
+	Mat X(16, 1);
+	for (std::size_t i = 0; i < 16; i++) {
+		X(i, 0) = x[i];
+	}
+	double ybar = 0.0;
+	for (const double v : y) {
+		ybar += v;
+	}
+	ybar /= static_cast<double>(y.size());
+
+	for (const statsduck::Link l : {statsduck::Link::kProbit, statsduck::Link::kCLogLog}) {
+		statsduck::GlmOptions bo;
+		bo.family = statsduck::Family::kBinomial;
+		bo.link = l;
+		const statsduck::GlmResult g = statsduck::fit_glm(y, X, bo);
+		check(g.ok && g.converged, "the fit converges");
+		check(g.deviance < g.null_deviance, "and explains something, so its deviance is below the "
+		                                    "null model's");
+		// The score equations hold at the answer. What this catches is a
+		// loop that stops short of its own fixed point, or one whose
+		// working response or working weight is mis-assembled: those
+		// change which equation the loop solves, and this measures the
+		// true one. It does NOT catch a wrong link_deriv, because a
+		// constant factor there divides out of the fixed point and the
+		// check uses the same function the loop does. test_glm_core's
+		// central difference covers the derivative itself.
+		const double score = worst_score_in_se(g, bo.family, l, y, x);
+		check(score < TOL_SCORE, "the reported coefficients satisfy the score equations");
+
+		// An independent oracle for these two links: minimize the same
+		// deviance with Nelder-Mead, from a starting point that is not
+		// the IRLS answer. The optimizer never calls variance or
+		// link_deriv, so it checks the loop against the objective itself
+		// rather than against the loop's own algebra. deviance() is the
+		// trusted part here: test_glm_core pins it against hand-computed
+		// values for all four families.
+		const std::vector<double> w(y.size(), 1.0);
+		auto dev_at = [&](const std::vector<double> &b) {
+			std::vector<double> mu(y.size());
+			for (std::size_t i = 0; i < y.size(); i++) {
+				mu[i] = statsduck::link_inv(l, b[0] + b[1] * x[i]);
+			}
+			return statsduck::deviance(bo.family, y, mu, w);
+		};
+		statsduck::optimize::Options oo;
+		oo.max_eval = 20000;
+		oo.xtol = 1e-12;
+		oo.ftol = 1e-14;
+		const statsduck::optimize::Result nm =
+		    statsduck::optimize::nelder_mead(dev_at, {0.5, -0.5}, oo);
+		check(nm.converged, "the independent minimization converges too");
+		// The deviance is flat at its minimum, so it agrees far more
+		// tightly than the coefficients do. Both bands are measured and
+		// printed below.
+		check(close_rel(g.deviance, nm.fx, TOL_NM_DEV), "to the same deviance");
+		check(close_rel(at(g.beta, 0), nm.x[0], TOL_NM_COEF), "and the same intercept");
+		check(close_rel(at(g.beta, 1), nm.x[1], TOL_NM_COEF), "and the same slope");
+
+		// An intercept-only fit of ANY link must reproduce the mean of y.
+		// The score equation for a lone intercept is
+		// sum_i (y_i - mu)*d/V(mu) = 0 with mu constant, so the link's
+		// own factor divides out and mu = ybar whatever the link is.
+		const statsduck::GlmResult only = statsduck::fit_glm(y, Mat(y.size(), 0), bo);
+		check(only.ok && only.converged, "so does an intercept-only fit");
+		const double mu0 = statsduck::link_inv(l, at(only.beta, 0));
+		check(close_rel(mu0, ybar, 1e-9), "whose fitted mean is the mean of y");
+		check(close_rel(g.null_deviance, only.deviance, 1e-12),
+		      "and whose deviance is the full fit's null_deviance");
+		std::printf("  %-7s: dev %.12g, score %.3g se, intercept-only mu - ybar %.3g; against "
+		            "nelder-mead: dev %.3g, beta %.3g and %.3g, %d evals\n",
+		            statsduck::link_name(l), g.deviance, score, mu0 - ybar,
+		            rel_dev(g.deviance, nm.fx), rel_dev(at(g.beta, 0), nm.x[0]),
+		            rel_dev(at(g.beta, 1), nm.x[1]), nm.n_eval);
+	}
+}
+
 // ── The aliased set comes from the positive-weight rows ──────────────────
 static void test_zero_weight_rows_do_not_set_the_rank() {
 	std::printf("a zero-weight row cannot change the rank\n");
@@ -503,6 +890,13 @@ static void test_zero_weight_rows_do_not_set_the_rank() {
 	check(std::isnan(at(g.beta, 1)), "and x1 is reported aliased");
 	// The intercept is the weighted mean of the four rows that count. The
 	// zero-weight row carries y = 99 and would move it to 21.8.
+	//
+	// Measured 0: the intercept comes back as exactly 2.5. A gaussian
+	// identity fit is a one-step weighted solve, the four surviving
+	// responses are 1, 2, 3 and 4, and their mean is representable
+	// exactly, so no rounding enters. The band is 1e-12 rather than 0 so
+	// that a future change in the accumulation order is a reviewable
+	// difference rather than a failure here.
 	check(close_rel(at(g.beta, 0), 2.5, 1e-12), "the zero-weight row does not move the estimate");
 	// n counts every row given to the kernel, including the zero-weight
 	// one, so df_residual is 5 - 1. The SQL layer drops such rows at
@@ -535,6 +929,12 @@ static void test_zero_column_design() {
 
 	// mu is exactly link_inv(offset), so the deviance is the closed form
 	// at that one fitted value. e^1 for every row here.
+	//
+	// Both bands are measured 0: with no parameters the loop does not
+	// iterate at all, so the kernel evaluates the same deviance call on
+	// the same fitted values this line does, and its own null model is
+	// this same model. The band is 1e-12 rather than 0 for the same
+	// reason as above, to keep a future ordering change reviewable.
 	const std::vector<double> mu(kDs3N, statsduck::link_inv(statsduck::Link::kLog, 1.0));
 	const std::vector<double> w(kDs3N, 1.0);
 	check(close_rel(g.deviance, statsduck::deviance(statsduck::Family::kPoisson, ds3_y, mu, w),
@@ -549,6 +949,9 @@ int main() {
 	test_gaussian_equals_lm_fit();
 	test_oracles();
 	test_identities();
+	test_fitted_mean_stays_in_support();
+	test_step_halving();
+	test_probit_and_cloglog();
 	test_no_residual_df();
 	test_zero_weight_rows_do_not_set_the_rank();
 	test_zero_column_design();

@@ -307,13 +307,24 @@ struct GlmOptions {
 //
 //   ok = true,  converged = true    The fit converged.
 //   ok = true,  converged = false   The loop used every iteration, or a
-//                                   step could not be improved. The best
-//                                   iterate is still reported in full.
-//                                   This is a value, not a NULL group.
+//                                   step failed and could not be
+//                                   recovered. The best iterate is still
+//                                   reported in full. This is a value,
+//                                   not a NULL group.
 //   ok = false, error populated     A data-shaped failure. The SQL layer
 //                                   reports the group as NULL and never
 //                                   raises. See
 //                                   docs/fitter_conventions.md.
+//
+// A step that 25 halvings could not improve is NOT by itself
+// converged = false. The loop tests the convergence criterion on that
+// step before giving up, and reports converged = true when it holds. The
+// reasoning is that the IRLS direction is a descent direction unless the
+// score is already zero, so a step that cannot lower the deviance at all
+// means the score is at rounding level, which is convergence. A random
+// search over 180,000 fits found 14 that converged through this branch,
+// and a pattern search from each reported beta could not improve any of
+// them.
 //
 // terms, beta, std_error, z_statistic and p_value are all length k, the
 // full design width, and cov is k*k. A column dropped as dependent is
@@ -401,9 +412,19 @@ struct GlmResult {
 //     W   = w * link_deriv(eta)^2 / variance(mu)
 //     solve (Xt W X) beta = Xt W z over the kept columns
 //     eta = X beta + offset,  mu = link_inv(eta)
-//     halve the step, at most 25 times, while the new deviance is not
-//     finite or exceeds the old one
+//     halve the step, at most 25 times, while it is bad: the new
+//     coefficients or the new deviance are not finite, a fitted mean has
+//     left the family's support, or the deviance increased
 //     stop when |dev - dev_prev| / (|dev| + 0.1) < opts.tol
+//
+// The support test is R's validmu, and it is not redundant with
+// link_inv's clamp. link_inv clamps a probability link away from 0 and 1,
+// but the identity link is never clamped and the log link is clamped at
+// the floor only. Poisson allows an identity link and binomial allows a
+// log link, so without this test a fit can converge to a negative
+// expected count or to a fitted probability above 1, and every quantity
+// computed from those fitted values is then wrong. See MuInSupport in
+// glm_core.cpp for the mechanism and for the two inputs that found it.
 //
 // The solve is linalg::cholesky_solve on Xt W X, falling back to
 // linalg::svd_solve when the Cholesky reports the matrix is not positive
@@ -412,11 +433,22 @@ struct GlmResult {
 // Step halving needs a previous coefficient vector to halve toward, and
 // the first pass has none: the starting point is a mean vector, not a
 // coefficient vector. So the first pass takes its step as it stands, and
-// a non-finite first step is a failed fit. R's glm.fit has the same
-// restriction, and stops there with "no valid set of coefficients has
-// been found". The first pass also commonly INCREASES the deviance, which
-// is normal rather than a problem: the binomial starting mu sits close to
-// y, so its deviance starts below the fitted model's.
+// a first step that is not finite, or that leaves the family's support,
+// is a failed fit. R's glm.fit has the same restriction, and stops there
+// with "no valid set of coefficients has been found".
+//
+// THE FIRST PASS ALMOST ALWAYS INCREASES THE DEVIANCE, for every family,
+// and that is normal rather than a problem. The starting values are at or
+// near the saturated model, where the deviance is at its own minimum:
+// gaussian and gamma start at mu = y, so their starting deviance is
+// exactly 0; poisson starts at mu = y + 0.1, which is 0.0052 on DS3
+// against a fitted 17.1; binomial starts at (w*y + 0.5)/(w + 1), which is
+// 23.0 on DS1 against a fitted 51.9. So a rule that halved on an
+// increased deviance from the first pass onward would halve away every
+// first step and the loop would never start. Measured: applying the
+// halving test to the first pass collapses every fit in this project's
+// fixtures to all-zero coefficients, the gaussian identity one-step solve
+// included. Do not reinstate it for any family.
 //
 // THE RANK-DEFICIENT COLUMN SET IS COMPUTED ONCE AND HELD FIXED for the
 // whole loop. This deviates from R, which re-pivots every iteration.
@@ -454,12 +486,13 @@ struct GlmResult {
 //     any division rather than after it;
 //   - kCR0 or kCR1 with no cluster ids, with ids that are not dense
 //     non-negative labels, or with fewer than two clusters;
-//   - a first step whose deviance or coefficients are not finite, which
-//     the paragraph on step halving above explains, or a first weighted
-//     solve that fails outright, which means the design is numerically
-//     singular at the starting values. Those two conditions are failures
-//     only on the FIRST pass. On a later pass the loop stops and reports
-//     the iterate it had already accepted, with converged false;
+//   - a first step whose deviance or coefficients are not finite, or
+//     whose fitted mean leaves the family's support, which the paragraph
+//     on step halving above explains, or a first weighted solve that
+//     fails outright, which means the design is numerically singular at
+//     the starting values. Those conditions are failures only on the
+//     FIRST pass. On a later pass the loop stops and reports the iterate
+//     it had already accepted, with converged false;
 //   - a final Xt W X that cannot be inverted, which leaves the standard
 //     errors undefined even though the coefficients converged.
 // A rank-deficient design is NOT one of them: it is a fit, with the

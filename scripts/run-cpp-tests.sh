@@ -20,7 +20,9 @@
 #     test_glm_core.cpp + glm_core.cpp + linalg.cpp
 #   - glm_fit, the IRLS loop and its covariance (#22): test_glm_fit.cpp +
 #     glm_core.cpp + lm_core.cpp + linalg.cpp. It links lm_core because its
-#     first test compares a gaussian identity-link fit against fit_lm.
+#     first test compares a gaussian identity-link fit against fit_lm, and
+#     it includes the header-only optimize.hpp to give the probit and
+#     cloglog links an oracle they have no golden for.
 # The first three, emmeans, glm_core and glm_fit link Eigen (via linalg.cpp);
 # lm_core, lin_hyp, emmeans, glm_core and glm_fit also pull in the header-only
 # distributions.hpp. Each suite returns 0 on all-pass.

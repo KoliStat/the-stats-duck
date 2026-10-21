@@ -421,6 +421,52 @@ double StartMu(Family f, double y, double w) {
 	return y; // unreachable
 }
 
+// Whether one FITTED MEAN sits inside the family's support. This is R's
+// validmu, and the loop tests it on every proposed step.
+//
+// It is not covered by link_inv's clamp, and the gap produced wrong
+// answers before this existed. link_inv clamps a probability link into
+// [kMuEps, 1 - kMuEps], but the identity link is never clamped and the
+// log link is clamped at the floor only. Both of those are allowed for a
+// family whose support they can leave: poisson with an identity link
+// reaches a negative fitted mean, and binomial with a log link reaches a
+// fitted probability above 1. Neither is caught by a non-finite
+// deviance. The binomial and poisson deviance skip the y*ln(y/mu) term
+// at y = 0, so a negative mu at a zero-count row contributes a finite
+// negative amount instead of NaN, the step is accepted, and the fit
+// converges to a mean outside its own support. Everything computed from
+// those fitted values is then wrong: the deviance, the dispersion, the
+// log-likelihood, the AIC and the standard errors.
+//
+// Gamma is already protected by its own deviance, which takes ln(mu) and
+// returns NaN for a negative mean. The test below still covers it, so
+// the rule is one rule for all four families rather than a different one
+// per family.
+bool MuInSupport(Family f, double mu) {
+	if (!std::isfinite(mu)) {
+		return false;
+	}
+	switch (f) {
+	case Family::kGaussian:
+		return true; // a gaussian mean can be any real number
+	case Family::kBinomial:
+		return mu > 0.0 && mu < 1.0;
+	case Family::kPoisson:
+	case Family::kGamma:
+		return mu > 0.0;
+	}
+	return false; // unreachable
+}
+
+bool AllMuInSupport(Family f, const std::vector<double> &mu) {
+	for (const double m : mu) {
+		if (!MuInSupport(f, m)) {
+			return false;
+		}
+	}
+	return true;
+}
+
 // Whether one response value sits inside the family's domain. A
 // non-finite y fails for every family: it would otherwise spread NaN
 // through the whole result, and the poisson test below (y >= 0) is false
@@ -610,15 +656,26 @@ GlmResult FitGlm(const std::vector<double> &y, const linalg::Mat &X_pred, const 
 
 	// Xt W X over the kept columns, and Xt W z alongside it when `z` is
 	// given. Only the upper triangle is accumulated and then mirrored, the
-	// same way fit_lm builds its normal matrix. A row of weight 0 is
-	// skipped: adding its zero contribution would change no sum.
+	// same way fit_lm builds its normal matrix.
+	//
+	// A row whose working weight is not strictly positive is skipped. For
+	// a weight of exactly 0 that changes no sum, since the row's
+	// contribution is 0 either way. The test is written as `not greater
+	// than 0` rather than `equal to 0` so that it also screens a negative
+	// or NaN working weight. A negative one would make Xt W X indefinite,
+	// the Cholesky would fail, and svd_solve would return the minimum-norm
+	// solution of an indefinite system, which is not the IRLS step. The
+	// support test on the fitted mean should make that unreachable: it
+	// keeps variance(mu) positive for every family, and the prior weights
+	// are already validated non-negative. This is the second line of
+	// defence, not the first.
 	auto normal_matrix = [&](const std::vector<double> &wk, const std::vector<double> *z,
 	                         linalg::Mat &XtWX, std::vector<double> &XtWz) {
 		XtWX = linalg::Mat(rank, rank);
 		XtWz.assign(rank, 0.0);
 		for (std::size_t r = 0; r < n; r++) {
 			const double wr = wk[r];
-			if (wr == 0.0) {
+			if (!(wr > 0.0)) {
 				continue;
 			}
 			for (std::size_t i = 0; i < rank; i++) {
@@ -693,15 +750,25 @@ GlmResult FitGlm(const std::vector<double> &y, const linalg::Mat &X_pred, const 
 			std::vector<double> beta_new = sol.x;
 			double dev_new = AllFinite(beta_new) ? evaluate(beta_new, eta_new, mu_new) : kNaN;
 
-			// Halve the step while it is bad. A step is bad when its
-			// coefficients or its deviance are not finite, or when the
-			// deviance increased. The first pass has no coefficient vector
-			// to halve toward, so it takes its step as it stands; see the
-			// header.
+			// A step is bad on any of four counts: its coefficients are
+			// not finite, its deviance is not finite, a fitted mean left
+			// the family's support, or the deviance increased. The
+			// support test is the one that cannot be dropped: see
+			// MuInSupport above for the wrong answers it prevents.
+			// `mu_new` is only current when beta_new is finite, which is
+			// why the two finiteness tests come first: || short-circuits,
+			// so the support test never reads a stale mu_new.
+			auto step_is_bad = [&]() {
+				return !AllFinite(beta_new) || !std::isfinite(dev_new) ||
+				       !AllMuInSupport(opts.family, mu_new) || dev_new > dev;
+			};
+
+			// Halve the step while it is bad. The first pass has no
+			// coefficient vector to halve toward, so it takes its step as
+			// it stands; see the header.
 			int halvings = 0;
 			if (iter > 1) {
-				while (halvings < kMaxHalvings &&
-				       (!AllFinite(beta_new) || !std::isfinite(dev_new) || dev_new > dev)) {
+				while (halvings < kMaxHalvings && step_is_bad()) {
 					for (std::size_t j = 0; j < rank; j++) {
 						beta_new[j] = 0.5 * (beta_new[j] + beta[j]);
 					}
@@ -710,10 +777,12 @@ GlmResult FitGlm(const std::vector<double> &y, const linalg::Mat &X_pred, const 
 				}
 			}
 
-			if (!AllFinite(beta_new) || !std::isfinite(dev_new)) {
+			if (!AllFinite(beta_new) || !std::isfinite(dev_new) ||
+			    !AllMuInSupport(opts.family, mu_new)) {
 				if (iter == 1) {
-					return GlmFail("glm_fit: the first step produced a non-finite deviance (the "
-					               "starting values or the offset saturate the link)");
+					return GlmFail("glm_fit: the first step produced a non-finite deviance or a "
+					               "fitted mean outside the family's support (the starting values "
+					               "or the offset saturate the link)");
 				}
 				break; // keep the iterate already accepted
 			}
