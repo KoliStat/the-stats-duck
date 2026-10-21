@@ -396,13 +396,28 @@ struct GlmResult {
 	//
 	// It is a heuristic, not a certificate. It fires on perfect
 	// separation, where no finite beta maximizes the likelihood. It can
-	// also fire on severe near-separation, where a finite MLE exists but
-	// sits far out on the logit scale and the loop has not reached it
-	// within max_iter. The flag cannot tell those two cases apart. Both
-	// show the same symptom: a non-converged fit with a fitted mean
-	// pinned at the boundary. The flag is always false for gaussian,
-	// poisson and gamma. None of those three has a boundary like this,
-	// or a divergence like this.
+	// also fire on severe near-separation, where a finite MLE exists.
+	// That MLE sits far out on the logit scale, and the loop has not
+	// reached it within max_iter. The flag cannot tell those two cases
+	// apart. Both show the same symptom: a non-converged fit with a
+	// fitted mean pinned at the boundary. The flag is always false for
+	// gaussian, poisson and gamma. None of those three has a boundary
+	// like this, or a divergence like this.
+	//
+	// The flag also has a blind spot in the other direction. It needs a
+	// NON-CONVERGED fit. That is one of its three conditions. A response
+	// with no variation in a group is the clearest case. Every row
+	// carries the same value. There is no information in it at all. That
+	// kind of fit often still converges before max_iter. The loop's
+	// stopping rule reads the deviance, not the coefficients. The
+	// deviance flattens out near the boundary well before beta does. On
+	// a response this uninformative, the fit can still report
+	// converged = true. The flag still reads false there. A converged
+	// fit with separation = false does NOT rule out an uninformative
+	// response.
+	// Check std_error too. Measured: an all-zero binomial group converges
+	// at iteration 23, with an intercept standard error near 40311
+	// beside a coefficient near -24.6.
 	bool separation = false;
 };
 
