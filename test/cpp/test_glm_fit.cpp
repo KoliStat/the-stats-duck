@@ -200,12 +200,6 @@ static void test_gaussian_equals_lm_fit() {
 }
 
 // ── Every robust estimator reduces to fit_lm's at gaussian identity ──────
-
-// The name of an estimator, for the printed lines below.
-static const char *vname(statsduck::Vcov v) {
-	return statsduck::vcov_name(v);
-}
-
 static void test_robust_equals_lm_fit() {
 	std::printf("every robust estimator equals fit_lm's at gaussian identity\n");
 
@@ -254,7 +248,7 @@ static void test_robust_equals_lm_fit() {
 		// n_clusters stays 0 under an HC estimator, so the SQL layer
 		// writes NULL there.
 		check(g.n_clusters == 0, "an HC fit reports no cluster count");
-		std::printf("  %-5s DS5: worst gap against fit_lm %.3g\n", vname(v), worst);
+		std::printf("  %-5s DS5: worst gap against fit_lm %.3g\n", statsduck::vcov_name(v), worst);
 	}
 
 	// The same for the cluster-robust pair, which also has to count the
@@ -284,8 +278,8 @@ static void test_robust_equals_lm_fit() {
 			check(close_rel(at(g.std_error, j), at(o.std_error, j), 0.0),
 			      "and so does every standard error");
 		}
-		std::printf("  %-5s DS8: worst gap against fit_lm %.3g, G = %zu\n", vname(v), worst,
-		            g.n_clusters);
+		std::printf("  %-5s DS8: worst gap against fit_lm %.3g, G = %zu\n",
+		            statsduck::vcov_name(v), worst, g.n_clusters);
 	}
 
 	// Changing the estimator never moves the point estimates. The band is
@@ -548,19 +542,27 @@ static void test_oracles() {
 //   CR0  se 1.70e-15  cov 3.97e-15  z 7.97e-15  p 3.44e-15 absolute
 //   CR1  se 1.94e-15  cov 3.92e-15  z 8.13e-15  p 3.44e-15 absolute
 // against the same fit's model-based cov at 8.51e-08. That difference is
-// informative rather than odd: Task 4 measured that the oracle's
+// informative rather than odd. Task 4 measured that the oracle's
 // model-based covariance is evaluated at the previous iterate's working
-// weights, and these numbers say that stale bread does not reach the
-// oracle's cluster path. What is left is the coefficient agreement, 6.86e-15,
-// propagated through a smooth function of beta.
+// weights. These numbers say that stale bread does not reach the oracle's
+// cluster path. What is left is the coefficient agreement, 6.86e-15,
+// carried through a smooth function of beta.
 //
-// So the bands are set at 1e-12, which is 250 times the worst measured
-// gap. That is deliberately loose for a measurement at rounding level: the
-// point of this band is to catch a structural error, and the smallest
-// structural error here is large. Dropping CR1's finite-sample factor
-// changes the covariance by 30%. Dropping link_deriv from the score
-// changes it by orders of magnitude. 1e-12 still leaves room for another
-// platform's exp and log to land a few bits elsewhere.
+// So the band is 1e-12, which is 250 times the worst measured gap. That
+// is deliberately loose for a measurement at rounding level. The point of
+// the band is to catch a structural error, and the smallest structural
+// error here is far larger. Both were measured, by building the kernel
+// with the error in it:
+//   dropping link_deriv from the score moves DS8's CR0 covariance 0.79
+//     relative, against a golden it otherwise matches at 4.0e-15
+//   dropping CR1's finite-sample factor moves it 0.23 relative, which is
+//     the factor's own size
+// 1e-12 still leaves room for another platform's exp and log to land a
+// few bits elsewhere.
+//
+// The p-value is compared ABSOLUTELY against the same constant. Both of
+// DS8's robust p-values are near 0.3, so 1e-12 absolute is about 3e-12
+// relative there, and the measured gap is 3.44e-15.
 static const double TOL_ROBUST = 1e-12;
 
 struct RobustFixture {
@@ -597,9 +599,12 @@ static void test_robust_oracles() {
 
 		double fs = 0.0, fz = 0.0, fc = 0.0, fp = 0.0, fb = 0.0;
 		for (std::size_t j = 0; j < kDs8K; j++) {
-			// beta against the MODEL-BASED golden: the estimator must not
+			// beta against the MODEL-BASED golden. The estimator must not
 			// move the point estimate, and the oracle's own self-check
-			// pins its clustered beta equal to its model-based beta.
+			// pins its clustered beta equal to its model-based beta. The
+			// band here is TOL_COEF rather than TOL_ROBUST, because this
+			// comparison inherits the stopping-rule gap the table above
+			// measures rather than the sandwich's own.
 			fb = std::max(fb, rel_dev(at(g.beta, j), kDs8Beta[j]));
 			fs = std::max(fs, rel_dev(at(g.std_error, j), f.std_error[j]));
 			fz = std::max(fz, rel_dev(at(g.z_statistic, j), f.z_statistic[j]));
@@ -652,14 +657,13 @@ static void test_robust_oracles() {
 	            worst_ratio);
 
 	// HC0 IS CR0 with one cluster per row. A cluster of one row has a
-	// score sum equal to that row's own score, so the two meats are the
-	// same sum of outer products. This is what gives the HC accumulation
-	// an oracled check on a non-gaussian family, since the CR0 above is
-	// the oracled one.
+	// score sum equal to that row's own score. So the two meats are the
+	// same sum of outer products. The CR0 above is oracled, so this gives
+	// the HC accumulation an oracled check on a non-gaussian family.
 	//
 	// The band is 1e-13, measured 2.17e-16. The two paths compute the same
-	// sum in a different order: HC0 squares the score first and then scales
-	// the outer product, while CR0 scales the design row first and then
+	// sum in a different order. HC0 squares the score first and then
+	// scales the outer product. CR0 scales the design row first and then
 	// multiplies two scaled entries. Only rounding separates them, so the
 	// band is 460 times the measurement.
 	std::vector<int> one_per_row(kDs8N);
@@ -691,15 +695,16 @@ static void test_weighted_sandwich() {
 	std::printf("a weighted sandwich equals fit_lm's on the sqrt(w)-scaled design\n");
 
 	// This test exists because the gaussian equivalence above cannot see
-	// the prior weight at all. There every weight is 1, so the w factor in
-	// the score and the w factor in the hat diagonal are both
-	// multiplications by 1 and a build that omitted either would still
+	// the prior weight at all. There every weight is 1. The w factor in
+	// the score and the w factor in the hat diagonal are then both
+	// multiplications by 1, so a build that omitted either would still
 	// pass. MEASURED: removing `h *= final_w[r]` from the hat diagonal
-	// leaves every check above passing while moving this test's HC2
-	// standard error by 24.8% and its HC3 standard error by 46.8%.
+	// fails 12 checks, all of them in this test, and nothing else in the
+	// suite. It moves this test's HC2 standard error by 24.8% and its HC3
+	// standard error by 46.8%.
 	//
 	// The identity. Write W for the diagonal prior weights. For gaussian
-	// with an identity link the working weight IS the prior weight, so
+	// with an identity link the working weight IS the prior weight. So
 	// weighted least squares on (y, X) is ordinary least squares on
 	// (W^(1/2) y, W^(1/2) X). Under that transform every piece of the
 	// sandwich maps across exactly:
@@ -745,10 +750,10 @@ static void test_weighted_sandwich() {
 		X_scaled(i, 1) = s * x[i]; // the scaled predictor
 	}
 
-	// The band is 1e-12. Measured worst over all seven estimators:
-	// beta 0, dispersion 1.13e-16, standard error 1.14e-15, covariance
-	// 2.48e-15, all on HC2. The two fitters reach the same numbers by
-	// different arithmetic: this kernel multiplies by w once, fit_lm
+	// The band is 1e-12. Measured worst over all seven estimators: beta 0,
+	// dispersion 1.13e-16, standard error 1.14e-15, covariance 2.48e-15,
+	// the last two on HC2. The two fitters reach the same numbers by
+	// different arithmetic. This kernel multiplies by w once and fit_lm
 	// multiplies by sqrt(w) twice. So the agreement is rounding, and the
 	// band is 400 times it. A structural difference is far larger, as the
 	// 24.8% measurement above shows.
@@ -784,7 +789,7 @@ static void test_weighted_sandwich() {
 		worst = std::max(worst, rel_dev(g.dispersion, o.sigma * o.sigma));
 		check(close_rel(g.dispersion, o.sigma * o.sigma, 1e-12),
 		      "and the dispersion is the scaled fit's sigma squared");
-		std::printf("  %-5s weighted: worst gap %.3g, se0 %.12g\n", vname(v), worst,
+		std::printf("  %-5s weighted: worst gap %.3g, se0 %.12g\n", statsduck::vcov_name(v), worst,
 		            at(g.std_error, 0));
 	}
 }
@@ -849,19 +854,20 @@ static void test_cluster_id_convention() {
 	// gives G = 9 even though only five labels appear.
 	//
 	// Both headers require DENSE 0-based labels, and densify_clusters is
-	// the supported producer, so on every supported path the largest id
+	// the supported producer. So on every supported path the largest id
 	// plus one IS the distinct count. Keeping the rule identical to
-	// fit_lm's is what makes the gaussian equivalence test above a real
-	// check instead of one restricted to dense inputs, and it keeps the
-	// two fitters from reporting different CR1 numbers for the same ids,
-	// which would be a worse defect than a documented precondition.
-	// Tightening the rule belongs in one change across both fitters.
+	// fit_lm's has two benefits. It makes the gaussian equivalence test
+	// above a real check rather than one restricted to dense inputs. And
+	// it keeps the two fitters from reporting different CR1 numbers for
+	// the same ids, which would be a worse defect than a documented
+	// precondition. Tightening the rule belongs in one change across both
+	// fitters.
 	//
-	// What this test asserts is that AGREEMENT, not that the number is the
-	// right count: it fits the same sparse ids through both kernels and
-	// requires the same G and the same covariance. An empty cluster
-	// contributes a zero score sum, so only the factor and n_clusters
-	// move, and they move together in both fitters.
+	// This test asserts that AGREEMENT. It does not assert that the
+	// number is the right count. It fits the same sparse ids through both
+	// kernels and requires the same G and the same covariance. An empty
+	// cluster contributes a zero score sum, so only the factor and
+	// n_clusters move, and they move together in both fitters.
 	//
 	// The band is 0.0, which close_rel passes only on exact equality,
 	// because this is the same gaussian identity reduction as the test

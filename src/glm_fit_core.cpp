@@ -517,17 +517,17 @@ GlmResult FitGlm(const std::vector<double> &y, const linalg::Mat &X_pred, const 
 		//
 		// This is the one genuinely new formula in this file. lm_core's
 		// meat is built from RESPONSE residuals, y_i - yhat_i. A GLM's is
-		// built from SCORE residuals, the per-row derivative of the
-		// log-likelihood with respect to eta, which carries the link
-		// derivative and divides by the variance function. At gaussian
-		// with an identity link both of those are exactly 1, so u_i
-		// becomes w_i * (y_i - mu_i) and the two agree.
+		// built from SCORE residuals. A score residual is the per-row
+		// derivative of the log-likelihood with respect to eta, so it
+		// carries the link derivative and divides by the variance
+		// function. At gaussian with an identity link both of those are
+		// exactly 1. Then u_i is w_i * (y_i - mu_i) and the two agree.
 		//
 		// A row whose working weight is not strictly positive gets u = 0
 		// and is skipped by every loop below, exactly as normal_matrix
 		// skips it. That is not tidiness. A zero-weight row is excluded
 		// from the support test, so its own fitted mean can sit outside
-		// the family's support, where variance(mu) can be 0: poisson with
+		// the family's support. There variance(mu) can be 0: poisson with
 		// an identity link reaches mu = 0 exactly. The formula above would
 		// then compute 0/0 and put NaN into the meat for a row that
 		// influences nothing.
@@ -555,7 +555,6 @@ GlmResult FitGlm(const std::vector<double> &y, const linalg::Mat &X_pred, const 
 		// (Xt X) inverse. Everything else below follows lm_core.cpp's
 		// covariance section line for line, including its small-sample
 		// factors and its guard on the hat diagonal.
-		const double df_resid = static_cast<double>(n - rank);
 		linalg::Mat V(rank, rank);
 		if (opts.vcov == Vcov::kConst) {
 			for (std::size_t i = 0; i < rank; i++) {
@@ -571,9 +570,9 @@ GlmResult FitGlm(const std::vector<double> &y, const linalg::Mat &X_pred, const 
 			// one lm_core uses.
 			//
 			// No dispersion factor here, or in the HC branch below. The
-			// meat already carries the scale of the data, which is why a
-			// gaussian robust fit matches lm_core, whose HC and CR
-			// estimators do not multiply by sigma squared either.
+			// meat already carries the scale of the data. That is also
+			// why a gaussian robust fit matches lm_core: lm_core's HC and
+			// CR estimators do not multiply by sigma squared either.
 			std::vector<double> score(G * rank, 0.0); // G x rank row-major: per-cluster s_g
 			for (std::size_t r = 0; r < n; r++) {
 				if (!(final_w[r] > 0.0)) {
@@ -607,19 +606,21 @@ GlmResult FitGlm(const std::vector<double> &y, const linalg::Mat &X_pred, const 
 			}
 		} else {
 			// Heteroskedasticity-consistent: V = A⁻¹ M A⁻¹ with the meat
-			// M = Σ_i u_i x_i x_iᵀ u_i = Σ_i u_i² x_i x_iᵀ, because the
-			// score u_i x_i is the row of the design scaled by one
-			// number. So the meat has the same shape lm_core's does, with
-			// u_i² where lm_core has the squared response residual.
+			// M = Σ_i (x_i u_i)(x_i u_i)ᵀ = Σ_i u_i² x_i x_iᵀ. The second
+			// form holds because the score is the design row scaled by
+			// one number. So the meat has the same shape lm_core's does,
+			// with u_i² where lm_core has the squared response residual.
 			//
 			// HC2 and HC3 divide the score by (1 − h)^½ and (1 − h),
 			// which divides u_i² by (1 − h) and (1 − h)². h_i is the hat
 			// diagonal of the WEIGHTED design,
 			//   h_i = w_i^½ · x_iᵀ A⁻¹ x_i · w_i^½ = w_i · x_iᵀ A⁻¹ x_i,
 			// with w_i the working weight. That weight factor is the only
-			// difference from lm_core's leverage, and it is why a
-			// weighted fit needs it: at gaussian identity with unit
-			// weights w_i is exactly 1 and the two are the same number.
+			// difference from lm_core's leverage. At gaussian identity
+			// with unit weights w_i is exactly 1, so the two are the same
+			// number. A weighted fit is where the factor changes the
+			// answer: test_glm_fit.cpp measures that removing it moves an
+			// HC3 standard error by 46.8%.
 			linalg::Mat meat(rank, rank);
 			std::vector<double> xi(rank, 0.0);
 			for (std::size_t r = 0; r < n; r++) {
@@ -638,8 +639,9 @@ GlmResult FitGlm(const std::vector<double> &y, const linalg::Mat &X_pred, const 
 					}
 					h *= final_w[r]; // the weighted design's leverage
 					double denom = 1.0 - h;
-					// Guard the degenerate h to 1, a saturated row.
-					// lm_core uses the same floor for the same reason.
+					// Guard against h reaching 1, which a saturated row
+					// does. lm_core uses the same floor, for the same
+					// reason.
 					if (denom < 1e-12) {
 						denom = 1e-12;
 					}
@@ -654,7 +656,9 @@ GlmResult FitGlm(const std::vector<double> &y, const linalg::Mat &X_pred, const 
 			}
 			V = linalg::sandwich(XtWXinv, meat); // A⁻¹ M A⁻¹
 			if (opts.vcov == Vcov::kHC1) {
-				const double c = static_cast<double>(n) / df_resid;
+				// n / (n − rank), lm_core's own factor. rank, not k: a
+				// dropped column is not an estimated parameter.
+				const double c = static_cast<double>(n) / static_cast<double>(n - rank);
 				for (auto &v : V.data) {
 					v *= c;
 				}
