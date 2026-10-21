@@ -18,8 +18,11 @@
 #     emmeans.cpp + linalg.cpp
 #   - glm_core, the GLM families, links and their parsers (#22):
 #     test_glm_core.cpp + glm_core.cpp + linalg.cpp
-# The first three, emmeans and glm_core link Eigen (via linalg.cpp); lm_core,
-# lin_hyp, emmeans and glm_core also pull in the header-only
+#   - glm_fit, the IRLS loop and its covariance (#22): test_glm_fit.cpp +
+#     glm_core.cpp + lm_core.cpp + linalg.cpp. It links lm_core because its
+#     first test compares a gaussian identity-link fit against fit_lm.
+# The first three, emmeans, glm_core and glm_fit link Eigen (via linalg.cpp);
+# lm_core, lin_hyp, emmeans, glm_core and glm_fit also pull in the header-only
 # distributions.hpp. Each suite returns 0 on all-pass.
 #
 # Needs: a C++17 compiler ($CXX, default g++) and the third_party/eigen submodule
@@ -92,6 +95,12 @@ build_and_run test_emmeans \
 build_and_run test_glm_core \
   "$ROOT/test/cpp/test_glm_core.cpp" \
   "$ROOT/src/glm_core.cpp" \
+  "$ROOT/src/linalg.cpp"
+
+build_and_run test_glm_fit \
+  "$ROOT/test/cpp/test_glm_fit.cpp" \
+  "$ROOT/src/glm_core.cpp" \
+  "$ROOT/src/lm_core.cpp" \
   "$ROOT/src/linalg.cpp"
 
 if [[ $rc -ne 0 ]]; then

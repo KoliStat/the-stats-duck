@@ -1,29 +1,27 @@
 #pragma once
 
-// stats_duck GLM families and links (#22).
+// stats_duck GLM families, links, and the IRLS fitting loop (#22).
 //
-// This file holds the pure scalar functions the IRLS loop will use. IRLS
-// stands for iteratively reweighted least squares. It is the algorithm
-// glm_fit uses to fit a generalized linear model. This increment has no
-// loop yet. It has the family and link enums and their parsers. It has
-// four scalar functions over a single observation: link_eta, link_inv,
-// link_deriv, variance. It has four closed-form quantities over a whole
-// fit's y, mu and w vectors: deviance, glm_loglik, glm_aic,
-// pearson_dispersion. All eight are testable without a fitting loop. Each
-// one takes the fitted values as a plain argument instead of computing
-// them.
+// IRLS stands for iteratively reweighted least squares. It is the
+// algorithm fit_glm uses to fit a generalized linear model.
+//
+// The file is in two parts. The first part is the pure scalar and
+// closed-form layer, all of it testable without a fitting loop: the
+// family and link enums and their parsers; four scalar functions over a
+// single observation, link_eta, link_inv, link_deriv and variance; and
+// four closed-form quantities over a whole fit's y, mu and w vectors,
+// deviance, glm_loglik, glm_aic and pearson_dispersion. Each of those
+// takes the fitted values as a plain argument instead of computing them.
+// The second part is fit_glm: the loop that produces the fitted values,
+// its options, and its result.
 //
 // DuckDB-free and Eigen-free at the boundary, like linalg.hpp and
 // lm_core.hpp. This file includes lm_core.hpp for one reason: the Vcov
-// enum. A later task adds the glm_fit result struct, and that struct
-// reuses Vcov so a GLM's standard errors are named the same way an OLS
-// fit's are. This file never calls lm_core's fitting code. It does not
-// call fit_lm, parse_vcov, or vcov_name. (lm_core.hpp also brings in
-// linalg::Mat, through its own include of linalg.hpp. Nothing in this
-// increment uses Mat either; a later task's IRLS loop will.)
-//
-// glm_core.hpp will grow. The IRLS loop and the glm_fit result type come
-// in a later task and will live here too.
+// enum, which GlmResult reuses so a GLM's standard errors are named the
+// same way an OLS fit's are. This file never calls lm_core's fitting
+// code. It does not call fit_lm, parse_vcov, or vcov_name. (lm_core.hpp
+// also brings in linalg::Mat, through its own include of linalg.hpp.
+// fit_glm takes its design matrix as a Mat.)
 
 #include "lm_core.hpp" // statsduck::Vcov — the enum only, never fit_lm/parse_vcov
 
@@ -277,5 +275,191 @@ double glm_aic(Family f, double loglik, std::size_t rank);
 // dispersion and which do not.
 double pearson_dispersion(Family f, const std::vector<double> &y, const std::vector<double> &mu,
                            const std::vector<double> &w, std::size_t df_residual);
+
+// ─── The fit: options, result, and the IRLS loop ────────────────────────
+
+// Options for one fit.
+//
+// `link` has no per-family default here. A caller holding a family and no
+// link asks canonical_link for one and stores it in this field. fit_glm
+// rejects a link the family does not allow, through link_allowed above.
+//
+// `vcov` names the covariance estimator. It reuses lm_core's enum, so a
+// GLM's standard errors are named the way an OLS fit's are. Only kConst
+// is computed in this increment, which is dispersion * (XtWX) inverse.
+// The score-residual sandwich behind HC0 through HC3 and CR0 and CR1
+// comes in the next increment. CR0 and CR1 already validate their cluster
+// ids here, so the argument contract does not change when that lands.
+//
+// `max_iter` and `tol` are R's glm.control defaults: at most 25 outer
+// iterations, and a relative deviance change below 1e-8.
+struct GlmOptions {
+	Family family = Family::kGaussian;
+	Link link = Link::kIdentity; // set from canonical_link unless given
+	Vcov vcov = Vcov::kConst;
+	bool intercept = true; // prepend a column of 1s to the design matrix
+	int max_iter = 25;
+	double tol = 1e-8;
+};
+
+// The result of one fit. There are three outcomes, and a caller has to
+// tell them apart:
+//
+//   ok = true,  converged = true    The fit converged.
+//   ok = true,  converged = false   The loop used every iteration, or a
+//                                   step could not be improved. The best
+//                                   iterate is still reported in full.
+//                                   This is a value, not a NULL group.
+//   ok = false, error populated     A data-shaped failure. The SQL layer
+//                                   reports the group as NULL and never
+//                                   raises. See
+//                                   docs/fitter_conventions.md.
+//
+// Vector fields are all length k, the full design width. A column dropped
+// as dependent is NaN in beta, std_error, z_statistic and p_value, and in
+// its own row and column of cov, while `terms` still names it. That is
+// R's convention and #36's: the earlier column of a dependent set is
+// kept, the later one is aliased.
+struct GlmResult {
+	bool ok = false;
+	std::string error;
+
+	std::size_t n = 0;           // observations used
+	std::size_t k = 0;           // parameters (predictors + intercept)
+	std::size_t rank = 0;        // parameters actually estimated
+	std::size_t n_clusters = 0;  // #clusters G (vcov CR* only); 0 when unclustered
+	std::size_t df_residual = 0; // n - rank
+
+	std::vector<std::string> terms; // length k: "(Intercept)", "x1", "x2", ...
+	std::vector<double> beta;
+	std::vector<double> std_error;
+	// beta / std_error, against a NORMAL reference for all four families,
+	// with p_value = 2 * (1 - NormalCDF(|z|)). R and statsmodels switch to
+	// a t reference for gaussian and gamma, whose dispersion is estimated.
+	// This project does not. The deviation is deliberate and it is written
+	// down in the fixtures, which carry both the oracle's t-based p-value
+	// and the normal-based one this kernel must produce.
+	std::vector<double> z_statistic;
+	std::vector<double> p_value;
+	// k*k row-major coefficient covariance, in `terms` order:
+	// cov[i*k + j] = cov(beta_i, beta_j). The diagonal is std_error
+	// squared. Rows and columns of an aliased term are NaN.
+	std::vector<double> cov;
+
+	double deviance = 0.0;
+	// The intercept-only model's deviance, from actually fitting that
+	// model with the same family, link, weights and offset. NaN when that
+	// fit itself fails.
+	double null_deviance = 0.0;
+	double dispersion = 1.0; // exactly 1 for binomial and poisson
+	double loglik = 0.0;
+	double aic = 0.0;
+	// Outer IRLS passes used, never the step halvings inside them. A fit
+	// that converges on its third pass reports 3 whether or not steps were
+	// halved inside those passes. A fit with no parameters to estimate
+	// reports 0: there is nothing to iterate.
+	int iterations = 0;
+	bool converged = false;
+	// Always false in this increment. The next increment adds the binomial
+	// separation heuristic that sets it.
+	bool separation = false;
+};
+
+// Fit y (length n) on the predictor matrix X_pred (n x p, row-major,
+// WITHOUT an intercept column — opts.intercept controls whether a
+// constant is prepended), by iteratively reweighted least squares.
+//
+// A ZERO-COLUMN X_pred is a legitimate input, not misuse. With
+// opts.intercept true the prepended constant is then the only column,
+// which is how null_deviance is computed. With opts.intercept false as
+// well there are no parameters at all, and mu is the link inverse of the
+// offset alone. That case reports rank 0, iterations 0 and converged
+// true, because there is nothing to iterate.
+//
+// weights: optional, length n, the PRIOR weights. For binomial these are
+// the trial counts and y is the proportion of successes, so 7 of 10 is
+// y = 0.7 and w = 10. Defaults to 1 for every row. The kernel counts
+// every row it is given in `n`, including a row of weight 0. The SQL
+// layer drops zero-weight rows at accumulation, like a NULL, so they do
+// not reach here and do not inflate df_residual.
+//
+// offset: optional, length n, added to the linear predictor and not
+// estimated. A poisson model of a rate uses log(exposure) here.
+//
+// cluster_ids: optional, length n, DENSE 0-based cluster labels (0..G-1),
+// as densify_clusters (cluster_ids.hpp) produces. Required when opts.vcov
+// is kCR0 or kCR1, and ignored otherwise. Fewer than two clusters leaves
+// the cluster-robust covariance undefined, so that is a failed fit.
+//
+// The loop:
+//   mu    = R's glm.fit starting values: (w*y + 0.5)/(w + 1) binomial,
+//           y + 0.1 poisson, y gaussian and gamma
+//   eta   = link_eta(mu)
+//   repeat up to opts.max_iter times:
+//     z   = eta - offset + (y - mu) / link_deriv(eta)
+//     W   = w * link_deriv(eta)^2 / variance(mu)
+//     solve (Xt W X) beta = Xt W z over the kept columns
+//     eta = X beta + offset,  mu = link_inv(eta)
+//     halve the step, at most 25 times, while the new deviance is not
+//     finite or exceeds the old one
+//     stop when |dev - dev_prev| / (|dev| + 0.1) < opts.tol
+//
+// The solve is linalg::cholesky_solve on Xt W X, falling back to
+// linalg::svd_solve when the Cholesky reports the matrix is not positive
+// definite. That mirrors fit_lm.
+//
+// Step halving needs a previous coefficient vector to halve toward, and
+// the first pass has none: the starting point is a mean vector, not a
+// coefficient vector. So the first pass takes its step as it stands, and
+// a non-finite first step is a failed fit. R's glm.fit has the same
+// restriction, and stops there with "no valid set of coefficients has
+// been found". The first pass also commonly INCREASES the deviance, which
+// is normal rather than a problem: the binomial starting mu sits close to
+// y, so its deviance starts below the fitted model's.
+//
+// THE RANK-DEFICIENT COLUMN SET IS COMPUTED ONCE AND HELD FIXED for the
+// whole loop. This deviates from R, which re-pivots every iteration.
+// Holding it fixed is justified rather than merely convenient: for
+// strictly positive weights rank(W^1/2 X) = rank(X), because W^1/2 is
+// invertible, so the set cannot change between iterations. Fixing it also
+// makes the fit deterministic where re-pivoting could oscillate. The set
+// comes from linalg::independent_columns on X restricted to the rows
+// whose PRIOR weight is positive, because a zero-weight row contributes
+// nothing to the solve and can change the rank.
+//
+// The covariance is evaluated at the reported estimate: W is recomputed
+// from the final eta and mu, and the classical estimator is
+// dispersion * (Xt W X) inverse.
+//
+// Reported quantities are computed in this order, and the order is part
+// of the contract: the fitted values, then deviance, then
+// pearson_dispersion, then glm_loglik, then glm_aic. glm_loglik takes
+// pearson_dispersion's value, never a placeholder 1.0. For binomial and
+// poisson pearson_dispersion is always exactly 1.0, so the order does not
+// matter there. For gaussian and gamma it does.
+//
+// Data-shaped failures, each ok = false with a populated `error`:
+//   - y empty, or y.size() different from X_pred.rows;
+//   - a supplied weights or offset whose length is not y.size();
+//   - opts.max_iter below 1, which would report a result with no fit in it;
+//   - a link the family does not allow (link_allowed);
+//   - a non-finite y; a binomial y outside [0, 1]; a negative poisson y;
+//     a gamma y not strictly positive; a negative or non-finite weight; a
+//     non-finite offset;
+//   - every row of weight 0, so nothing informs the fit;
+//   - a design with no independent column at all;
+//   - n <= rank, which leaves no residual degrees of freedom. The
+//     dispersion divides by n - rank, so this has to be decided before
+//     any division rather than after it;
+//   - kCR0 or kCR1 with no cluster ids, with ids that are not dense
+//     non-negative labels, or with fewer than two clusters;
+//   - a first step whose deviance or coefficients are not finite, which
+//     the paragraph on step halving above explains.
+// A rank-deficient design is NOT one of them: it is a fit, with the
+// dependent columns aliased.
+GlmResult fit_glm(const std::vector<double> &y, const linalg::Mat &X_pred, const GlmOptions &opts,
+                  const std::vector<double> *weights = nullptr,
+                  const std::vector<double> *offset = nullptr,
+                  const std::vector<int> *cluster_ids = nullptr);
 
 } // namespace statsduck
