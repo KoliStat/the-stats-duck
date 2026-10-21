@@ -401,12 +401,37 @@ rest, so this section adds no new special functions.
 within `max_iter`, and at least one fitted value lies within 1e-10 of 0 or
 1. For the other three families it is always false.
 
-The flag is a heuristic and the documentation says so plainly: it fires on
-perfect separation, and it can also fire on severe near-separation, which it
+The flag is a heuristic and the documentation says so plainly. It fires on
+perfect separation. It can also fire on severe near-separation, which it
 cannot distinguish. It exists because perfect separation makes coefficients
 diverge, and without it a caller sees an enormous estimate beside an
-enormous standard error with no indication of why — which is how separation
+enormous standard error with no indication of why. That is how separation
 reaches a published table.
+
+**The flag also has a blind spot, and this paragraph is the correction of an
+earlier version of this spec that did not admit it.** `separation` requires
+a fit that did **not** converge. A response with no variation at all — every
+`y` equal, which a `GROUP BY` over a rare outcome produces routinely — is a
+textbook instance of complete separation, yet it typically **converges**
+before `max_iter` and so is never flagged. The reason is that IRLS tests the
+deviance rather than the coefficients, and the deviance flattens near the
+support boundary long before the coefficients settle. Measured on this
+issue's own fixtures: an all-zero binomial response converges at iteration
+23 with an intercept standard error around 40311, and `separation` stays
+false throughout.
+
+So the promise is narrower than the paragraph above it first implied.
+`separation = true` is evidence of trouble. `separation = false` is **not**
+evidence of a sound fit, and a caller who wants that assurance must also
+look at the magnitude of `std_error`. Both the header and the user-facing
+documentation must say this, because a reader who sees only the first
+paragraph would conclude that `converged = true` rules out an uninformative
+fit, and it does not.
+
+Fixing the blind spot properly means testing the coefficients for divergence
+rather than the deviance for flatness, or detecting separation exactly, which
+the Scope section rules out for want of a linear-programming solver. Neither
+is in this issue.
 
 ### Domain violations
 
