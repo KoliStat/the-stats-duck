@@ -681,3 +681,34 @@ FROM (SELECT emmeans([[1,0,0],[0,1,0],[0,0,1]],
       FROM (SELECT glm_fit(y, [g1, g2, g3], 'binomial', {'intercept': false}) AS g FROM ds_cells));
 ----
 1.1547	1.0000
+
+# ── A prior weight of exactly 0 ─────────────────────────────────────────────
+# A prior weight of exactly 0 means the row influences no estimate, so it is
+# dropped at accumulation exactly like a NULL and is absent from n. Counting it
+# would inflate df_residual and deflate the dispersion.
+query III
+SELECT (a).n, (b).n, printf('%.10f', abs((a).deviance - (b).deviance))
+FROM (
+  SELECT glm_fit(y, [x1], 'gaussian', {'weights': w0}) AS a,
+         glm_fit(y, [x1], 'gaussian') AS b
+  FROM (SELECT y, x1, CASE WHEN x1 > 3 THEN 0.0 ELSE 1.0 END AS w0 FROM ds)
+);
+----
+3	6	0.0000000000
+
+# The real content of the rule: zeroing the weight on x1 > 3 must give exactly
+# the fit of x1 <= 3 with no weights at all. DS5 is used rather than `ds`,
+# which fits its rows exactly and so would compare two sets of zeros.
+query TTTTTTTTT
+SELECT (a).n, (c).n, (a).df_residual = (c).df_residual,
+       printf('%.12f', abs((a).deviance - (c).deviance)),
+       printf('%.12f', abs((a).coefficients[1].estimate - (c).coefficients[1].estimate)),
+       printf('%.12f', abs((a).coefficients[2].estimate - (c).coefficients[2].estimate)),
+       printf('%.12f', abs((a).coefficients[1].std_error - (c).coefficients[1].std_error)),
+       printf('%.12f', abs((a).coefficients[2].std_error - (c).coefficients[2].std_error)),
+       printf('%.12f', abs((a).dispersion - (c).dispersion))
+FROM (SELECT glm_fit(y, [x1], 'gaussian', {'weights': CASE WHEN x1 > 6 THEN 0.0 ELSE 1.0 END}) AS a
+      FROM ds5),
+     (SELECT glm_fit(y, [x1], 'gaussian') AS c FROM ds5 WHERE x1 <= 6)
+----
+6	6	true	0.000000000000	0.000000000000	0.000000000000	0.000000000000	0.000000000000	0.000000000000
