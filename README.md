@@ -675,13 +675,16 @@ CREATE TABLE ds_bin AS SELECT * FROM (VALUES
 SELECT (h).df_num, printf('%.4f', (h).chisq)
 FROM (SELECT lin_hyp([[0, 1]],
                      list_transform(g.coefficients, c -> c.estimate),
-                     g.cov, 1.0, g.df_residual) AS h
+                     g.cov, g.dispersion, g.df_residual) AS h
       FROM (SELECT glm_fit(y, [x1], 'binomial') AS g FROM ds_bin));
 --   df_num  chisq
 --   1       2.5741
 ```
 
-`sigma2` is `1.0` because `glm_fit`'s `cov` is already on the right scale;
+`sigma2` takes the fit's own dispersion, not a constant: `g.dispersion` is
+`1.0` here because binomial's dispersion is fixed at 1. For a gaussian or
+gamma fit, where dispersion is the Pearson estimate, a literal `1.0` would
+be silently wrong — pass that fit's own `dispersion` the same way.
 `df_residual` is the denominator df. `emmeans` works against a GLM the same
 way, but reports its means on a different scale than a reader might
 expect — see the next section.
