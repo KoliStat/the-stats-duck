@@ -290,11 +290,10 @@ double pearson_dispersion(Family f, const std::vector<double> &y, const std::vec
 // rejects a link the family does not allow, through link_allowed above.
 //
 // `vcov` names the covariance estimator. It reuses lm_core's enum, so a
-// GLM's standard errors are named the way an OLS fit's are. Only kConst
-// is computed in this increment, which is dispersion * (Xt W X) inverse.
-// The score-residual sandwich behind HC0 through HC3 and CR0 and CR1
-// comes in the next increment. CR0 and CR1 already validate their cluster
-// ids here, so the argument contract does not change when that lands.
+// GLM's standard errors are named the way an OLS fit's are. All seven are
+// computed. kConst is dispersion * (Xt W X) inverse. The other six are
+// the score-residual sandwich, which the fit_glm comment below sets out
+// in full.
 //
 // `max_iter` and `tol` are R's glm.control defaults: at most 25 outer
 // iterations, and a relative deviance change below 1e-8.
@@ -480,9 +479,51 @@ struct GlmResult {
 // whose PRIOR weight is positive, because a zero-weight row contributes
 // nothing to the solve and can change the rank.
 //
-// The covariance is evaluated at the reported estimate: W is recomputed
-// from the final eta and mu, and the classical estimator is
+// THE COVARIANCE IS EVALUATED AT THE REPORTED ESTIMATE: W is recomputed
+// from the final eta and mu. The classical estimator is then
 // dispersion * (Xt W X) inverse.
+//
+// This deviates from statsmodels, which evaluates its covariance at the
+// working weights of the PREVIOUS iterate. The deviation is deliberate
+// and it was measured. Standard-error gaps against statsmodels do not
+// shrink as tol tightens: they are identical at 1e-8, at 1e-12 and at 0,
+// while the coefficients close to 2.7e-12. Patching this kernel to use
+// the last solve's weights collapsed DS1's gap from 4.78e-07 to
+// 1.14e-15, which reproduces the mechanism to machine precision.
+// Recomputing at the final fitted values is the correct quantity, and it
+// is also the self-consistent one: this kernel's grouped and ungrouped
+// binomial standard errors agree to 4.29e-12 on data that is the same in
+// two shapes, where statsmodels' own two shapes disagree by 4.2e-07. So
+// expect an oracle band near 1e-5 on a standard error and near 1e-4 on a
+// robust one, and do not read it as an error in this kernel.
+//
+// THE ROBUST ESTIMATORS USE SCORE RESIDUALS, not response residuals.
+// That is the one real difference from lm_core. The score contribution
+// of observation i is the vector x_i * u_i with the scalar
+//   u_i = w_i * (y_i - mu_i) * link_deriv(eta_i) / variance(mu_i)
+// and A = Xt W X is the bread, so:
+//   HC0  A inverse * sum_i u_i^2 x_i x_i' * A inverse
+//   HC1  HC0 times n / (n - rank)
+//   HC2  divide each score by (1 - h_i)^(1/2)
+//   HC3  divide each score by (1 - h_i)
+//   CR0  sum the scores within a cluster before the outer product
+//   CR1  CR0 times [G/(G-1)]*[(N-1)/(N-rank)]
+// h_i = w_i * x_i' A inverse x_i is the hat diagonal of the WEIGHTED
+// design, with w_i the working weight. None of the six multiplies by the
+// dispersion: the meat already carries the scale of the data.
+//
+// At gaussian with an identity link link_deriv is 1 and variance is 1,
+// so u_i is w_i * (y_i - mu_i) and all six reduce to lm_core's
+// estimators. That reduction is exact, bit for bit, and test_glm_fit.cpp
+// asserts it at a band of 0.
+//
+// n_clusters is G under CR0 and CR1 and 0 otherwise, so the SQL layer
+// writes NULL there. df_residual stays n - rank under every estimator,
+// because it is a property of the fit rather than of the covariance.
+// z_statistic keeps its normal reference under every estimator too,
+// cluster-robust included: this kernel reports z for all four families
+// and so has no t reference to switch to. A consumer that wants the
+// G - 1 reference reads n_clusters.
 //
 // Reported quantities are computed in this order, and the order is part
 // of the contract: the fitted values, then deviance, then

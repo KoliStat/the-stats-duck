@@ -114,6 +114,10 @@ static const std::vector<double> ds3_offset = vec(kDs3Offset);
 static const std::vector<double> ds4_y = vec(kDs4Y);
 static const std::vector<double> ds5_y = vec(kDs5Y);
 static const std::vector<double> ds7_y = vec(kDs7Y);
+static const std::vector<double> ds8_y = vec(kDs8Y);
+// DS8's cluster labels. The fixture stores them as a raw int array, and
+// fit_glm takes a std::vector<int>, so they are copied once here.
+static const std::vector<int> ds8_clusters(kDs8Groups, kDs8Groups + kDs8N);
 
 static Mat ds1_design() {
 	return design(kDs1N, {kDs1X1, kDs1X2});
@@ -132,6 +136,9 @@ static Mat ds5_design() {
 }
 static Mat ds7_design() {
 	return design(kDs7N, {kDs7X1, kDs7X2, kDs7X3});
+}
+static Mat ds8_design() {
+	return design(kDs8N, {kDs8X1});
 }
 
 // ── The strongest check needs no oracle ──────────────────────────────────
@@ -175,6 +182,120 @@ static void test_gaussian_equals_lm_fit() {
 	check(g.converged, "an identity-link gaussian fit converges");
 	check(g.iterations <= 3, "and does so in very few iterations, since it is linear");
 	check(!g.separation, "separation is false for a gaussian fit");
+}
+
+// ── Every robust estimator reduces to fit_lm's at gaussian identity ──────
+
+// The name of an estimator, for the printed lines below.
+static const char *vname(statsduck::Vcov v) {
+	return statsduck::vcov_name(v);
+}
+
+static void test_robust_equals_lm_fit() {
+	std::printf("every robust estimator equals fit_lm's at gaussian identity\n");
+
+	// This is the test for the whole sandwich, and it needs no oracle.
+	//
+	// At gaussian with an identity link link_deriv is 1 and variance is 1,
+	// so the score u_i = x_i*w_i*(y_i - mu_i) reduces to the response
+	// residual times the row of the design, which is exactly what
+	// lm_core's meat is built from. The bread is XtWX with every working
+	// weight 1, which is XtX. So each robust estimator here must agree
+	// with lm_core's, and lm_core's are already validated against
+	// statsmodels: test_lm_fit.cpp's ds1_hetero carries their absolute
+	// goldens, and DS5 IS that design (the fixture header's self-check 3
+	// records that it reproduces ds1_hetero).
+	//
+	// The band is 0.0, which close_rel passes only on exact equality. That
+	// is not optimism: both paths are written to accumulate the same terms
+	// in the same order, and multiplying by a weight of exactly 1 and
+	// dividing by a variance of exactly 1 are exact operations in IEEE
+	// double. Measured 0 on every entry of all six estimators. A band of
+	// 1e-12 would hide a real structural difference behind rounding, so
+	// the exact one is the useful assertion here.
+	const statsduck::Vcov hc[] = {statsduck::Vcov::kHC0, statsduck::Vcov::kHC1,
+	                              statsduck::Vcov::kHC2, statsduck::Vcov::kHC3};
+	for (const statsduck::Vcov v : hc) {
+		statsduck::GlmOptions go;
+		go.family = statsduck::Family::kGaussian;
+		go.link = statsduck::Link::kIdentity;
+		go.vcov = v;
+		statsduck::LmOptions lo;
+		lo.vcov = v;
+		const statsduck::GlmResult g = statsduck::fit_glm(ds5_y, ds5_design(), go);
+		const statsduck::LmResult o = statsduck::fit_lm(ds5_y, ds5_design(), lo);
+		check(g.ok && o.ok, "both fitters succeed");
+		double worst = 0.0;
+		for (std::size_t e = 0; e < o.cov.size(); e++) {
+			worst = std::max(worst, rel_dev(at(g.cov, e), at(o.cov, e)));
+			check(close_rel(at(g.cov, e), at(o.cov, e), 0.0),
+			      "the glm sandwich matches lm_core's at gaussian identity");
+		}
+		for (std::size_t j = 0; j < o.k; j++) {
+			worst = std::max(worst, rel_dev(at(g.std_error, j), at(o.std_error, j)));
+			check(close_rel(at(g.std_error, j), at(o.std_error, j), 0.0),
+			      "and so does every standard error");
+		}
+		// n_clusters stays 0 under an HC estimator, so the SQL layer
+		// writes NULL there.
+		check(g.n_clusters == 0, "an HC fit reports no cluster count");
+		std::printf("  %-5s DS5: worst gap against fit_lm %.3g\n", vname(v), worst);
+	}
+
+	// The same for the cluster-robust pair, which also has to count the
+	// clusters. DS8 is a poisson design, fitted here as gaussian identity
+	// on purpose: the point is the sandwich algebra, not the family.
+	for (const statsduck::Vcov v : {statsduck::Vcov::kCR0, statsduck::Vcov::kCR1}) {
+		statsduck::GlmOptions go;
+		go.family = statsduck::Family::kGaussian;
+		go.link = statsduck::Link::kIdentity;
+		go.vcov = v;
+		statsduck::LmOptions lo;
+		lo.vcov = v;
+		const statsduck::GlmResult g =
+		    statsduck::fit_glm(ds8_y, ds8_design(), go, nullptr, nullptr, &ds8_clusters);
+		const statsduck::LmResult o = statsduck::fit_lm(ds8_y, ds8_design(), lo, &ds8_clusters);
+		check(g.ok && o.ok, "both cluster fits succeed");
+		check(g.n_clusters == o.n_clusters, "same cluster count");
+		check(g.n_clusters == kDs8NumClusters, "which is the fixture's G");
+		check(g.df_residual == o.df_residual, "df_residual stays n - rank under a cluster fit");
+		double worst = 0.0;
+		for (std::size_t e = 0; e < o.cov.size(); e++) {
+			worst = std::max(worst, rel_dev(at(g.cov, e), at(o.cov, e)));
+			check(close_rel(at(g.cov, e), at(o.cov, e), 0.0), "the cluster sandwich matches");
+		}
+		for (std::size_t j = 0; j < o.k; j++) {
+			worst = std::max(worst, rel_dev(at(g.std_error, j), at(o.std_error, j)));
+			check(close_rel(at(g.std_error, j), at(o.std_error, j), 0.0),
+			      "and so does every standard error");
+		}
+		std::printf("  %-5s DS8: worst gap against fit_lm %.3g, G = %zu\n", vname(v), worst,
+		            g.n_clusters);
+	}
+
+	// Changing the estimator never moves the point estimates. The band is
+	// 0.0 because the loop never sees opts.vcov at all: the two fits run
+	// the identical arithmetic up to the covariance assembly.
+	statsduck::GlmOptions c1, c2;
+	c1.family = c2.family = statsduck::Family::kBinomial;
+	c1.link = c2.link = statsduck::Link::kLogit;
+	c2.vcov = statsduck::Vcov::kHC1;
+	const statsduck::GlmResult p1 = statsduck::fit_glm(ds1_y, ds1_design(), c1);
+	const statsduck::GlmResult p2 = statsduck::fit_glm(ds1_y, ds1_design(), c2);
+	check(p1.ok && p2.ok, "both DS1 fits succeed");
+	check(p1.deviance == p2.deviance, "and reach the same deviance");
+	for (std::size_t j = 0; j < p1.k; j++) {
+		check(close_rel(at(p2.beta, j), at(p1.beta, j), 0.0),
+		      "beta is bit-identical across covariance estimators");
+	}
+	// And the estimator does change the standard errors, so the test above
+	// is not passing because vcov was ignored. DS1's HC1 intercept SE is
+	// 0.8434 against the classical 0.8801, a 4.2% difference, so the 1e-9
+	// band here is nowhere near the measured separation.
+	check(!close_rel(at(p2.std_error, 1), at(p1.std_error, 1), 1e-9),
+	      "but the standard errors do differ");
+	std::printf("  DS1 binomial: classical SE %.6g, HC1 SE %.6g\n", at(p1.std_error, 0),
+	            at(p2.std_error, 0));
 }
 
 // ── The oracle comparisons ───────────────────────────────────────────────
@@ -1006,6 +1127,7 @@ static void test_zero_column_design() {
 int main() {
 	std::printf("== test_glm_fit ==\n");
 	test_gaussian_equals_lm_fit();
+	test_robust_equals_lm_fit();
 	test_oracles();
 	test_identities();
 	test_fitted_mean_stays_in_support();
