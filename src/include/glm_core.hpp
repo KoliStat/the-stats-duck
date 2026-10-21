@@ -286,7 +286,7 @@ double pearson_dispersion(Family f, const std::vector<double> &y, const std::vec
 //
 // `vcov` names the covariance estimator. It reuses lm_core's enum, so a
 // GLM's standard errors are named the way an OLS fit's are. Only kConst
-// is computed in this increment, which is dispersion * (XtWX) inverse.
+// is computed in this increment, which is dispersion * (Xt W X) inverse.
 // The score-residual sandwich behind HC0 through HC3 and CR0 and CR1
 // comes in the next increment. CR0 and CR1 already validate their cluster
 // ids here, so the argument contract does not change when that lands.
@@ -315,11 +315,12 @@ struct GlmOptions {
 //                                   raises. See
 //                                   docs/fitter_conventions.md.
 //
-// Vector fields are all length k, the full design width. A column dropped
-// as dependent is NaN in beta, std_error, z_statistic and p_value, and in
-// its own row and column of cov, while `terms` still names it. That is
-// R's convention and #36's: the earlier column of a dependent set is
-// kept, the later one is aliased.
+// terms, beta, std_error, z_statistic and p_value are all length k, the
+// full design width, and cov is k*k. A column dropped as dependent is
+// NaN in beta, std_error, z_statistic and p_value, and in its own row
+// and column of cov, while `terms` still names it. That is R's
+// convention and #36's: the earlier column of a dependent set is kept,
+// the later one is aliased.
 struct GlmResult {
 	bool ok = false;
 	std::string error;
@@ -454,14 +455,13 @@ struct GlmResult {
 //   - kCR0 or kCR1 with no cluster ids, with ids that are not dense
 //     non-negative labels, or with fewer than two clusters;
 //   - a first step whose deviance or coefficients are not finite, which
-//     the paragraph on step halving above explains; or a first weighted
+//     the paragraph on step halving above explains, or a first weighted
 //     solve that fails outright, which means the design is numerically
-//     singular at the starting values;
+//     singular at the starting values. Those two conditions are failures
+//     only on the FIRST pass. On a later pass the loop stops and reports
+//     the iterate it had already accepted, with converged false;
 //   - a final Xt W X that cannot be inverted, which leaves the standard
 //     errors undefined even though the coefficients converged.
-// A later iteration that fails one of those last two is NOT a failure:
-// the loop stops there and reports the iterate it had already accepted,
-// with converged false.
 // A rank-deficient design is NOT one of them: it is a fit, with the
 // dependent columns aliased.
 GlmResult fit_glm(const std::vector<double> &y, const linalg::Mat &X_pred, const GlmOptions &opts,

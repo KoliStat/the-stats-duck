@@ -9,9 +9,22 @@
 // a fresh set of constants.
 //
 // The oracle comparisons come next, against the statsmodels goldens in
-// test/cpp/glm_fit_fixtures.hpp. Then the identities that need no oracle
-// at all: null_deviance against an independent intercept-only fit,
-// grouped binomial against ungrouped, and a scaled trial count.
+// test/cpp/glm_fit_fixtures.hpp: DS1 binomial, DS3 poisson with an
+// offset, DS4 gamma, DS5 gaussian and DS7 rank deficient. Their band is
+// MEASURED rather than assumed, and the measurement is recorded beside
+// it and reprinted on every run.
+//
+// Then the identities that need no oracle at all: null_deviance against
+// an independent intercept-only fit, grouped binomial against ungrouped,
+// a scaled trial count, and the aliasing of a dependent column. Last, the
+// two input classes that have no fit to report: no residual degrees of
+// freedom, and a design with no columns at all.
+//
+// DS2, DS6 and DS8 are not here. DS2's numbers are used, as the grouped
+// half of the grouping identity. DS6 is the separated design, whose
+// goldens the fixture header marks as unsafe to assert tightly, and it
+// belongs to the task that adds the separation flag. DS8 is clustered and
+// belongs to the task that adds the robust covariance.
 //
 // Builds standalone (no DuckDB) via scripts/run-cpp-tests.sh. Exit 0 = pass.
 
