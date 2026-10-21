@@ -10,20 +10,33 @@
 // checked one instead of to a fresh set of constants. Both bands are 0.0,
 // which passes only on exact equality, and both measure 0.
 //
-// The oracle comparisons come next, against the statsmodels goldens in
+// The oracle comparisons come next. Against the statsmodels goldens in
 // test/cpp/glm_fit_fixtures.hpp: DS1 binomial, DS3 poisson with an
 // offset, DS4 gamma, DS5 gaussian, DS7 rank deficient and DS8 clustered,
-// then DS8's CR0 and CR1 goldens for the robust sandwich. Every band is
-// MEASURED rather than assumed, and the measurement is recorded beside it
-// and reprinted on every run.
+// then DS8's CR0 and CR1 goldens for the cluster-robust sandwich. Against
+// R 4.6.1: DS1's HC0 through HC3, derived from R's own fit$weights and
+// hatvalues(). Every band is MEASURED rather than assumed, and the
+// measurement is recorded beside it and reprinted on every run.
 //
-// Then the identities that need no oracle at all: a weighted sandwich
-// against fit_lm on the sqrt(w)-scaled design, which is the only test
-// that exercises the prior weight inside the score and the leverage;
-// HC0 against CR0 with one cluster per row; an aliased column under every
-// estimator; the cluster-id convention against fit_lm's; null_deviance
-// against an independent intercept-only fit; grouped binomial against
-// ungrouped; a scaled trial count; and a deficient fit against the
+// TWO ORACLES, BECAUSE NEITHER COVERS EVERYTHING. gen_glm_fit_fixtures.py
+// generates statsmodels' cov_type='cluster' for DS8 and nothing else
+// robust, so the statsmodels goldens carry no HC values at all. R supplies
+// those. statsmodels is also not installed on this machine, so whether it
+// offers HC2 and HC3 for a GLM could not be checked; its HC path is
+// written around OLS response residuals. A task that wants HC fixtures in
+// the generated header should extend that generator; until then the R
+// values live in this file, with the exact R program beside them.
+//
+// Then the identities that need no oracle at all. HC2 and HC3 against
+// HC0 on a design whose weighted hat diagonals are all equal, which is
+// the only test that tells the WORKING weight from the prior weight in
+// the leverage. HC1 and CR1 against HC0 and CR0 on a rank-deficient
+// design, which is the only test that tells n - rank from n - k. A
+// weighted sandwich against fit_lm on the sqrt(w)-scaled design. HC0
+// against CR0 with one cluster per row. An aliased column under every
+// estimator. The cluster-id convention against fit_lm's. null_deviance
+// against an independent intercept-only fit. Grouped binomial against
+// ungrouped. A scaled trial count. And a deficient fit against the
 // reduced design it must reproduce bit for bit. Then the three mechanisms
 // that have no golden: the support test on the fitted mean, step halving,
 // and the probit and cloglog links, which are checked against an
@@ -36,14 +49,13 @@
 // goldens the fixture header marks as unsafe to assert tightly, and it
 // belongs to the task that adds the separation flag.
 //
-// NO DESIGN HAS AN HC GOLDEN. gen_glm_fit_fixtures.py generates
-// statsmodels' cov_type='cluster' for DS8 and nothing else robust, so the
-// HC estimators have no oracle on a non-gaussian family. Two exact
-// identities stand in: HC0 is CR0 with one cluster per row, which puts
-// DS8's oracled CR0 behind the HC accumulation, and the weighted
-// sqrt(w)-scaled comparison above puts fit_lm's statsmodels-validated
-// HC2 and HC3 behind the leverage. A task that adds an HC golden should
-// extend that generator rather than hand-enter constants.
+// A NOTE ON THE HISTORY. Commit ef8b283's subject reads "oracle the robust
+// covariance on a binomial and a clustered fit", and the binomial half of
+// that claim was wrong when it landed. That commit oracled only DS8's
+// clustered CR0 and CR1; DS1's only robust assertions were that beta does
+// not move and that the standard error does. The binomial HC oracle is
+// the R comparison in this file, added afterwards. The subject stands in
+// the history, so this paragraph is the correction.
 //
 // Builds standalone (no DuckDB) via scripts/run-cpp-tests.sh. Exit 0 = pass.
 
@@ -210,10 +222,10 @@ static void test_robust_equals_lm_fit() {
 	// residual times the row of the design, which is exactly what
 	// lm_core's meat is built from. The bread is XtWX with every working
 	// weight 1, which is XtX. So each robust estimator here must agree
-	// with lm_core's, and lm_core's are already validated against
-	// statsmodels: test_lm_fit.cpp's ds1_hetero carries their absolute
-	// goldens, and DS5 IS that design (the fixture header's self-check 3
-	// records that it reproduces ds1_hetero).
+	// with lm_core's. lm_core's are already validated against statsmodels.
+	// test_lm_fit.cpp's ds1_hetero carries their absolute goldens, and DS5
+	// IS that design. The fixture header's self-check 3 records that it
+	// reproduces ds1_hetero.
 	//
 	// The band is 0.0, which close_rel passes only on exact equality. That
 	// is not optimism: both paths are written to accumulate the same terms
@@ -298,13 +310,15 @@ static void test_robust_equals_lm_fit() {
 		      "beta is bit-identical across covariance estimators");
 	}
 	// And the estimator does change the standard errors, so the test above
-	// is not passing because vcov was ignored. DS1's HC1 intercept SE is
-	// 0.8434 against the classical 0.8801, a 4.2% difference, so the 1e-9
-	// band here is nowhere near the measured separation.
+	// is not passing because vcov was ignored. The assertion is on x1,
+	// index 1, whose classical standard error is 0.238466 against an HC1
+	// 0.246672. That is a 3.33% separation, so the 1e-9 band is nowhere
+	// near it. The intercept, printed below, separates by 2.68%.
 	check(!close_rel(at(p2.std_error, 1), at(p1.std_error, 1), 1e-9),
 	      "but the standard errors do differ");
-	std::printf("  DS1 binomial: classical SE %.6g, HC1 SE %.6g\n", at(p1.std_error, 0),
-	            at(p2.std_error, 0));
+	std::printf("  DS1 binomial intercept: classical SE %.6g, HC1 SE %.6g; x1: %.6g, %.6g\n",
+	            at(p1.std_error, 0), at(p2.std_error, 0), at(p1.std_error, 1),
+	            at(p2.std_error, 1));
 }
 
 // ── The oracle comparisons ───────────────────────────────────────────────
@@ -688,6 +702,297 @@ static void test_robust_oracles() {
 		      "HC0 equals CR0 with one cluster per row");
 	}
 	std::printf("  HC0 against singleton-cluster CR0 on DS8 poisson: worst %.3g\n", worst_hc);
+}
+
+// ── DS1 binomial, HC0 through HC3, against R 4.6.1 ──────────────────────
+//
+// THE HC ORACLE. statsmodels gives this project no HC golden for any
+// design: gen_glm_fit_fixtures.py generates cov_type='cluster' for DS8 and
+// nothing else robust. statsmodels is also not installed on this machine,
+// so the statsmodels route could not even be checked for whether it offers
+// HC2 and HC3 for a GLM at all; its HC code is written around OLS response
+// residuals. R 4.6.1 is installed, so R is the oracle here.
+//
+// The values below come from R's OWN machinery, not from a second copy of
+// this kernel's algebra. fit$weights are R's working weights and
+// hatvalues() is R's leverage, taken from the QR decomposition of
+// sqrt(w)X inside lm.influence. Exact program, reproducible:
+//
+//   fit <- glm(y ~ x1 + x2, family = binomial)
+//   X <- model.matrix(fit); n <- nrow(X); k <- ncol(X)
+//   w <- fit$weights
+//   u <- w * residuals(fit, type = "working")   # (y-mu)*(dmu/deta)/V
+//   h <- hatvalues(fit)
+//   Ai <- solve(t(X) %*% (w * X))
+//   sw <- function(s) Ai %*% (t(X) %*% (s * X)) %*% Ai
+//   hc0 <- sw(u^2); hc1 <- hc0 * n/(n-k)
+//   hc2 <- sw(u^2/(1-h)); hc3 <- sw(u^2/(1-h)^2)
+//
+// R's own sum(hatvalues(fit)) is exactly 3, which is the rank. That is the
+// trace identity on the weighted design, and it confirms h here is the
+// WEIGHTED leverage rather than the unweighted one.
+//
+// MEASURED worst relative gap, this kernel against those values:
+//   standard error  HC0 2.56e-09  HC1 2.56e-09  HC2 1.32e-08  HC3 2.82e-08
+//   covariance      HC0 1.61e-08  HC1 1.61e-08  HC2 5.02e-07  HC3 1.12e-06
+//
+// THE BAND IS WIDE FOR A KNOWN REASON, not because the formulas differ. R
+// evaluates its working weights and its leverage at the mu of the iterate
+// BEFORE the last one, which is the same mechanism Task 4 measured in
+// statsmodels. Recomputing the weights in R at fitted(fit), and taking the
+// leverage from R's own hat(qr(sqrt(w) * X)), closes the gap to 4e-15 on
+// every one of the twelve standard errors. So the residual difference is
+// entirely the stale iterate and not the algebra.
+//
+// A covariance entry is looser than its standard errors for the reason
+// Task 4 recorded at TOL_COV: an off-diagonal entry can be far smaller
+// than the variances on either side of it, which turns the same absolute
+// perturbation into a larger relative one.
+static const double TOL_R_SE = 1e-7;  // 3.5 times the measured worst
+static const double TOL_R_COV = 5e-6; // 4.5 times the measured worst
+
+// Row order matches kRHcFixtures below: HC0, HC1, HC2, HC3.
+static const double kDs1RHcStdError[4][3] = {
+    {8.69158507121863155e-01, 2.37241461900041500e-01, 6.62577562961442212e-01},
+    {9.03707983511240376e-01, 2.46671926216198295e-01, 6.88915345632949649e-01},
+    {9.07611749680332869e-01, 2.48781719672927865e-01, 6.88591538762508559e-01},
+    {9.47914435957977197e-01, 2.60915171941325130e-01, 7.15774073368389385e-01}};
+static const double kDs1RHcCov[4][9] = {
+    {7.55436510502305869e-01, -1.73805930609675224e-01, -2.49236894727575126e-01,
+     -1.73805930609675363e-01, 5.62835112444688493e-02, 9.91079375253763224e-03,
+     -2.49236894727574987e-01, 9.91079375253763398e-03, 4.39009026939923941e-01},
+    {8.16688119461952300e-01, -1.87898303361811042e-01, -2.69445291597378511e-01,
+     -1.87898303361811181e-01, 6.08470391832095711e-02, 1.07143716243650079e-02,
+     -2.69445291597378345e-01, 1.07143716243650097e-02, 4.74604353448566441e-01},
+    {8.23759088157795305e-01, -1.90663463384605353e-01, -2.66997741153744139e-01,
+     -1.90663463384605186e-01, 6.18923440434192632e-02, 9.97286250869467220e-03,
+     -2.66997741153744250e-01, 9.97286250869474158e-03, 4.74158307255319378e-01},
+    {8.98541777897530092e-01, -2.09205611728346313e-01, -2.86018847338184778e-01,
+     -2.09205611728346563e-01, 6.80767269491712596e-02, 9.95086176166554669e-03,
+     -2.86018847338184667e-01, 9.95086176166542005e-03, 5.12332524106376419e-01}};
+
+static void test_binomial_hc_against_r() {
+	std::printf("R 4.6.1 goldens: DS1 binomial logit, HC0 through HC3\n");
+
+	const statsduck::Vcov estimators[4] = {statsduck::Vcov::kHC0, statsduck::Vcov::kHC1,
+	                                       statsduck::Vcov::kHC2, statsduck::Vcov::kHC3};
+	double worst_se = 0.0, worst_cov = 0.0;
+	for (int i = 0; i < 4; i++) {
+		statsduck::GlmOptions go;
+		go.family = statsduck::Family::kBinomial;
+		go.link = statsduck::Link::kLogit;
+		go.vcov = estimators[i];
+		const statsduck::GlmResult g = statsduck::fit_glm(ds1_y, ds1_design(), go);
+		check(g.ok && g.converged, "the binomial HC fit converges");
+		double fs = 0.0, fc = 0.0;
+		for (std::size_t j = 0; j < kDs1K; j++) {
+			fs = std::max(fs, rel_dev(at(g.std_error, j), kDs1RHcStdError[i][j]));
+			check(close_rel(at(g.std_error, j), kDs1RHcStdError[i][j], TOL_R_SE),
+			      "the standard error matches R");
+		}
+		for (std::size_t e = 0; e < kDs1K * kDs1K; e++) {
+			fc = std::max(fc, rel_dev(at(g.cov, e), kDs1RHcCov[i][e]));
+			check(close_rel(at(g.cov, e), kDs1RHcCov[i][e], TOL_R_COV),
+			      "and so does the covariance entry");
+		}
+		std::printf("  %-5s se %.3g cov %.3g\n", statsduck::vcov_name(estimators[i]), fs, fc);
+		worst_se = std::max(worst_se, fs);
+		worst_cov = std::max(worst_cov, fc);
+	}
+	std::printf("  R_MEASURED worst: se %.3g  cov %.3g\n", worst_se, worst_cov);
+}
+
+// ── The hat diagonal uses the WORKING weight, not the prior weight ──────
+static void test_weighted_hat_diagonal() {
+	std::printf("the HC2 and HC3 hat diagonal uses the working weight\n");
+
+	// This test exists because of a hole a reviewer found by mutation.
+	// Replacing `h *= final_w[r]` with `h *= w[r]`, the prior weight
+	// instead of the working weight, passed the whole suite. It moves
+	// DS1's HC2 intercept standard error from 0.9076 to 1.1317, a 24.7%
+	// error, and HC3's from 0.9479 to 1.4885, a 57% error.
+	//
+	// Neither of the two tests that look weighted can see it.
+	// test_weighted_sandwich is gaussian identity, where the working
+	// weight EQUALS the prior weight by construction, which is the whole
+	// point of the identity it uses. So it pins that A weight appears in
+	// the leverage, not that the WORKING weight does. The gaussian
+	// equivalence has every weight at 1, where the two are both 1.
+	//
+	// THE IDENTITY. For a full-rank weighted projection the hat diagonals
+	// sum to the rank:
+	//   sum_i h_i = trace(W^(1/2) X A^-1 Xt W^(1/2)) = trace(A^-1 A) = rank
+	// with A = Xt W X. h is internal and unreported, so the sum cannot be
+	// asserted directly through the public interface. This design makes
+	// the identity observable instead, by making every h_i equal.
+	//
+	// An intercept plus one 0/1 dummy, with EQUAL group sizes, is
+	// saturated by group: the fit reproduces each group's mean, so eta is
+	// constant within a group and the working weight is too. The weighted
+	// hat diagonal of a saturated group design is 1/n_g for every row,
+	// whatever the weights are, and with equal groups that is rank/n for
+	// every row. Then the trace identity is the statement that every h_i
+	// is rank/n, and HC2 and HC3 become exactly
+	//   HC2 = HC0 / (1 - rank/n)        HC3 = HC0 / (1 - rank/n)^2
+	// entrywise. Confirmed independently in R 4.6.1: for the data below
+	// hatvalues() returns 0.2 on every row to 1.1e-16 and sums to 2.
+	//
+	// WHY IT SEPARATES. The fit is poisson with a log link, so the working
+	// weight is mu: 2 in the first group and 6 in the second, never the
+	// prior weight of 1. Under the mutation h becomes x' A^-1 x with A
+	// still built from the working weights, which is h/mu_g, so 0.1 and
+	// 0.0333 rather than 0.2. The identity then fails on both estimators.
+	// MEASURED under the mutation: HC2 misses the identity by 0.133
+	// relative and HC3 by 0.2475, against the 1e-14 bands below.
+	const std::vector<double> y = {1, 2, 3, 2, 2, 5, 7, 6, 8, 4};
+	const std::vector<double> dummy = {0, 0, 0, 0, 0, 1, 1, 1, 1, 1};
+	Mat X(10, 1);
+	for (std::size_t i = 0; i < 10; i++) {
+		X(i, 0) = dummy[i];
+	}
+	statsduck::GlmOptions base;
+	base.family = statsduck::Family::kPoisson;
+	base.link = statsduck::Link::kLog;
+
+	statsduck::GlmOptions o0 = base, o2 = base, o3 = base;
+	o0.vcov = statsduck::Vcov::kHC0;
+	o2.vcov = statsduck::Vcov::kHC2;
+	o3.vcov = statsduck::Vcov::kHC3;
+	const statsduck::GlmResult g0 = statsduck::fit_glm(y, X, o0);
+	const statsduck::GlmResult g2 = statsduck::fit_glm(y, X, o2);
+	const statsduck::GlmResult g3 = statsduck::fit_glm(y, X, o3);
+	check(g0.ok && g2.ok && g3.ok, "the three saturated group fits succeed");
+	check(g0.rank == 2 && g0.n == 10, "with rank 2 over ten rows");
+
+	// The band is 1e-14. Measured 1.39e-16 on HC2 and 4.44e-16 on HC3.
+	// The identity is exact, so only rounding separates the two sides, and
+	// 1e-14 is 22 times the worst of that. It is 12 orders inside the
+	// 0.133 the mutation moves.
+	const double h_bar = static_cast<double>(g0.rank) / static_cast<double>(g0.n);
+	const double one_minus = 1.0 - h_bar;
+	double w2 = 0.0, w3 = 0.0;
+	for (std::size_t e = 0; e < g0.cov.size(); e++) {
+		const double e2 = at(g0.cov, e) / one_minus;
+		const double e3 = at(g0.cov, e) / (one_minus * one_minus);
+		w2 = std::max(w2, rel_dev(at(g2.cov, e), e2));
+		w3 = std::max(w3, rel_dev(at(g3.cov, e), e3));
+		check(close_rel(at(g2.cov, e), e2, 1e-14), "HC2 is HC0 over (1 - rank/n)");
+		check(close_rel(at(g3.cov, e), e3, 1e-14), "HC3 is HC0 over (1 - rank/n) squared");
+	}
+	// The fitted means are what make the working weight differ from the
+	// prior weight. Without this the test could pass on a design where
+	// they happen to coincide, which would make it vacuous again.
+	const double mu_a = statsduck::link_inv(statsduck::Link::kLog, at(g0.beta, 0));
+	const double mu_b =
+	    statsduck::link_inv(statsduck::Link::kLog, at(g0.beta, 0) + at(g0.beta, 1));
+	check(close_rel(mu_a, 2.0, 1e-9) && close_rel(mu_b, 6.0, 1e-9),
+	      "the two group means are 2 and 6, so the working weights are 2 and 6");
+	check(!close_rel(mu_a, 1.0, 0.1) && !close_rel(mu_b, 1.0, 0.1),
+	      "and neither equals the prior weight of 1, so the two weights are told apart");
+	std::printf("  rank/n %.17g, group means %.12g and %.12g; HC2 %.3g HC3 %.3g\n", h_bar, mu_a,
+	            mu_b, w2, w3);
+}
+
+// ── The finite-sample factors divide by rank, never by k ────────────────
+static void test_finite_sample_factors_use_rank() {
+	std::printf("HC1 and CR1 divide by n - rank, not n - k\n");
+
+	// Another hole found by mutation. Changing n - rank to n - k in both
+	// factors passed the whole suite. It is not vacuous: DS7 is rank
+	// deficient, with k = 4 and rank = 3, so the two denominators are 8
+	// and 9 and the standard errors move 6.1%.
+	//
+	// The only rank-deficient robust fit in the suite asserted NaN
+	// placement and finiteness, never a value. Two checks close it, and
+	// both are exact rather than banded.
+	//
+	// FIRST, the ratio. HC1 is HC0 times n/(n - rank) and CR1 is CR0 times
+	// [G/(G-1)]*[(N-1)/(N-rank)]. Dividing the two covariances entrywise
+	// recovers the factor with nothing else in it, and the expected value
+	// is computed here from the kernel's own reported n, rank and
+	// n_clusters. On DS7 that is 12/9 = 1.3333 for HC1 against 12/8 = 1.5
+	// under the mutation, and 1.8333 against 2.0625 for CR1. Measured 0 on
+	// HC1 and 1.21e-16 on CR1, against 0.111 for the k form.
+	//
+	// The band is 1e-14. Only rounding separates the ratio from the exact
+	// factor, and 1e-14 is 80 times the worst measurement. It is 13 orders
+	// inside the 0.111 the mutation moves.
+	std::vector<double> y(kDs7Y, kDs7Y + kDs7N);
+	const std::vector<int> cl = {0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2};
+	statsduck::GlmOptions base;
+	base.family = statsduck::Family::kPoisson;
+	base.link = statsduck::Link::kLog;
+
+	statsduck::GlmOptions h0 = base, h1 = base, c0 = base, c1 = base;
+	h0.vcov = statsduck::Vcov::kHC0;
+	h1.vcov = statsduck::Vcov::kHC1;
+	c0.vcov = statsduck::Vcov::kCR0;
+	c1.vcov = statsduck::Vcov::kCR1;
+	const statsduck::GlmResult ghc0 = statsduck::fit_glm(y, ds7_design(), h0);
+	const statsduck::GlmResult ghc1 = statsduck::fit_glm(y, ds7_design(), h1);
+	const statsduck::GlmResult gcr0 =
+	    statsduck::fit_glm(y, ds7_design(), c0, nullptr, nullptr, &cl);
+	const statsduck::GlmResult gcr1 =
+	    statsduck::fit_glm(y, ds7_design(), c1, nullptr, nullptr, &cl);
+	check(ghc0.ok && ghc1.ok && gcr0.ok && gcr1.ok, "all four DS7 robust fits succeed");
+	check(ghc1.k == 4 && ghc1.rank == 3, "on a design whose k and rank differ");
+	check(gcr1.n_clusters == 3, "with three clusters");
+
+	const double nd = static_cast<double>(ghc1.n);
+	const double rank_d = static_cast<double>(ghc1.rank);
+	const double gd = static_cast<double>(gcr1.n_clusters);
+	const double hc1_factor = nd / (nd - rank_d);
+	const double cr1_factor = (gd / (gd - 1.0)) * ((nd - 1.0) / (nd - rank_d));
+	double worst_hc = 0.0, worst_cr = 0.0;
+	for (std::size_t e = 0; e < ghc0.cov.size(); e++) {
+		if (std::isnan(at(ghc0.cov, e))) {
+			continue; // the aliased row and column
+		}
+		const double rh = at(ghc1.cov, e) / at(ghc0.cov, e);
+		const double rc = at(gcr1.cov, e) / at(gcr0.cov, e);
+		worst_hc = std::max(worst_hc, rel_dev(rh, hc1_factor));
+		worst_cr = std::max(worst_cr, rel_dev(rc, cr1_factor));
+		check(close_rel(rh, hc1_factor, 1e-14), "HC1 over HC0 is n/(n - rank)");
+		check(close_rel(rc, cr1_factor, 1e-14), "CR1 over CR0 carries the rank form too");
+	}
+
+	// SECOND, the deficient fit against the reduced one. DS7's x3 is
+	// x1 + x2, so dropping it leaves a design holding the same values as
+	// one built from x1 and x2 alone. The reduced design has k == rank, so
+	// the two denominators coincide there and the mutation cannot move it.
+	// It moves only the deficient side, which is what makes this a
+	// separation rather than a restatement. test_identities already pins
+	// this identity for the classical estimator; the robust ones need it
+	// for the factor.
+	//
+	// The band is 0.0, which close_rel passes only on exact equality, and
+	// it measures 0 on both. Every working weight, every score and every
+	// factor is built from the same numbers in the same order on the two
+	// sides.
+	for (const statsduck::Vcov v : {statsduck::Vcov::kHC1, statsduck::Vcov::kCR1}) {
+		statsduck::GlmOptions go = base;
+		go.vcov = v;
+		const bool clustered = (v == statsduck::Vcov::kCR1);
+		const std::vector<int> *ids = clustered ? &cl : nullptr;
+		const statsduck::GlmResult def =
+		    statsduck::fit_glm(y, ds7_design(), go, nullptr, nullptr, ids);
+		const statsduck::GlmResult red = statsduck::fit_glm(
+		    y, design(kDs7N, {kDs7X1, kDs7X2}), go, nullptr, nullptr, ids);
+		check(def.ok && red.ok, "the deficient and the reduced robust fit both succeed");
+		check(def.k == 4 && def.rank == 3 && red.k == 3 && red.rank == 3,
+		      "and only one of them is deficient");
+		for (std::size_t a = 0; a < 3; a++) {
+			check(close_rel(at(def.std_error, a), at(red.std_error, a), 0.0),
+			      "the deficient robust standard error is bitwise the reduced one");
+			for (std::size_t b = 0; b < 3; b++) {
+				check(close_rel(at(def.cov, a * def.k + b), at(red.cov, a * red.k + b), 0.0),
+				      "and so is every kept covariance entry");
+			}
+		}
+	}
+	std::printf("  DS7 n %g rank %g k 4: HC1 factor %.12g (worst %.3g), CR1 factor %.12g "
+	            "(worst %.3g)\n",
+	            nd, rank_d, hc1_factor, worst_hc, cr1_factor, worst_cr);
 }
 
 // ── The weighted sandwich, which no gaussian unit-weight test reaches ────
@@ -1551,6 +1856,9 @@ int main() {
 	test_robust_equals_lm_fit();
 	test_oracles();
 	test_robust_oracles();
+	test_binomial_hc_against_r();
+	test_weighted_hat_diagonal();
+	test_finite_sample_factors_use_rank();
 	test_weighted_sandwich();
 	test_aliased_under_every_estimator();
 	test_cluster_id_convention();

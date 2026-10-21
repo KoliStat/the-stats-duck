@@ -415,6 +415,16 @@ struct GlmResult {
 // is kCR0 or kCR1, and ignored otherwise. Fewer than two clusters leaves
 // the cluster-robust covariance undefined, so that is a failed fit.
 //
+// DENSE IS A PRECONDITION, NOT A PREFERENCE, and violating it is not
+// reported. G is taken as the LARGEST id plus one, which is fit_lm's
+// convention and is kept identical to it on purpose. So ids {0, 2, 4}
+// give G = 5 from three labels. Three things then change silently: CR1's
+// [G/(G-1)] factor shrinks, the reported n_clusters is the inflated G,
+// and the per-cluster score buffer allocates G*rank doubles from the
+// largest id. CR0 is unaffected, because an empty cluster contributes a
+// zero score sum. Pass ids through densify_clusters and none of this
+// arises.
+//
 // The loop:
 //   mu    = R's glm.fit starting values: (w*y + 0.5)/(w + 1) binomial,
 //           y + 0.1 poisson, y gaussian and gamma
