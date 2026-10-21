@@ -44,10 +44,13 @@
 // input classes that have no fit to report: no residual degrees of
 // freedom, a zero-weight row, and a design with no columns at all.
 //
-// DS2 and DS6 are not fitted here. DS2's numbers are used, as the grouped
-// half of the grouping identity. DS6 is the separated design, whose
-// goldens the fixture header marks as unsafe to assert tightly, and it
-// belongs to the task that adds the separation flag.
+// DS2 is not fitted here. Its numbers are used only as the grouped half of
+// the grouping identity. DS6 IS fitted. test_separation fits it, but
+// never checks it against its goldens. The fixture header marks every
+// one of them unsafe to assert tightly. The reason is written at DS6's
+// own definition. What test_separation asserts instead is the
+// separation flag, the termination state, and a near-zero deviance at a
+// loose, order-of-magnitude band.
 //
 // A NOTE ON THE HISTORY. Commit ef8b283's subject reads "oracle the robust
 // covariance on a binomial and a clustered fit", and the binomial half of
@@ -140,6 +143,7 @@ static const std::vector<double> ds3_y = vec(kDs3Y);
 static const std::vector<double> ds3_offset = vec(kDs3Offset);
 static const std::vector<double> ds4_y = vec(kDs4Y);
 static const std::vector<double> ds5_y = vec(kDs5Y);
+static const std::vector<double> ds6_y = vec(kDs6Y);
 static const std::vector<double> ds7_y = vec(kDs7Y);
 static const std::vector<double> ds8_y = vec(kDs8Y);
 // DS8's cluster labels. The fixture stores them as a raw int array, and
@@ -160,6 +164,9 @@ static Mat ds4_design() {
 }
 static Mat ds5_design() {
 	return design(kDs5N, {kDs5X1, kDs5X2});
+}
+static Mat ds6_design() {
+	return design(kDs6N, {kDs6X1});
 }
 static Mat ds7_design() {
 	return design(kDs7N, {kDs7X1, kDs7X2, kDs7X3});
@@ -1329,6 +1336,58 @@ static void test_identities() {
 	check(rd.df_residual == reduced.df_residual, "and the residual degrees of freedom");
 }
 
+// ── The binomial separation heuristic ────────────────────────────────────
+static void test_separation() {
+	std::printf("the binomial separation heuristic\n");
+
+	// DS6 is perfectly separated: a threshold on x1 predicts y exactly, so
+	// the likelihood has no interior maximum and the coefficients diverge.
+	// Without a flag the caller sees an enormous estimate beside an
+	// enormous standard error and nothing saying why. That is how
+	// separation reaches a published table.
+	statsduck::GlmOptions sg;
+	sg.family = statsduck::Family::kBinomial;
+	sg.link = statsduck::Link::kLogit;
+	const statsduck::GlmResult s = statsduck::fit_glm(ds6_y, ds6_design(), sg);
+	check(s.ok, "a separated fit still returns a result, not a failure");
+	check(!s.converged, "it does not converge");
+	check(s.separation, "and the separation flag is set");
+	// This assertion depends on max_iter staying 25. Task 4 measured the
+	// relative deviance change at pass 25 as 2.44e-08. The tolerance is
+	// 1e-08. That is a margin of only 2.4 times. At max_iter = 28 the same
+	// fit reports converged = true, with beta[1] = 42.33. So a future
+	// change to max_iter should break this assertion. This comment
+	// explains why, so the break is not a mystery.
+	check(s.iterations == sg.max_iter, "it used every iteration");
+	check(std::isfinite(at(s.beta, 1)), "the reported coefficient is finite, if large");
+	// The deviance is near zero. DS6 is built to fit almost perfectly.
+	// The band here is loose and absolute. It is never the project's
+	// usual 1e-10 relative check. The fixture header marks every one of
+	// DS6's goldens unsafe at that tight tolerance. Statsmodels' own
+	// unclamped computation gives 3.34e-09. This kernel's clamped
+	// link_inv gives about 7.12e-09. That is a 36% relative gap between
+	// two numbers that both read as zero. 1e-6 sits two orders of
+	// magnitude above either one, so it catches a real defect without
+	// reopening the clamped-vs-unclamped gap this comment just described.
+	check(s.deviance < 1e-6, "and the deviance is near zero");
+	std::printf("  DS6: converged=%d iterations=%d separation=%d deviance=%.3g beta1=%.6g\n",
+	            s.converged, s.iterations, s.separation, s.deviance, at(s.beta, 1));
+
+	// The flag is binomial-only. A poisson fit that fails to converge must
+	// not claim separation, because the heuristic has no meaning there.
+	statsduck::GlmOptions pg;
+	pg.family = statsduck::Family::kPoisson;
+	pg.link = statsduck::Link::kLog;
+	const statsduck::GlmResult p =
+	    statsduck::fit_glm(ds3_y, ds3_design(), pg, nullptr, &ds3_offset);
+	check(p.ok && p.converged, "the poisson fixture converges");
+	check(!p.separation, "and never reports separation");
+
+	// A well-behaved binomial fit does not report separation either.
+	const statsduck::GlmResult ok1 = statsduck::fit_glm(ds1_y, ds1_design(), sg);
+	check(ok1.converged && !ok1.separation, "a clean logistic fit is not separated");
+}
+
 // ── No residual degrees of freedom (Review Focus item 3) ─────────────────
 static void test_no_residual_df() {
 	std::printf("a fit with no residual df fails, before any division\n");
@@ -1866,6 +1925,7 @@ int main() {
 	test_fitted_mean_stays_in_support();
 	test_step_halving();
 	test_probit_and_cloglog();
+	test_separation();
 	test_no_residual_df();
 	test_zero_weight_rows_do_not_set_the_rank();
 	test_zero_column_design();

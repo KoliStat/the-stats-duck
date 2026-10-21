@@ -128,6 +128,31 @@ bool AllMuInSupport(Family f, const std::vector<double> &mu, const std::vector<d
 	return true;
 }
 
+// Whether any POSITIVE-WEIGHT row's fitted mean sits within kMuEps of the
+// binomial boundary, 0 or 1. This is the third of the separation
+// heuristic's three conditions. See GlmResult::separation in the header
+// for what the heuristic is and why it exists.
+//
+// link_inv clamps a binomial mu into [kMuEps, 1 - kMuEps]. A mu this
+// close to the clamp means the linear predictor was pushed far out on
+// that row. That is the signature a perfectly or near-perfectly
+// separated fit leaves behind.
+//
+// The weight filter mirrors AllMuInSupport above, for the same reason. A
+// zero-weight row's own covariates still produce a mu. That row must not
+// be able to raise a separation claim about a fit it does not influence.
+bool AnyMuNearBoundary(const std::vector<double> &mu, const std::vector<double> &w) {
+	for (std::size_t i = 0; i < mu.size(); i++) {
+		if (!(w[i] > 0.0)) {
+			continue;
+		}
+		if (mu[i] <= kMuEps || mu[i] >= 1.0 - kMuEps) {
+			return true;
+		}
+	}
+	return false;
+}
+
 // Whether one response value sits inside the family's domain. A
 // non-finite y fails for every family: it would otherwise spread NaN
 // through the whole result, and the poisson test below (y >= 0) is false
@@ -485,6 +510,11 @@ GlmResult FitGlm(const std::vector<double> &y, const linalg::Mat &X_pred, const 
 	res.df_residual = n - rank;
 	res.iterations = iterations;
 	res.converged = converged;
+	// The separation heuristic. See GlmResult::separation in the header
+	// for the full contract. All three conditions are required: binomial
+	// only, a fit that did not converge, and at least one fitted mean
+	// pushed to the clamp boundary.
+	res.separation = opts.family == Family::kBinomial && !converged && AnyMuNearBoundary(mu, w);
 	res.deviance = dev;
 	res.dispersion = pearson_dispersion(opts.family, y, mu, w, res.df_residual);
 	res.loglik = glm_loglik(opts.family, y, mu, w, res.dispersion);

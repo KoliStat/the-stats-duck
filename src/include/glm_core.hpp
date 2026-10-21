@@ -376,8 +376,33 @@ struct GlmResult {
 	// reports 0: there is nothing to iterate.
 	int iterations = 0;
 	bool converged = false;
-	// Always false in this increment. The next increment adds the binomial
-	// separation heuristic that sets it.
+	// A heuristic flag for perfect or near-perfect separation in a
+	// binomial fit.
+	//
+	// It exists because separation makes a logistic coefficient diverge.
+	// No finite beta reaches the maximum of a separated likelihood. Every
+	// step still lowers the deviance by pushing beta further out, so the
+	// loop never converges. A caller who only looks at beta and std_error
+	// then sees one huge estimate beside one huge standard error. Nothing
+	// says why. That is how separation reaches a published table. This
+	// flag is the thing that says why.
+	//
+	// True when ALL THREE of these hold, and always false otherwise:
+	//   - the family is binomial;
+	//   - the fit did not converge (converged is false);
+	//   - at least one POSITIVE-WEIGHT row's fitted mean lies within
+	//     kMuEps of 0 or 1. That is link_inv's own clamp boundary, so it
+	//     means the row's linear predictor has been pushed to an extreme.
+	//
+	// It is a heuristic, not a certificate. It fires on perfect
+	// separation, where no finite beta maximizes the likelihood. It can
+	// also fire on severe near-separation, where a finite MLE exists but
+	// sits far out on the logit scale and the loop has not reached it
+	// within max_iter. The flag cannot tell those two cases apart. Both
+	// show the same symptom: a non-converged fit with a fitted mean
+	// pinned at the boundary. The flag is always false for gaussian,
+	// poisson and gamma. None of those three has a boundary like this,
+	// or a divergence like this.
 	bool separation = false;
 };
 
