@@ -83,6 +83,9 @@ named field of one trailing struct.
 | `link` | `VARCHAR` | no | the family's canonical link | |
 | `weights` | `DOUBLE` | yes | 1 | prior weights; binomial trial counts |
 | `offset` | `DOUBLE` | yes | 0 | added to the linear predictor with a fixed coefficient of 1 |
+| `vcov` | `VARCHAR` | no | `const` | the names `lm_core::parse_vcov` accepts |
+| `cluster` | `VARCHAR` | yes | none | required by `cr0` and `cr1`, rejected otherwise |
+| `intercept` | `BOOLEAN` | no | `true` | prepends a constant column |
 
 **The binomial response convention, stated because it is otherwise
 ambiguous.** `y` is the **proportion** of successes and must lie in [0, 1];
@@ -93,9 +96,6 @@ count as `weights`, so 7 successes out of 10 is `y = 0.7` with
 successes passed as `y` with `weights` as trials is **not** supported and
 fails the [0, 1] domain check, which is the right outcome: silently treating
 a 7 as a proportion would be worse.
-| `vcov` | `VARCHAR` | no | `const` | the names `lm_core::parse_vcov` accepts |
-| `cluster` | `VARCHAR` | yes | none | required by `cr0` and `cr1`, rejected otherwise |
-| `intercept` | `BOOLEAN` | no | `true` | prepends a constant column |
 
 Four rules about the struct, each of which the implementation must enforce:
 
