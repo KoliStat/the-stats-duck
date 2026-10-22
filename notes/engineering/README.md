@@ -67,6 +67,17 @@ that has been written down than to re-derive it.
   against scipy's `chi2.ppf` puts the resulting drift in `ChiSquareQuantile`
   above about df = 1e4. Nothing in the repository tests that second claim.
 
+- [`2026-10-statsmodels-hc-for-a-glm.md`](2026-10-statsmodels-hc-for-a-glm.md) —
+  `GLM(...).fit(cov_type="HC2")` in statsmodels 0.15.0 returns HC0's standard
+  errors and labels them HC2, and so do HC1 and HC3; an OLS fit distinguishes
+  all four. `statsmodels/base/covtype.py` dispatches on
+  `getattr(self, "cov_" + cov_type.upper(), None)`, `cov_HC0`–`cov_HC3` are
+  defined only on `OLSResults`, and a GLM falls through to one
+  `cov_white_simple` call. Measured against R on DS1, with the OLS control.
+  R is the only available oracle for a GLM's HC2 and HC3. A #22 comment had
+  told a later task to extend the fixture generator instead, which would have
+  committed HC0's numbers three more times under three other names.
+
 - [`2026-10-verifying-against-a-stale-binary.md`](2026-10-verifying-against-a-stale-binary.md)
   — two incidents (#20/#21) of a real command against a real binary giving a
   confident, wrong answer because the binary was not the one the diff

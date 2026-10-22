@@ -1,7 +1,8 @@
 #include "lm_fit_function.hpp"
 #include "register_documented.hpp"
 
-#include "lm_core.hpp" // statsduck::fit_lm / Vcov / LmResult / parse_vcov / vcov_name
+#include "cluster_ids.hpp"  // statsduck::densify_clusters
+#include "lm_core.hpp"      // statsduck::fit_lm / Vcov / LmResult / parse_vcov / vcov_name
 
 #include "duckdb/common/types/vector.hpp"
 #include "duckdb/execution/expression_executor.hpp"
@@ -342,30 +343,6 @@ static inline void SetD(Vector &v, idx_t row, double x) {
 	}
 }
 
-// Dense 0-based cluster ids from arbitrary string keys, in sorted-key order.
-// Deliberately sort-based, NOT a hash map: std::sort uses operator<, so it
-// avoids the libc++ std::__hash_memory symbol that a default-hashed unordered
-// map keyed on std::string pulls into the wasm build (the bug that broke
-// table_one in wasm; see check-wasm-string-hash.sh). The label values are irrelevant — fit_lm
-// only needs the partition they induce.
-static std::vector<int> DensifyClusters(const std::vector<std::string> &keys) {
-	const std::size_t n = keys.size();
-	std::vector<int> order(n);
-	for (std::size_t i = 0; i < n; i++) {
-		order[i] = static_cast<int>(i);
-	}
-	std::sort(order.begin(), order.end(), [&](int a, int b) { return keys[a] < keys[b]; });
-	std::vector<int> ids(n, 0);
-	int cur = 0;
-	for (std::size_t r = 0; r < n; r++) {
-		if (r > 0 && keys[order[r]] != keys[order[r - 1]]) {
-			cur++;
-		}
-		ids[order[r]] = cur;
-	}
-	return ids;
-}
-
 static void LmFitFinalize(Vector &state_vector, AggregateInputData &input_data, Vector &result, idx_t count,
                           idx_t offset) {
 	auto states = FlatVector::GetData<LmFitState *>(state_vector);
@@ -401,7 +378,7 @@ static void LmFitFinalize(Vector &state_vector, AggregateInputData &input_data, 
 			if (acc->cluster.size() != n) {
 				continue; // defensive: cluster/row desync — emit NULL for this group
 			}
-			const std::vector<int> ids = DensifyClusters(acc->cluster);
+			const std::vector<int> ids = statsduck::densify_clusters(acc->cluster);
 			r = statsduck::fit_lm(acc->y, Xp, opt, &ids);
 		} else {
 			r = statsduck::fit_lm(acc->y, Xp, opt);

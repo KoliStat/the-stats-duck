@@ -17,6 +17,7 @@ This page is the orientation map. **The headers are the source of truth** — ea
 function's preconditions, tolerances, and result semantics live in the
 doc-comments of [`src/include/linalg.hpp`](../src/include/linalg.hpp),
 [`src/include/lm_core.hpp`](../src/include/lm_core.hpp),
+[`src/include/glm_core.hpp`](../src/include/glm_core.hpp),
 [`src/include/lin_hyp.hpp`](../src/include/lin_hyp.hpp),
 [`src/include/optimize.hpp`](../src/include/optimize.hpp),
 [`src/include/distributions.hpp`](../src/include/distributions.hpp), and
@@ -26,15 +27,26 @@ doc-comments of [`src/include/linalg.hpp`](../src/include/linalg.hpp),
 
 The API boundary is header-only, but the implementation is not: `linalg.cpp`
 uses Eigen (confined to that one translation unit), and `lm_core.cpp`,
-`lin_hyp.cpp` and `emmeans.cpp` build on it. So a consumer:
+`glm_core.cpp`, `glm_fit_core.cpp`, `lin_hyp.cpp` and `emmeans.cpp` build on
+it. So a consumer:
 
 1. adds `src/include` to its include path → `#include "linalg.hpp"`,
-   `#include "lm_core.hpp"`, `#include "lin_hyp.hpp"`, `#include "emmeans.hpp"`;
-2. compiles `src/linalg.cpp`, `src/lm_core.cpp`, `src/lin_hyp.cpp`, and
-   `src/emmeans.cpp` into its own build;
+   `#include "lm_core.hpp"`, `#include "glm_core.hpp"`,
+   `#include "lin_hyp.hpp"`, `#include "emmeans.hpp"`;
+2. compiles `src/linalg.cpp`, `src/lm_core.cpp`, `src/glm_core.cpp`,
+   `src/glm_fit_core.cpp`, `src/lin_hyp.cpp`, and `src/emmeans.cpp` into its
+   own build;
 3. makes the Eigen headers (`third_party/eigen`) available **when compiling
    `linalg.cpp`** — that is the only Eigen dependency, and it never leaks past
    that TU.
+
+`glm_core.hpp` is one header over two sources, `glm_core.cpp` and
+`glm_fit_core.cpp`: the family/link scalar functions and the closed-form
+statistics in the first, the IRLS loop itself in the second. The header
+stays whole because a caller wants one include for a GLM, and the two
+halves are one contract. It includes `lm_core.hpp` for one symbol only, the
+`Vcov` enum, so a GLM's standard errors are named the way an OLS fit's are;
+it never calls `fit_lm`, `parse_vcov`, or `vcov_name`.
 
 `emmeans.cpp` additionally pulls in `distributions.hpp`, `estimability.hpp`
 and `p_adjust.hpp`, all three header-only, so nothing beyond `emmeans.cpp`
@@ -42,6 +54,17 @@ itself needs adding to a build that already compiles step 2 above.
 
 `optimize.hpp` is simpler still: it is **fully header-only** (Eigen-free even in
 implementation) — include it and go, nothing extra to compile.
+
+`cluster_ids.hpp` is header-only too, and smaller again: one function,
+`densify_clusters`, that turns arbitrary `VARCHAR` cluster keys into dense
+0-based ids by sorting rather than hashing — the sort is what keeps the
+result independent of hash-table order, and what keeps a `std::string`-keyed
+hash map out of the wasm build (see the portability discipline in
+[`fitter_conventions.md`](fitter_conventions.md)). It sits above the kernel
+boundary: the SQL-facing `lm_fit_function.cpp` and `glm_fit_function.cpp`
+both call it to turn a caller's cluster column into the dense ids
+`fit_lm`/`fit_glm` require for CR0/CR1, so it needs adding only by a
+consumer that wants the same convention for its own cluster keys.
 
 No DuckDB, no `idx_t`, no ABI coupling to the extension. Everything is in
 namespace `statsduck` (linear algebra in `statsduck::linalg`, optimization in
@@ -117,6 +140,118 @@ Conventions worth knowing before consuming `LmResult`:
   `std_error²`.
   `loglik` is the Gaussian MLE value `−n/2·(ln 2π + ln(RSS/n) + 1)`, which is
   `+inf` at RSS = 0.
+
+## `glm_core.hpp` — generalized linear models by IRLS
+
+Fits a GLM — gaussian, binomial, poisson, or gamma — by iteratively
+reweighted least squares (IRLS), on the same `linalg` kernel `lm_core`
+uses.
+
+```cpp
+GlmResult fit_glm(const std::vector<double> &y,       // response, length n
+                  const linalg::Mat &X_pred,          // n × p predictors (NO intercept column)
+                  const GlmOptions &opts,              // family, link, vcov, intercept, max_iter, tol
+                  const std::vector<double> *weights = nullptr,  // prior weights, length n
+                  const std::vector<double> *offset = nullptr,   // length n, not estimated
+                  const std::vector<int> *cluster_ids = nullptr); // CR* only: dense 0-based, length n
+```
+
+| Symbol | Kind | Notes |
+| --- | --- | --- |
+| `Family` | enum | `kGaussian`, `kBinomial`, `kPoisson`, `kGamma` |
+| `Link` | enum | `kIdentity`, `kLogit`, `kProbit`, `kCLogLog`, `kLog`, `kInverse`, `kSqrt` |
+| `GlmOptions` | struct | `family` (default `kGaussian`), `link` (default `kIdentity`, overwritten from `canonical_link` unless the caller gives one), `vcov` (default `kConst`), `intercept` (default `true`), `max_iter` (25), `tol` (1e-8) |
+| `GlmResult` | struct | `ok`/`error`; `n`, `k`, `rank`, `n_clusters`, `df_residual`; per-term `terms`/`beta`/`std_error`/`z_statistic`/`p_value`; `cov` (k×k row-major); `deviance`, `null_deviance`, `dispersion`, `loglik`, `aic`; `iterations`, `converged`, `separation` |
+| `parse_family`, `parse_link` | `(const string&, Family/Link&) -> bool` | case-insensitive, in the shape of `parse_vcov`; return `false` instead of throwing, so the caller picks the exception |
+| `family_name`, `link_name` | `(Family/Link) -> const char*` | canonical labels, echoed back by `glm_fit` |
+| `canonical_link` | `(Family) -> Link` | the link used when a caller gives a family and no link |
+| `link_allowed` | `(Family, Link) -> bool` | whether a link makes sense for a family — a `logit` link on `poisson` is a bind error, not a fit |
+| `link_eta`, `link_inv`, `link_deriv`, `variance` | scalar functions over one observation | `g`, `g⁻¹`, `dmu/deta`, `V(mu)` — pure, so each is tested without a fitting loop: a round trip `link_inv(link_eta(mu)) == mu` per link, and `link_deriv` against a central difference |
+| `deviance`, `glm_loglik`, `glm_aic`, `pearson_dispersion` | closed-form functions over a whole fit's `y`, `mu`, `w` | computable from the fitted values alone; no loop needed to test these either |
+
+Conventions worth knowing before consuming `GlmResult`:
+
+- **The binomial response is a proportion, not a count.** `y` must lie in
+  `[0, 1]`; `weights` is the trial count, so 7 of 10 is `y = 0.7`,
+  `weights = 10`. A plain 0/1 logistic fit is the case `weights = 1`
+  everywhere.
+- **The IRLS loop.** Starting values follow R's `glm.fit`:
+  `(w·y + 0.5)/(w + 1)` for binomial, `y + 0.1` for poisson, `y` for
+  gaussian and gamma. Then, up to `opts.max_iter` times:
+
+  ```
+  z   = eta − offset + (y − mu) / link_deriv(eta)      working response
+  W   = w_prior · link_deriv(eta)² / variance(mu)      working weights
+  solve (Xᵀ W X)·beta = Xᵀ W z over the kept columns
+  eta = X·beta + offset
+  mu  = link_inv(eta)
+  ```
+
+  stopping when `|dev − dev_prev| / (|dev| + 0.1) < opts.tol`. A step whose
+  coefficients or deviance are not finite, whose fitted mean has left the
+  family's support on a positive-weight row, or whose deviance increased,
+  is halved, at most 25 times — except on the first pass, which has no
+  previous coefficient vector to halve toward and almost always raises the
+  deviance anyway, because the starting values sit at or near the
+  saturated model, where the deviance is already near its minimum. Halving
+  the first pass collapses every fixture in this project to all-zero
+  coefficients, the gaussian identity one-step solve included, so it is
+  not done. `iterations` counts outer passes, never the halvings inside
+  one.
+- **The rank-deficient column set is computed once and held fixed for the
+  whole loop.** This deviates from R, which re-pivots every iteration.
+  Holding it fixed is safe, not just convenient: for strictly positive
+  weights, `rank(W^½X) = rank(X)`, because `W^½` is invertible, so the set
+  cannot change between iterations. Fixing it also keeps the fit
+  deterministic, where re-pivoting could oscillate. The set comes from
+  `X_pred` restricted to the rows of positive prior weight, because a
+  zero-weight row contributes nothing to the solve and can change the
+  rank.
+- **The dispersion rule.** Fixed at 1 for binomial and poisson. For
+  gaussian and gamma it is the Pearson statistic,
+  `Σ w·(y − mu)² / variance(mu) / (n − rank)`, which reduces to the usual
+  σ² for gaussian. The classical covariance is `dispersion · (XᵀWX)⁻¹`.
+- **The robust and cluster-robust estimators use score residuals, not
+  response residuals — the one real difference from `lm_core`.** The score
+  contribution of observation i is
+  `x_i · w_i · (y_i − mu_i) · link_deriv(eta_i) / variance(mu_i)`, and
+  `HC0` through `HC3` and `CR0`/`CR1` sandwich or sum it the same way
+  `lm_core` sandwiches or sums its own response residuals. At gaussian
+  with an identity link, `link_deriv` is 1 and `variance` is 1, so the
+  score reduces to `lm_core`'s `x_i · w_i · (y_i − mu_i)`, and all six
+  estimators match `lm_core`'s bit for bit — `test_glm_fit.cpp` asserts
+  that reduction at a band of 0.
+- **`link_inv`'s clamp.** `mu` is clamped to `[kMuEps, 1 − kMuEps]` for the
+  three probability links. `log`, `inverse`, and `sqrt` clamp to at least
+  `kMuEps`: `inverse` floors away from 0 on whichever side the raw value
+  already falls, since `1/eta` can be negative, where `log` and `sqrt`
+  never need that, because `e^eta` and `eta²` can never go negative in the
+  first place. `identity` is never clamped, because a gaussian mean has no
+  boundary to clamp against. `kMuEps` is `1e-10`. Without the clamp, an
+  extreme `eta` can push `mu` to the exact boundary — the logit inverse
+  underflows to exactly 0 around `eta ≈ −709.78` — and the deviance's
+  `log(mu)` then returns infinity for a fit that should report a very
+  small probability instead. The threshold is where `e^-eta` overflows,
+  because `link_inv` computes `1/(1 + e^-eta)`; the algebraically equal
+  `e^eta/(1 + e^eta)` would hold out to about `−745.13` instead.
+- **A separate support test catches what the clamp cannot.** `link_inv`
+  clamps the probability and strictly-positive links, but `identity` is
+  never clamped, and `identity` is allowed for poisson while `log` is
+  allowed for binomial. Without an explicit validity test on `mu` at every
+  step, a poisson fit with an identity link can converge on a negative
+  fitted count, and a binomial fit with a log link can converge on a
+  probability above 1 — the deviance's `y·ln(y/mu)` term is skipped at
+  `y = 0` and returns a finite number instead of NaN, so nothing else
+  stops it. The test looks only at rows of positive prior weight, the same
+  rule the normal matrix and the aliased set follow.
+- **Failure is a value, not an exception, in the shape of `fit_lm`.**
+  `ok = false` with a populated `error` covers the data-shaped failures:
+  too few rows, a domain violation (`y` outside a family's support, a
+  negative or non-finite weight), fewer than two clusters under CR0/CR1,
+  or a design with no independent column. `converged = false` is a
+  different outcome from `ok = false`: the fit still succeeded, and
+  reports its best iterate in full, the convention
+  `docs/fitter_conventions.md` asks of every iterative fitter.
 
 ## `optimize.hpp` — derivative-free minimization
 
@@ -371,13 +506,19 @@ DuckDB-free and Eigen-free, like `linalg.hpp`.
 
 ## Testing & validation
 
-All eight layers above are unit-tested directly, standalone (no DuckDB),
+All ten layers above are unit-tested directly, standalone (no DuckDB),
 against golden values — `test/cpp/test_linalg.cpp`, `test/cpp/test_lm_fit.cpp`
-(statsmodels oracle), `test/cpp/test_lin_hyp.cpp` (statsmodels oracle),
-`test/cpp/test_optimize.cpp` (classic optimization test functions),
-`test/cpp/test_estimability.cpp` and `test/cpp/test_p_adjust.cpp` (the
-aliased-coefficient rule and the multiple-testing methods, each shared with
-`lin_hyp`), `test/cpp/test_tukey.cpp` (scipy's `studentized_range`, plus the
-`k = 2` identity against `pt` and the large-`df` limit against `NormalCDF`),
-and `test/cpp/test_emmeans.cpp` (statsmodels' `t_test`). Build and run them
+(statsmodels oracle), `test/cpp/test_cluster_ids.cpp` (the sort-based
+densifying rule `lm_fit` and `glm_fit` share), `test/cpp/test_lin_hyp.cpp`
+(statsmodels oracle), `test/cpp/test_optimize.cpp` (classic optimization
+test functions), `test/cpp/test_estimability.cpp` and
+`test/cpp/test_p_adjust.cpp` (the aliased-coefficient rule and the
+multiple-testing methods, each shared with `lin_hyp`), `test/cpp/test_tukey.cpp`
+(scipy's `studentized_range`, plus the `k = 2` identity against `pt` and the
+large-`df` limit against `NormalCDF`), `test/cpp/test_emmeans.cpp`
+(statsmodels' `t_test`), `test/cpp/test_glm_core.cpp` (the link round trips
+and derivatives described above, which need no oracle), and
+`test/cpp/test_glm_fit.cpp` (statsmodels and R oracles together, since
+neither covers the whole surface, plus the `lm_fit` identity at gaussian
+with an identity link, which needs no oracle either). Build and run them
 with `scripts/run-cpp-tests.sh` (or `make test_cpp`).

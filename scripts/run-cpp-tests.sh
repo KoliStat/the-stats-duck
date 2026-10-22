@@ -16,9 +16,19 @@
 #     (header-only)
 #   - emmeans, the estimated marginal means (#21): test_emmeans.cpp +
 #     emmeans.cpp + linalg.cpp
-# The first three and emmeans link Eigen (via linalg.cpp); lm_core, lin_hyp and
-# emmeans also pull in the header-only distributions.hpp. Each suite returns 0
-# on all-pass.
+#   - glm_core, the GLM families, links and their parsers (#22):
+#     test_glm_core.cpp + glm_core.cpp + linalg.cpp
+#   - glm_fit, the IRLS loop and its covariance (#22): test_glm_fit.cpp +
+#     glm_core.cpp + glm_fit_core.cpp + lm_core.cpp + linalg.cpp. The GLM
+#     kernel is two sources. glm_core.cpp holds the families, links and
+#     closed-form statistics, and glm_fit_core.cpp holds the loop and the
+#     covariance. This suite links lm_core because its first test compares
+#     a gaussian identity-link fit against fit_lm, and it includes the
+#     header-only optimize.hpp to give the probit and cloglog links an
+#     oracle they have no golden for.
+# The first three, emmeans, glm_core and glm_fit link Eigen (via linalg.cpp);
+# lm_core, lin_hyp, emmeans, glm_core and glm_fit also pull in the header-only
+# distributions.hpp. Each suite returns 0 on all-pass.
 #
 # Needs: a C++17 compiler ($CXX, default g++) and the third_party/eigen submodule
 # (git submodule update --init --depth 1 third_party/eigen).
@@ -70,6 +80,9 @@ build_and_run test_lin_hyp \
 build_and_run test_optimize \
   "$ROOT/test/cpp/test_optimize.cpp"
 
+build_and_run test_cluster_ids \
+  "$ROOT/test/cpp/test_cluster_ids.cpp"
+
 build_and_run test_estimability \
   "$ROOT/test/cpp/test_estimability.cpp"
 
@@ -82,6 +95,18 @@ build_and_run test_tukey \
 build_and_run test_emmeans \
   "$ROOT/test/cpp/test_emmeans.cpp" \
   "$ROOT/src/emmeans.cpp" \
+  "$ROOT/src/linalg.cpp"
+
+build_and_run test_glm_core \
+  "$ROOT/test/cpp/test_glm_core.cpp" \
+  "$ROOT/src/glm_core.cpp" \
+  "$ROOT/src/linalg.cpp"
+
+build_and_run test_glm_fit \
+  "$ROOT/test/cpp/test_glm_fit.cpp" \
+  "$ROOT/src/glm_core.cpp" \
+  "$ROOT/src/glm_fit_core.cpp" \
+  "$ROOT/src/lm_core.cpp" \
   "$ROOT/src/linalg.cpp"
 
 if [[ $rc -ne 0 ]]; then

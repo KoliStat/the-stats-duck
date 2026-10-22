@@ -12,6 +12,55 @@ that name is preserved across releases for backward compatibility.
 
 ### Added
 
+- **`glm_fit(y, x [, family [, options]])` — a generalized linear model
+  aggregate, fit by iteratively reweighted least squares** (#22). The
+  iterative sibling of `lm_fit`: one model per `GROUP BY` group, over four
+  families and their links — gaussian (`identity`, `log`, `inverse`),
+  binomial (`logit`, `probit`, `cloglog`, `log`), poisson (`log`,
+  `identity`, `sqrt`), and gamma (`inverse`, `log`, `identity`). `family`
+  defaults to `'gaussian'`, which makes `glm_fit(y, [x1, x2])` the same fit
+  as `lm_fit(y, [x1, x2])`, pinned exactly in the tests. The binomial
+  response is a proportion in `[0, 1]`, with `weights` as the trial count,
+  so 7 of 10 is `y = 0.7`, `weights = 10`; a count passed as `y` fails the
+  domain check rather than being read as a proportion. Dispersion is fixed
+  at 1 for binomial and poisson and is the Pearson estimate for gaussian
+  and gamma. Options beyond `family` go in one trailing STRUCT, read by
+  field name — `link`, `vcov`, `intercept`, `weights`, `offset`, `cluster`
+  — since `weights` and `offset` are both per-row `DOUBLE` columns that no
+  position could disambiguate; an unrecognized field name is a bind error
+  listing the six valid ones, and `vcov` accepts exactly what `lm_fit`
+  accepts (`'const'`, `'HC0'`–`'HC3'`, `'CR0'`/`'CR1'`). `z_statistic` uses
+  a normal reference for all four families, including gaussian and gamma,
+  where R and statsmodels switch to a t reference once dispersion is
+  estimated; `df_residual` is reported for a caller who wants that
+  reference instead. The robust and cluster-robust covariance estimators
+  sandwich score residuals rather than response residuals, a different
+  formula from `lm_fit`'s in general, which reduces to `lm_fit`'s exactly
+  at gaussian with an identity link — asserted bit for bit in the tests.
+  `separation` is a heuristic flag for a binomial fit that did not
+  converge with a fitted value pinned near 0 or 1: it catches perfect
+  separation and can also fire on severe near-separation, which it cannot
+  tell apart from the perfect case, and it is never raised for a fit that
+  converged, so an uninformative but converged fit (every response value
+  the same) can still report `separation = false`. Validated against
+  statsmodels' `sm.GLM` for one fit per family — binomial/`logit`,
+  poisson/`log`, gamma/`log`, and gaussian/`identity`. The
+  heteroskedasticity-consistent standard errors are validated against
+  R 4.6.1, because statsmodels 0.15.0 cannot produce a GLM's `HC2` or
+  `HC3` at all: it defines `cov_HC0`–`cov_HC3` only for OLS, so a GLM
+  returns HC0's numbers under all four names
+  (`notes/engineering/2026-10-statsmodels-hc-for-a-glm.md`). Gamma with its
+  canonical `inverse` link, poisson with `sqrt`, and a weighted gaussian
+  fit's `loglik` and `aic` are validated against R 4.6.1 as well. `probit`
+  and `cloglog` are checked against an independent Nelder-Mead
+  minimization of the deviance, and every link additionally through its
+  round-trip identity. Gaussian with an identity link is additionally
+  checked against `lm_fit` itself: coefficients and the full covariance
+  under every estimator, and the log-likelihood to the last bit. The API
+  boundary is the DuckDB-free header
+  `src/include/glm_core.hpp`, with implementation split across
+  `src/glm_core.cpp` (families, links, closed-form statistics) and
+  `src/glm_fit_core.cpp` (the IRLS loop).
 - **`emmeans(L, beta, cov, df [, alpha [, adjust]])` — estimated marginal
   means for a fit you already have** (#21). One row of `L` per marginal
   mean, each as wide as `beta`. Returns every mean's estimate, standard
