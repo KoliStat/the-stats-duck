@@ -192,6 +192,8 @@ gives Q1=1.5 / Q3=3.5 (matching SAS PROC MEANS).
 | `dhyper(x, m, n, k)`     | Hypergeometric PMF (`m` successes / `n` failures / `k` draws without replacement) |
 | `phyper(q, m, n, k)`     | Hypergeometric CDF (direct PMF sum; tractable for typical population sizes) |
 | `qhyper(p, m, n, k)`     | Hypergeometric quantile |
+| `ptukey(q, k, df)`       | Studentized range CDF for `k` means on `df` degrees of freedom — the distribution behind `emmeans`'s Tukey adjustment |
+| `qtukey(p, k, df)`       | Studentized range quantile — the Tukey HSD critical value |
 | `rnorm([mean], [sd])`    | Random sample from a normal — **volatile, per-row** |
 | `rt(df)` / `rchisq(df)` / `rf(df1, df2)` | Student-t / χ² / F samples |
 | `rgamma(shape, [rate])` / `rbeta(alpha, beta)` / `rexp([rate])` | Gamma / Beta / Exponential samples |
@@ -250,6 +252,7 @@ Output columns (fixed schema):
 | `lm(data, y, x)` / `lm_summary(data, y, x)`       | OLS regression — `lm` returns per-term coefficients, `lm_summary` returns model R² / F / σ |
 | `lm_fit(y, x [, vcov [, cluster] [, add_intercept]])` | OLS regression **aggregate** (one model per `GROUP BY`) with classical, HC0–HC3, or CR0/CR1 cluster-robust standard errors |
 | `lin_hyp(L, beta, cov, sigma2, df)`               | General linear hypothesis L·β = 0 against a fit — **scalar**; per-constraint estimates with standard errors, plus the joint sum of squares, F and chi-square |
+| `emmeans(L, beta, cov, df [, alpha [, adjust]])`  | Estimated marginal means for a fit — **scalar**; each mean with its standard error and confidence limits, every pairwise difference, and a multiplicity adjustment including Tukey |
 
 ```sql
 SELECT * FROM table_one(
@@ -510,6 +513,162 @@ the only part a quadratic form uses.
 Type I and II sums of squares are not computable this way: they need nested
 refits and the term-to-column mapping. Only Type III reduces to a hypothesis on
 the full model, which is what this function tests.
+
+### Estimated marginal means (`emmeans`)
+
+`emmeans` reports the marginal means of a grid you supply against a fit you
+already have, with their standard errors and confidence limits, every
+pairwise difference between them, and a multiplicity adjustment for that
+family. Like `lin_hyp`, it takes coefficients and a covariance, not data, so
+it works with any fit. It is what SAS prints as LSMEANS with the DIFF and CL
+options, and what R's `emmeans` package reports for a reference grid followed
+by `pairs()`.
+
+```sql
+emmeans(L, beta, cov, df [, alpha [, adjust]])
+```
+
+`L` is one row per mean, nested, each as wide as `beta`. `cov` stays flat
+row-major instead, because `lm_fit` produces it that way. `alpha` defaults
+to `0.05` and `adjust` to `'tukey'`; the other choices are `'bonferroni'`,
+`'holm'`, `'hochberg'`, `'BH'` (or `'fdr'`), `'BY'`, and `'none'`. There is no
+`sigma2` argument: `lin_hyp` takes one only to scale its hypothesis sum of
+squares, and `emmeans` has no sum of squares to scale.
+
+```sql
+-- ds1: three cells of three observations, no intercept, so each coefficient
+-- is that cell's own mean.
+CREATE TABLE ds1 AS SELECT * FROM (VALUES
+    (1.0, 1, 0, 0), (2.0, 1, 0, 0), (3.0, 1, 0, 0),
+    (4.0, 0, 1, 0), (6.0, 0, 1, 0), (8.0, 0, 1, 0),
+    (5.0, 0, 0, 1), (5.0, 0, 0, 1), (8.0, 0, 0, 1)
+) AS t(y, g1, g2, g3);
+
+SELECT printf('%.4f', (u).estimate)  AS estimate,
+       printf('%.4f', (u).std_error) AS std_error,
+       printf('%.4f', (u).lower_cl)  AS lower_cl,
+       printf('%.4f', (u).upper_cl)  AS upper_cl
+FROM (SELECT unnest((emmeans([[1,0,0],[0,1,0],[0,0,1]],
+                     list_transform(m.coefficients, c -> c.estimate),
+                     m.cov, m.df_residual)).means) AS u
+      FROM (SELECT lm_fit(y, [g1, g2, g3], 'const', false) AS m FROM ds1));
+--   estimate  std_error  lower_cl  upper_cl
+--   2.0000    0.9428     -0.3070   4.3070
+--   6.0000    0.9428     3.6930    8.3070
+--   6.0000    0.9428     3.6930    8.3070
+
+SELECT (u).i, (u).j,
+       printf('%.4f', (u).estimate)   AS estimate,
+       printf('%.4f', (u).p_value)    AS p_value,
+       printf('%.4f', (u).p_adjusted) AS p_adjusted
+FROM (SELECT unnest((emmeans([[1,0,0],[0,1,0],[0,0,1]],
+                     list_transform(m.coefficients, c -> c.estimate),
+                     m.cov, m.df_residual)).diffs) AS u
+      FROM (SELECT lm_fit(y, [g1, g2, g3], 'const', false) AS m FROM ds1));
+--   i  j  estimate  p_value  p_adjusted
+--   1  2  -4.0000   0.0240   0.0544
+--   1  3  -4.0000   0.0240   0.0544
+--   2  3  0.0000    1.0000   1.0000
+```
+
+| Field | Type | Notes |
+| ----- | ---- | ----- |
+| `means` | `LIST<STRUCT>` | one element per row of `L`, in `L`'s order: `estimate`, `std_error`, `t_statistic`, `p_value`, `lower_cl`, `upper_cl` |
+| `diffs` | `LIST<STRUCT>` | one element per pair, `i < j` row-major — (1,2), (1,3), …, (2,3), … : `i`, `j`, `estimate`, `std_error`, `t_statistic`, `p_value`, `p_adjusted`, `lower_cl`, `upper_cl` |
+| `df_den` | `DOUBLE` | the `df` argument, echoed |
+| `alpha` | `DOUBLE` | the `alpha` argument, echoed |
+| `adjust` | `VARCHAR` | the canonical method name, echoed — `'fdr'` echoes as `'BH'` |
+| `k_compare` | `BIGINT` | the number of estimable means |
+
+`i` and `j` in `diffs` are **1-based**, so they index `means` directly.
+`means[(u).i]` is the first mean in a difference.
+
+A mean can fail to be estimable three ways.
+
+First, it can put weight on a coefficient whose own diagonal entry in
+`cov` is not finite. A rank-deficient fit leaves exactly that behind, but
+a hand-built `cov` can do the same with no such fit involved; the code
+cannot tell the two apart.
+
+Second, a non-finite value can reach its estimate or its variance from
+somewhere else entirely. A NULL inside the matching row of `L` costs only
+that one mean. A NULL anywhere in `beta`, or in an **off-diagonal** entry
+of `cov`, costs every mean at once instead, because both feed every
+row's calculation, and the diagonal check above does not see an
+off-diagonal NULL at all.
+
+Third, its own variance can be negative by more than rounding should
+allow.
+
+When any of these happens, every numeric field of that element of
+`means` is NULL, and the same holds for every element of `diffs` that
+touches it. A pair can also fail on its own, the same way, even when
+both of its means are fine: its own variance can be negative by more than
+rounding should allow. `means` and `diffs` keep their length and their
+positions regardless, so `i` and `j` stay valid indices.
+
+That is the data-shaped kind of failure, and it is always a NULL, never an
+error. Misuse is different, and raises instead: a ragged `L`, a row of `L`
+that is not as wide as `beta`, an `L` with no rows, a NULL row of `L`, a
+`cov` that is not k² long, or an empty `beta`. Those six raise in close to
+the same words `lin_hyp` uses for the same six shapes, because two
+neighbouring functions must not answer the same malformed input
+differently. A `df` that is not positive and finite, an `alpha` outside
+`(0, 1)`, or an unrecognized `adjust` name raise too. `lin_hyp` has
+neither an `alpha` nor an `adjust` argument to compare against, and its own
+`df` check does not reject an infinite value the way this one does.
+
+Five things worth knowing before reading `adjust` as a knob with no cost:
+
+- **A mean's own confidence limits are never adjusted for multiplicity**,
+  whatever `adjust` says. `lower_cl` and `upper_cl` in `means` are always
+  `estimate ± t(1 − alpha/2, df) · std_error`. SAS does the same: ADJUST
+  governs the comparisons, not the means.
+- **Only `'tukey'` and `'bonferroni'` move a difference's confidence limits.**
+  `'holm'`, `'hochberg'`, `'BH'` (`'fdr'`), and `'BY'` adjust `p_adjusted`
+  only. `lower_cl` and `upper_cl` in `diffs` stay at the unadjusted
+  `t(1 − alpha/2, df)` multiplier under those four, because none of them has
+  a matching simultaneous interval. R's `emmeans` warns of the same thing.
+- **`'tukey'` is the Tukey-Kramer approximation whenever the means being
+  compared do not share a standard error.** That covers any unbalanced
+  design. It is exact only for k means with a common variance and equal
+  group sizes. With unequal standard errors, the same studentized-range
+  multiplier is applied to each pair's own standard error instead. SAS and
+  R's `emmeans` both do this too. At exactly two means, `p_adjusted` and
+  `p_value` come from two different code paths that happen to agree
+  mathematically, not the same one, so they can differ by about 1e-13 in
+  practice. `p_adjusted` can land very slightly below `p_value` rather
+  than at or above it; that is the quadrature's own accuracy, not a real
+  crossing.
+- **`k_compare` is the number of estimable means.** For `'tukey'` it is
+  exactly the family size the studentized range uses, so
+  `1 - ptukey(sqrt(2) * abs(t_statistic), k_compare, df_den)` reproduces a
+  pair's `p_adjusted`. `'bonferroni'`'s own family size is the count of
+  estimable pairs that have a p-value instead. That count usually, but not
+  always, equals `k_compare`; `docs/kernel_api.md` has the one case where it
+  differs.
+- **The adjustment assumes the rows of `L` are means.** The studentized range
+  describes the spread of a set of means, so `'tukey'`'s family-wise
+  guarantee is meaningful because the family is every pairwise difference
+  among the rows of `L`. A caller who passes rows that are themselves
+  contrasts still gets an arithmetically valid answer, but the family-wise
+  interpretation no longer holds. The function has no way to detect this,
+  so nothing in the result flags it.
+
+**Named arguments do not work on `emmeans`.** DuckDB's binder matches a
+scalar-function call positionally, regardless of any `name :=` label.
+`emmeans(L, beta, cov, df, alpha := 0.01)` happens to work, but only because
+`alpha` is genuinely the fifth argument. `emmeans(L, beta, cov, df, adjust :=
+'bonferroni')` fails instead, with a cast error: the five-argument overload
+reads that fifth position as `alpha`, a `DOUBLE`, and gets the string
+`'bonferroni'`. Call `emmeans` positionally.
+
+**The default `'tukey'` adjustment evaluates a double integral for every
+row**, through `qtukey`'s quantile search, and is far slower than the
+other methods. Measured over 1000 rows of a five-mean grid, `'tukey'` took
+about 28.5 s against `'bonferroni'`'s 0.158 s — a factor of about 180. A
+caller running `emmeans` once per group over many groups should expect
+that, or choose a cheaper `adjust` method.
 
 ### Multiple-testing correction (scalar)
 

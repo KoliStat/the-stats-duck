@@ -54,3 +54,27 @@ that has been written down than to re-derive it.
   `std::unordered_map<std::string>` in anova/chisq and not exported by duckdb-wasm.
   Fixed by an in-extension string hash (`portable_string_hash.hpp`). Includes a
   reusable `@duckdb/duckdb-wasm` Node verification harness.
+
+- [`2026-10-studentized-range-quadrature.md`](2026-10-studentized-range-quadrature.md)
+  — the studentized range distribution (#21) passed all 224 scipy goldens, all
+  four identities and the k = 2 closed form to 1.2e-15, while carrying a 1.8e-9
+  error at k = 20. Why the closed-form case certifies nothing about the hard
+  one, why self-convergence against an over-resolved copy of the same rule is
+  the check that found it, why nodes beat panels for an entire integrand
+  (48 x 2 is 2.3e-15 and 10 x 10 is 1.8e-9 at the same cost), and the branch
+  point in `s^(df-1)` that leaves a non-integer df below 4 less accurate than
+  the band. Also: `GammaP` stops after 200 terms, and an offline measurement
+  against scipy's `chi2.ppf` puts the resulting drift in `ChiSquareQuantile`
+  above about df = 1e4. Nothing in the repository tests that second claim.
+
+- [`2026-10-verifying-against-a-stale-binary.md`](2026-10-verifying-against-a-stale-binary.md)
+  — two incidents (#20/#21) of a real command against a real binary giving a
+  confident, wrong answer because the binary was not the one the diff
+  produced. Piping `cmake --build` through `tail`/`head` reports `tail`'s
+  exit status, not the build's, so a compile failure still "succeeds" — this
+  is how an earlier task shipped a wrong claim about DuckDB's `VALUES`
+  execution model. Separately, `build/release/Release/duckdb.exe` statically
+  links `stats_duck` via the `shell` CMake target, so `LOAD` of a freshly
+  built extension can be a silent no-op: the catalog already has the
+  function, by name, from the stale static copy. How to detect each, and
+  what to run instead.

@@ -8,8 +8,17 @@
 #   - lm_fit regression core (Epic 1.1): test_lm_fit.cpp + lm_core.cpp + linalg.cpp
 #   - lin_hyp general linear hypothesis (#20): test_lin_hyp.cpp + lin_hyp.cpp + linalg.cpp
 #   - optimize kernel      (Nelder-Mead): test_optimize.cpp (header-only)
-# The first three link Eigen (via linalg.cpp); lm_core and lin_hyp also pull
-# in the header-only distributions.hpp. Each suite returns 0 on all-pass.
+#   - estimability, the aliased-coefficient rule (#21): test_estimability.cpp
+#     (header-only)
+#   - p_adjust, the multiple-testing methods (#21): test_p_adjust.cpp
+#     (header-only)
+#   - the studentized range distribution, behind Tukey (#21): test_tukey.cpp
+#     (header-only)
+#   - emmeans, the estimated marginal means (#21): test_emmeans.cpp +
+#     emmeans.cpp + linalg.cpp
+# The first three and emmeans link Eigen (via linalg.cpp); lm_core, lin_hyp and
+# emmeans also pull in the header-only distributions.hpp. Each suite returns 0
+# on all-pass.
 #
 # Needs: a C++17 compiler ($CXX, default g++) and the third_party/eigen submodule
 # (git submodule update --init --depth 1 third_party/eigen).
@@ -60,6 +69,20 @@ build_and_run test_lin_hyp \
 
 build_and_run test_optimize \
   "$ROOT/test/cpp/test_optimize.cpp"
+
+build_and_run test_estimability \
+  "$ROOT/test/cpp/test_estimability.cpp"
+
+build_and_run test_p_adjust \
+  "$ROOT/test/cpp/test_p_adjust.cpp"
+
+build_and_run test_tukey \
+  "$ROOT/test/cpp/test_tukey.cpp"
+
+build_and_run test_emmeans \
+  "$ROOT/test/cpp/test_emmeans.cpp" \
+  "$ROOT/src/emmeans.cpp" \
+  "$ROOT/src/linalg.cpp"
 
 if [[ $rc -ne 0 ]]; then
   echo "C++ unit tests FAILED." >&2

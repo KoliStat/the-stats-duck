@@ -12,6 +12,58 @@ that name is preserved across releases for backward compatibility.
 
 ### Added
 
+- **`emmeans(L, beta, cov, df [, alpha [, adjust]])` — estimated marginal
+  means for a fit you already have** (#21). One row of `L` per marginal
+  mean, each as wide as `beta`. Returns every mean's estimate, standard
+  error, t, p and confidence limits, plus every pairwise difference among
+  them with the same, and a multiplicity adjustment for that family:
+  `'tukey'` (the default), `'bonferroni'`, `'holm'`, `'hochberg'`, `'BH'`
+  (or `'fdr'`), `'BY'`, or `'none'`. It is what SAS prints as LSMEANS with
+  the DIFF and CL options, and what R's `emmeans` package reports for a
+  reference grid followed by `pairs()`. A mean's own confidence limits are
+  never adjusted for multiplicity. Only `'tukey'` and `'bonferroni'` move a
+  difference's limits, because the other four methods have no matching
+  simultaneous interval. `'tukey'` is the Tukey-Kramer approximation
+  whenever the compared means do not share a standard error, which is any
+  unbalanced design, and is exact only when they do, matching SAS and R's
+  `emmeans`. A mean is reported NULL for that element when it puts weight
+  on a coefficient whose diagonal entry in `cov` is not finite (a
+  rank-deficient fit leaves exactly that behind, but a hand-built `cov`
+  can do the same with no such fit involved). It is also reported NULL
+  when a non-finite value reaches it from elsewhere, or when its own
+  variance is negative past a 1e-12 relative tolerance. A NULL inside the
+  matching row of `L` costs only that one mean; a NULL anywhere in
+  `beta`, or in an off-diagonal entry of `cov`, costs every mean at once
+  instead, because both feed every row's calculation. A pair is reported
+  NULL the same way, either by touching a mean that failed or by its own
+  variance failing the same check; the rest of the grid is unaffected
+  either way.
+  That tolerance decides whether a slightly negative variance is a
+  rounding artefact. It does not decide whether `cov` is a covariance in
+  general, the same limit `lin_hyp`'s own checks have. `k_compare`, the
+  number of estimable means, is echoed, and is exactly the family size
+  `'tukey'` uses, so its adjusted p-value can be reproduced from
+  `k_compare` and `df_den` directly. Validated against
+  statsmodels' `t_test` for the per-mean and per-pair numbers. The API
+  boundary is the DuckDB-free header `src/include/emmeans.hpp`, with
+  implementation in `src/emmeans.cpp`.
+- **`ptukey(q, k, df)` and `qtukey(p, k, df)` — the studentized range
+  distribution** (#21), CDF and quantile, for `k` means on `df` degrees of
+  freedom. This is the distribution behind Tukey's HSD and behind
+  `emmeans`'s `'tukey'` adjustment. Exposing it as its own pair of scalars
+  gives it independent SQL coverage, and lets a caller get a Tukey critical
+  value or an adjusted p-value without going through `emmeans`. Accurate to
+  about 1e-12 against `scipy.stats.studentized_range` for an integer `df`,
+  or for any real `df` at or above 4. Below that, a non-integer `df` is
+  accurate to about 1e-5 only, because the distribution's density has a
+  branch point that a fixed-node quadrature resolves slowly there. See
+  `notes/engineering/2026-10-studentized-range-quadrature.md` for the
+  detail. Both functions return NULL rather than raising for an
+  out-of-domain argument (`k < 2`, `df <= 0`). The mathematics is the
+  published two-integral form (Copenhaver and Holland, 1988). The obvious
+  reference implementation, R's own `ptukey`, is GPL-licensed, and no part
+  of it was read, ported or paraphrased, since this repository is Apache
+  2.0.
 - **`lin_hyp(L, beta, cov, sigma2, df)` — the general linear hypothesis
   L·β = 0** (#20). One row of `L` per constraint, several rows for a joint
   test. Returns the per-constraint estimates with their standard errors, t and

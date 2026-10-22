@@ -1,6 +1,7 @@
 #include "lin_hyp.hpp"
 
 #include "distributions.hpp" // stats_duck::StudentTCDF / FCDF / ChiSquareCDF
+#include "estimability.hpp"
 
 #include <cmath>
 #include <limits>
@@ -53,33 +54,17 @@ LinHypResult lin_hyp(const linalg::Mat &L, const std::vector<double> &beta, cons
 	r.df_den = df;
 
 	// A rank-deficient fit carries NaN in the row and column of each aliased
-	// coefficient. A hypothesis that puts no weight on one is still estimable,
-	// but IEEE makes 0 · NaN = NaN, so the aliased entries are zeroed in a
-	// working copy instead of being multiplied by zero. They carry zero weight
-	// by construction, so zeroing changes no surviving result.
-	std::vector<bool> aliased(k, false);
-	for (std::size_t j = 0; j < k; j++) {
-		aliased[j] = !std::isfinite(V(j, j));
-	}
+	// coefficient. See estimability.hpp (#36): zeroing a working copy, not
+	// multiplying by zero, is what makes a hypothesis that avoids those
+	// coefficients safe to evaluate.
+	const std::vector<bool> aliased = aliased_columns(V);
 	for (std::size_t i = 0; i < q; i++) {
-		for (std::size_t j = 0; j < k; j++) {
-			if (aliased[j] && L(i, j) != 0.0) {
-				return r; // estimable stays false — SAS's "non-est"
-			}
+		if (row_touches_aliased(&L.data[i * k], k, aliased)) {
+			return r; // estimable stays false — SAS's "non-est"
 		}
 	}
-	std::vector<double> beta_w = beta;
-	linalg::Mat V_w = V;
-	for (std::size_t a = 0; a < k; a++) {
-		if (!aliased[a]) {
-			continue;
-		}
-		beta_w[a] = 0.0;
-		for (std::size_t b = 0; b < k; b++) {
-			V_w(a, b) = 0.0;
-			V_w(b, a) = 0.0;
-		}
-	}
+	const std::vector<double> beta_w = zero_aliased(beta, aliased);
+	const linalg::Mat V_w = zero_aliased(V, aliased);
 
 	// θ = L·β and C = L·V·Lᵀ: the estimated combinations and their covariance.
 	const std::vector<double> theta = linalg::matvec(L, beta_w);

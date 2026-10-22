@@ -1,0 +1,29 @@
+# name: test/sql/tukey.test
+# description: studentized range distribution (ptukey, qtukey)
+# group: [stats_duck]
+
+require stats_duck
+
+# At k = 2 the studentized range is the t distribution: P(Q<=q) = 2*F_t(q/sqrt(2)) - 1
+query I
+SELECT printf('%.6f', ptukey(3.0, 2, 10.0) - (2 * pt(3.0 / sqrt(2.0), 10.0) - 1));
+----
+0.000000
+
+# A published critical value: q(0.95, 3, 6) is 4.339 to three decimals.
+query I
+SELECT printf('%.3f', qtukey(0.95, 3, 6.0));
+----
+4.339
+
+# The quantile inverts the CDF.
+query I
+SELECT printf('%.8f', ptukey(qtukey(0.95, 4, 20.0), 4, 20.0));
+----
+0.95000000
+
+# Out of domain gives NULL, not an error.
+query III
+SELECT ptukey(2.0, 1, 10.0), ptukey(2.0, 3, 0.0), qtukey(1.5, 3, 10.0);
+----
+NULL	NULL	NULL

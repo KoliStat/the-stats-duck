@@ -1,8 +1,8 @@
 # Fitter conventions: the model-fitting API standard
 
 Every SQL-facing model-fitting function in `stats_duck` follows the
-conventions on this page. Today that is `lm_fit`. Next come `glm_fit`
-(#22), `lin_hyp` (#20), `emmeans` (#21), and the fitters in downstream
+conventions on this page. Today that is `lm_fit`, `lin_hyp` (#20), and
+`emmeans` (#21). Next comes `glm_fit` (#22), and the fitters in downstream
 sibling repos. The conventions exist for two reasons. A new fitter can be
 designed by following them step by step. And a user who has learned one
 fitter can predict how the others behave.
@@ -26,6 +26,17 @@ exception.
   labelled `x1` … `xk` in list order, with `(Intercept)` first when
   `add_intercept` is true (the default). Callers pass predictors without a
   constant column.
+- **A matrix argument goes flat or nested, depending on who builds it.** A
+  machine-produced matrix goes flat and row-major: a plain `LIST(DOUBLE)`
+  with its dimension inferred from its length (k² for a k×k covariance).
+  `cov` is the example; `lm_fit` assembles it that way. A matrix a human
+  writes into a query goes nested instead, as `LIST(LIST(DOUBLE))`.
+  `lin_hyp`'s and `emmeans`'s `L` are the examples there. Readability is the
+  reason: `[[0,1,0],[0,0,1]]` reads as a matrix, while the same four numbers
+  flattened have to be chunked by eye to see where one row ends and the
+  next begins. Break the rule for a matrix argument evaluated once per data
+  row, or one large enough for offsets to matter. Neither case has come up
+  yet.
 - **Per-row key columns (cluster, subject, strata) are `VARCHAR`
   arguments.** DuckDB does not cast integers to `VARCHAR` in this position
   on its own, so callers write `id::VARCHAR` (`test/sql/lm_fit_agg.test`
@@ -113,13 +124,22 @@ Fields 0–14 are shipped; 12–14 landed with lm_fit Increment A (#34, #35).
 
 ## Numeric and portability discipline
 
-- **Deterministic by construction.** Identical inputs give bit-identical
-  results, on every platform. Randomness exists only in the sampling
-  functions. The `r*` scalars draw from a per-thread generator seeded from
+- **Deterministic by construction, on a given platform.** A fitter never
+  draws random numbers and never sums in an order that depends on a hash
+  table, so identical inputs give identical results on every run of the
+  same build. That is not the same promise as bit-identical results
+  *across* platforms. Fixed loop orders, fixed node and iteration counts
+  where a choice exists to fix, and a fixed summation order mean the
+  algorithm itself contributes no platform dependence of its own, but
+  `std::erfc`, `std::exp`, `std::pow`, `std::cos` and similar calls are
+  not bit-identical across libm implementations, and the wasm build uses
+  a different one from the desktop build. Anything that calls them can
+  differ in the last few bits between platforms, through no choice the
+  algorithm makes. Randomness exists only in the sampling functions. The
+  `r*` scalars draw from a per-thread generator seeded from
   `std::random_device` and are registered `VOLATILE`
   (`src/random_sampling_function.cpp`). `bootstrap` takes an optional seed
-  argument for reproducible runs. A fitter never draws random numbers, and
-  it never sums in an order that depends on a hash table.
+  argument for reproducible runs.
 - **The wasm string-hash pitfall.** Never put a default-hash
   `std::string`-keyed `std::unordered_map` or `unordered_set` in extension
   code. It pulls in a libc++ symbol (`std::__hash_memory`) that duckdb-wasm
