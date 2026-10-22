@@ -8,7 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 The extension installs and loads in DuckDB under the technical name `stats_duck` —
 that name is preserved across releases for backward compatibility.
 
-## [Unreleased]
+## [0.9.0-here-s-your-nine-pence] - 2026-10-22
 
 ### Added
 
@@ -203,11 +203,16 @@ that name is preserved across releases for backward compatibility.
   `visualize_mark_v1_*` function descriptions to plain English. Removed
   buzzwords and slang ("first-class", "seamlessly", "plumbing", "footgun");
   statistical terms such as robust standard errors and leverage are unchanged.
-- **DuckDB compatibility verified through v1.5.6.** The full SQL suite (2044
-  assertions) and the `VISUALIZE` suite (321 assertions) pass on a local
-  v1.5.6 build. The build used a git worktree of the `duckdb/` submodule at
-  tag `v1.5.6`, kept outside the submodule checkout, and ran the suite with
-  the extension's absolute test path, the same way `make test_release` does.
+- **DuckDB compatibility checked against v1.5.6 part-way through this
+  cycle.** The SQL suite as it then stood (2044 assertions) and the
+  `VISUALIZE` suite (321 assertions) passed on a local v1.5.6 build, using
+  a git worktree of the `duckdb/` submodule at tag `v1.5.6` kept outside
+  the submodule checkout, with the extension's absolute test path, the way
+  `make test_release` does. That run predates `emmeans` and `glm_fit`, so it
+  does not cover them: the suite has since grown to 2639 assertions. Those
+  2639 and the 3269 C++ checks are verified on the v1.4.3 submodule pin that
+  this repository builds against locally. Read the v1.5.6 line as checked
+  for the release's earlier work, not re-checked for all of it.
 - CI: the distribution pipeline now builds against DuckDB v1.5.6 with
   extension-ci-tools v1.5.6 (up from v1.4.3). That matches the DuckDB stable
   the community registry builds against. The `windows_amd64` (MSVC) job is
@@ -216,6 +221,13 @@ that name is preserved across releases for backward compatibility.
   hit on the current `windows-latest` image (duckdb/extension-ci-tools#371).
   The `duckdb/` submodule stays on v1.4.3 for the browser builds in `docs/`,
   because `@duckdb/duckdb-wasm` 1.32.0 and 1.33.0 both bundle v1.4.3.
+- **This release targets the DuckDB 1.5.x line and has not been verified
+  against DuckDB v2.0.** v2.0.0 went stable on 2026-10-21, after this
+  cycle's work was complete. v2.0 needs more than a rebuild: the
+  `VISUALIZE` parser extension has to move to the PEG grammar hooks, the
+  extension has to be ported to the stable ABI, and the community
+  registry's signing arrangement changes. That work is tracked in #46.
+  Use the 1.5.x line with this release.
 
 ### Fixed
 
@@ -896,8 +908,14 @@ First public release.
 - `linux_amd64_musl` is excluded due to a known upstream issue in the v1.2.2 extension-ci-tools Alpine Dockerfile.
 - WASM binaries served via GitHub Pages at `https://caerbannogwhite.github.io/the-stats-duck`.
 
-[0.3.2-here-s-one]: https://github.com/caerbannogwhite/the-stats-duck/releases/tag/v0.3.2
-[0.3.1-customer]: https://github.com/caerbannogwhite/the-stats-duck/releases/tag/v0.3.1
-[0.3.0-customer]: https://github.com/caerbannogwhite/the-stats-duck/releases/tag/v0.3.0
-[0.2.0-bring-out-your-dead]: https://github.com/caerbannogwhite/the-stats-duck/releases/tag/v0.2.0
-[0.1.0-mortician]: https://github.com/caerbannogwhite/the-stats-duck/releases/tag/v0.1.0
+[0.9.0-here-s-your-nine-pence]: https://github.com/KoliStat/the-stats-duck/releases/tag/v0.9.0
+[0.8.0-nothing]: https://github.com/KoliStat/the-stats-duck/releases/tag/v0.8.0
+[0.7.0-what]: https://github.com/KoliStat/the-stats-duck/releases/tag/v0.7.0
+[0.6.0-i-m-not-dead]: https://github.com/KoliStat/the-stats-duck/releases/tag/v0.6.0
+[0.5.0-dead-person]: https://github.com/KoliStat/the-stats-duck/releases/tag/v0.5.0
+[0.4.0-nine-pence]: https://github.com/KoliStat/the-stats-duck/releases/tag/v0.4.0
+[0.3.2-here-s-one]: https://github.com/KoliStat/the-stats-duck/releases/tag/v0.3.2
+[0.3.1-customer]: https://github.com/KoliStat/the-stats-duck/releases/tag/v0.3.1
+[0.3.0-customer]: https://github.com/KoliStat/the-stats-duck/releases/tag/v0.3.0
+[0.2.0-bring-out-your-dead]: https://github.com/KoliStat/the-stats-duck/releases/tag/v0.2.0
+[0.1.0-mortician]: https://github.com/KoliStat/the-stats-duck/releases/tag/v0.1.0
