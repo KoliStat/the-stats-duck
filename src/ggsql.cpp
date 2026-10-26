@@ -4,6 +4,7 @@
 #include "ggsql_marks_internal.hpp"
 
 #include "duckdb/common/exception.hpp"
+#include "duckdb_compat.hpp"
 #include "duckdb/common/insertion_order_preserving_map.hpp"
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/common/types/value.hpp"
@@ -26,6 +27,8 @@
 #include <algorithm>
 
 namespace duckdb {
+
+namespace compat = statsduck::compat;
 namespace ggsql {
 
 namespace {
@@ -370,7 +373,7 @@ struct GgsqlResultState : public GlobalTableFunctionState {
 };
 
 unique_ptr<FunctionData> GgsqlResultBind(ClientContext &, TableFunctionBindInput &input,
-                                         vector<LogicalType> &return_types, vector<string> &names) {
+                                         vector<LogicalType> &return_types, compat::BindNames &names) {
 	names.emplace_back("spec");
 	return_types.emplace_back(LogicalType::VARCHAR);
 	names.emplace_back("layer_sqls");
@@ -455,7 +458,7 @@ static void SkipLeadingCommentsAndWhitespace(string &s) {
 	}
 }
 
-ParserExtensionParseResult GgsqlParse(ParserExtensionInfo *, const string &query) {
+static ParserExtensionParseResult GgsqlParseString(ParserExtensionInfo *, const string &query) {
 	string trimmed = query;
 	SkipLeadingCommentsAndWhitespace(trimmed);
 	StringUtil::Trim(trimmed); // trailing whitespace too
@@ -549,8 +552,8 @@ ParserExtensionPlanResult GgsqlPlan(ParserExtensionInfo *, ClientContext &contex
 
 	TableFunction tf;
 	tf.name = "visualize_result";
-	tf.arguments.push_back(LogicalType::VARCHAR);
-	tf.arguments.push_back(LogicalType::MAP(LogicalType::VARCHAR, LogicalType::VARCHAR));
+	compat::AddArgument(tf, LogicalType::VARCHAR);
+	compat::AddArgument(tf, LogicalType::MAP(LogicalType::VARCHAR, LogicalType::VARCHAR));
 	tf.bind = GgsqlResultBind;
 	tf.init_global = GgsqlResultInit;
 	tf.function = GgsqlResultFunc;
@@ -563,6 +566,35 @@ ParserExtensionPlanResult GgsqlPlan(ParserExtensionInfo *, ClientContext &contex
 	result.return_type = StatementReturnType::QUERY_RESULT;
 	return result;
 }
+
+// The parse callback's input changed in DuckDB v2.0. A 1.x parser extension
+// received the statement text, once DuckDB's own parser had rejected it. On
+// v2.0 it receives the statement's tokens instead, each carrying its text.
+// Our parser works on text, so on that line the tokens are joined back into
+// a statement before the shared body runs. Comment tokens are dropped: the
+// 1.x path delivered comments inside the text and GgsqlParseString skips
+// them itself, so nothing that mattered is lost. The whitespace between
+// tokens is not the original, which only matters inside a quoted literal,
+// and a literal is one token.
+#ifdef STATS_DUCK_DUCKDB_V2
+static ParserExtensionParseResult GgsqlParse(ParserExtensionInfo *info, const vector<SimpleToken> &tokens) {
+	string query;
+	for (auto &token : tokens) {
+		if (token.type == TokenType::COMMENT) {
+			continue;
+		}
+		if (!query.empty()) {
+			query += ' ';
+		}
+		query += token.text;
+	}
+	return GgsqlParseString(info, query);
+}
+#else
+static ParserExtensionParseResult GgsqlParse(ParserExtensionInfo *info, const string &query) {
+	return GgsqlParseString(info, query);
+}
+#endif
 
 class GgsqlParserExtension : public ParserExtension {
 public:

@@ -4,13 +4,15 @@
 #include "duckdb/common/types/date.hpp"
 #include "duckdb/common/types/timestamp.hpp"
 #include "duckdb/common/types/time.hpp"
-#include "duckdb/common/types/vector.hpp"
+#include "duckdb_compat.hpp"
 
 #include <cmath>
 #include <string>
 #include <unordered_set>
 
 namespace duckdb {
+
+namespace compat = statsduck::compat;
 
 // std::string-keyed set with an in-extension hash — the default
 // std::hash<std::string> lowers to libc++ std::__hash_memory, which
@@ -168,7 +170,7 @@ static void WriteDateValue(double raw, const string &format, Vector &vec, idx_t 
 		days = static_cast<int32_t>(raw) + SAS_EPOCH_OFFSET;
 		break;
 	}
-	FlatVector::GetData<int32_t>(vec)[row] = days;
+	compat::WriteData<int32_t>(vec)[row] = days;
 }
 
 static void WriteTimestampValue(double raw, const string &format, Vector &vec, idx_t row) {
@@ -199,7 +201,7 @@ static void WriteTimestampValue(double raw, const string &format, Vector &vec, i
 	double remaining_secs = seconds - static_cast<double>(total_days) * 86400.0;
 	int64_t micros =
 	    (total_days + epoch_offset) * 86400LL * 1000000LL + static_cast<int64_t>(remaining_secs * 1000000.0);
-	FlatVector::GetData<int64_t>(vec)[row] = micros;
+	compat::WriteData<int64_t>(vec)[row] = micros;
 }
 
 static void WriteTimeValue(double raw, const string &format, Vector &vec, idx_t row) {
@@ -214,7 +216,7 @@ static void WriteTimeValue(double raw, const string &format, Vector &vec, idx_t 
 	if (secs < 0.0) {
 		secs += 86400.0;
 	}
-	FlatVector::GetData<int64_t>(vec)[row] = static_cast<int64_t>(secs * 1000000.0);
+	compat::WriteData<int64_t>(vec)[row] = static_cast<int64_t>(secs * 1000000.0);
 }
 
 // ─── UTF-8 sanitization ────────────────────────────────────────────────────────
@@ -290,26 +292,26 @@ void WriteReadStatValue(readstat_value_t value, readstat_variable_t *variable, c
 		if (str) {
 			size_t len = strlen(str);
 			auto clean = SanitizeUtf8(str, len);
-			FlatVector::GetData<string_t>(vec)[row] = StringVector::AddString(vec, clean);
+			compat::WriteData<string_t>(vec)[row] = StringVector::AddString(vec, clean);
 		} else {
 			FlatVector::SetNull(vec, row, true);
 		}
 		break;
 	}
 	case LogicalTypeId::TINYINT:
-		FlatVector::GetData<int8_t>(vec)[row] = readstat_int8_value(value);
+		compat::WriteData<int8_t>(vec)[row] = readstat_int8_value(value);
 		break;
 	case LogicalTypeId::SMALLINT:
-		FlatVector::GetData<int16_t>(vec)[row] = readstat_int16_value(value);
+		compat::WriteData<int16_t>(vec)[row] = readstat_int16_value(value);
 		break;
 	case LogicalTypeId::INTEGER:
-		FlatVector::GetData<int32_t>(vec)[row] = readstat_int32_value(value);
+		compat::WriteData<int32_t>(vec)[row] = readstat_int32_value(value);
 		break;
 	case LogicalTypeId::FLOAT:
-		FlatVector::GetData<float>(vec)[row] = readstat_float_value(value);
+		compat::WriteData<float>(vec)[row] = readstat_float_value(value);
 		break;
 	case LogicalTypeId::DOUBLE:
-		FlatVector::GetData<double>(vec)[row] = readstat_double_value(value);
+		compat::WriteData<double>(vec)[row] = readstat_double_value(value);
 		break;
 	case LogicalTypeId::DATE:
 		WriteDateValue(readstat_double_value(value), format, vec, row);

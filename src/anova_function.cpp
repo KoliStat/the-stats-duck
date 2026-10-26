@@ -5,7 +5,7 @@
 
 #include "duckdb/function/aggregate_function.hpp"
 #include "duckdb/function/function_set.hpp"
-#include "duckdb/common/types/vector.hpp"
+#include "duckdb_compat.hpp"
 #include "duckdb/main/extension/extension_loader.hpp"
 
 #include <cmath>
@@ -13,6 +13,8 @@
 #include <unordered_map>
 
 namespace duckdb {
+
+namespace compat = statsduck::compat;
 
 // anova_oneway(value, group) — one-way ANOVA.
 //
@@ -69,7 +71,7 @@ struct AnovaState {
 	StrMap<GroupMoments> *groups;
 };
 
-static void AnovaInit(const AggregateFunction &, data_ptr_t state_p) {
+STATS_DUCK_AGGREGATE_INIT(AnovaInit) {
 	auto &state = *reinterpret_cast<AnovaState *>(state_p);
 	state.groups = nullptr;
 }
@@ -158,7 +160,7 @@ static void AnovaDestroy(Vector &state_vector, AggregateInputData &, idx_t count
 	}
 }
 
-static void AnovaFinalize(Vector &state_vector, AggregateInputData &, Vector &result, idx_t count, idx_t offset) {
+static void AnovaFinalize(Vector &state_vector, compat::FinalizeInput &, Vector &result, idx_t count, idx_t offset) {
 	auto states = FlatVector::GetData<AnovaState *>(state_vector);
 	auto &children = StructVector::GetEntries(result);
 
@@ -221,17 +223,17 @@ static void AnovaFinalize(Vector &state_vector, AggregateInputData &, Vector &re
 		double ss_total = ss_between + ss_within;
 		double eta_squared = ss_total > 0.0 ? ss_between / ss_total : 0.0;
 
-		FlatVector::GetData<string_t>(*children[0])[idx] =
-		    StringVector::AddString(*children[0], "One-way ANOVA");
-		FlatVector::GetData<double>(*children[1])[idx] = f_stat;
-		FlatVector::GetData<double>(*children[2])[idx] = df_between;
-		FlatVector::GetData<double>(*children[3])[idx] = df_within;
-		FlatVector::GetData<double>(*children[4])[idx] = p_value;
-		FlatVector::GetData<double>(*children[5])[idx] = ss_between;
-		FlatVector::GetData<double>(*children[6])[idx] = ss_within;
-		FlatVector::GetData<double>(*children[7])[idx] = eta_squared;
-		FlatVector::GetData<int64_t>(*children[8])[idx] = k;
-		FlatVector::GetData<int64_t>(*children[9])[idx] = n_total;
+		compat::WriteData<string_t>(compat::Deref(children[0]))[idx] =
+		    StringVector::AddString(compat::Deref(children[0]), "One-way ANOVA");
+		compat::WriteData<double>(compat::Deref(children[1]))[idx] = f_stat;
+		compat::WriteData<double>(compat::Deref(children[2]))[idx] = df_between;
+		compat::WriteData<double>(compat::Deref(children[3]))[idx] = df_within;
+		compat::WriteData<double>(compat::Deref(children[4]))[idx] = p_value;
+		compat::WriteData<double>(compat::Deref(children[5]))[idx] = ss_between;
+		compat::WriteData<double>(compat::Deref(children[6]))[idx] = ss_within;
+		compat::WriteData<double>(compat::Deref(children[7]))[idx] = eta_squared;
+		compat::WriteData<int64_t>(compat::Deref(children[8]))[idx] = k;
+		compat::WriteData<int64_t>(compat::Deref(children[9]))[idx] = n_total;
 	}
 }
 

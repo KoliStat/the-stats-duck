@@ -3,7 +3,7 @@
 #include "read_stat_types.hpp"
 
 #include "duckdb/function/table_function.hpp"
-#include "duckdb/common/types/vector.hpp"
+#include "duckdb_compat.hpp"
 #include "duckdb/common/types/column/column_data_collection.hpp"
 #include "duckdb/common/types/column/column_data_scan_states.hpp"
 #include "duckdb/common/file_system.hpp"
@@ -20,6 +20,8 @@ extern "C" {
 }
 
 namespace duckdb {
+
+namespace compat = statsduck::compat;
 
 // ─── Format detection ───────────────────────────────────────────────────────────
 
@@ -205,7 +207,7 @@ static int BindAbortValueHandler(int, readstat_variable_t *, readstat_value_t, v
 // ─── Bind function ──────────────────────────────────────────────────────────────
 
 static unique_ptr<FunctionData> ReadStatBind(ClientContext &context, TableFunctionBindInput &input,
-                                              vector<LogicalType> &return_types, vector<string> &names) {
+                                              vector<LogicalType> &return_types, compat::BindNames &names) {
 	auto bind_data = make_uniq<ReadStatBindData>();
 	bind_data->path = input.inputs[0].GetValue<string>();
 
@@ -255,7 +257,7 @@ static unique_ptr<FunctionData> ReadStatBind(ClientContext &context, TableFuncti
 
 	// Set result schema
 	for (idx_t i = 0; i < bind_data->column_names.size(); i++) {
-		names.push_back(bind_data->column_names[i]);
+		names.push_back(compat::Ident(bind_data->column_names[i]));
 		return_types.push_back(bind_data->column_types[i]);
 	}
 
@@ -410,7 +412,7 @@ static unique_ptr<TableRef> ReadStatReplacementScan(ClientContext &context, Repl
 
 	auto table_function = make_uniq<TableFunctionRef>();
 	vector<unique_ptr<ParsedExpression>> children;
-	children.push_back(make_uniq<ConstantExpression>(Value(table_name)));
+	children.push_back(compat::ConstantString(table_name));
 	table_function->function = make_uniq<FunctionExpression>("read_stat", std::move(children));
 	return std::move(table_function);
 }
@@ -496,7 +498,7 @@ static void MetadataErrorHandler(const char *error_message, void *ctx) {
 }
 
 static unique_ptr<FunctionData> ReadStatMetadataBind(ClientContext &context, TableFunctionBindInput &input,
-                                                     vector<LogicalType> &return_types, vector<string> &names) {
+                                                     vector<LogicalType> &return_types, compat::BindNames &names) {
 	auto bind_data = make_uniq<ReadStatMetadataBindData>();
 	bind_data->path = input.inputs[0].GetValue<string>();
 
@@ -572,8 +574,8 @@ static void ReadStatMetadataExecute(ClientContext &, TableFunctionInput &input, 
 
 void RegisterReadStat(ExtensionLoader &loader) {
 	TableFunction func("read_stat", {LogicalType::VARCHAR}, ReadStatExecute, ReadStatBind, ReadStatInitGlobal);
-	func.named_parameters["format"] = LogicalType::VARCHAR;
-	func.named_parameters["encoding"] = LogicalType::VARCHAR;
+	compat::AddNamedParameter(func, "format", LogicalType::VARCHAR);
+	compat::AddNamedParameter(func, "encoding", LogicalType::VARCHAR);
 	statsduck::RegisterDocumented(loader, std::move(func),
 	                              "Read SAS (.sas7bdat/.xpt), SPSS (.sav/.por), or Stata (.dta) files as "
 	                              "a table.",
@@ -581,8 +583,8 @@ void RegisterReadStat(ExtensionLoader &loader) {
 
 	TableFunction meta("read_stat_metadata", {LogicalType::VARCHAR}, ReadStatMetadataExecute, ReadStatMetadataBind,
 	                   ReadStatMetadataInitGlobal);
-	meta.named_parameters["format"] = LogicalType::VARCHAR;
-	meta.named_parameters["encoding"] = LogicalType::VARCHAR;
+	compat::AddNamedParameter(meta, "format", LogicalType::VARCHAR);
+	compat::AddNamedParameter(meta, "encoding", LogicalType::VARCHAR);
 	statsduck::RegisterDocumented(loader, std::move(meta),
 	                              "Variable-level metadata (labels, formats, value labels) of a "
 	                              "SAS/SPSS/Stata file.",

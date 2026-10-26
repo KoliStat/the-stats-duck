@@ -5,7 +5,7 @@
 
 #include "duckdb/function/aggregate_function.hpp"
 #include "duckdb/function/function_set.hpp"
-#include "duckdb/common/types/vector.hpp"
+#include "duckdb_compat.hpp"
 #include "duckdb/execution/expression_executor.hpp"
 #include "duckdb/planner/expression.hpp"
 #include "duckdb/main/extension/extension_loader.hpp"
@@ -14,6 +14,8 @@
 #include <limits>
 
 namespace duckdb {
+
+namespace compat = statsduck::compat;
 
 // Pearson product-moment correlation as a streaming aggregate.
 //
@@ -53,45 +55,42 @@ struct PearsonBindData : public FunctionData {
 
 // ── Bind-parameter extractors ──────────────────────────────────────────────
 
-static double ExtractConstantDouble(ClientContext &context, AggregateFunction &function,
+static double ExtractConstantDouble(ClientContext &context, compat::BindFunction &function,
                                      vector<unique_ptr<Expression>> &arguments, idx_t arg_idx) {
 	if (!arguments[arg_idx]->IsFoldable()) {
 		throw BinderException("pearson_test: parameter must be a constant value");
 	}
 	Value val = ExpressionExecutor::EvaluateScalar(context, *arguments[arg_idx]);
 	double result = val.GetValue<double>();
-	Function::EraseArgument(function, arguments, arg_idx);
+	compat::EraseArgument(function, arguments, arg_idx);
 	return result;
 }
 
-static std::string ExtractConstantString(ClientContext &context, AggregateFunction &function,
+static std::string ExtractConstantString(ClientContext &context, compat::BindFunction &function,
                                           vector<unique_ptr<Expression>> &arguments, idx_t arg_idx) {
 	if (!arguments[arg_idx]->IsFoldable()) {
 		throw BinderException("pearson_test: parameter must be a constant value");
 	}
 	Value val = ExpressionExecutor::EvaluateScalar(context, *arguments[arg_idx]);
 	std::string result = val.GetValue<std::string>();
-	Function::EraseArgument(function, arguments, arg_idx);
+	compat::EraseArgument(function, arguments, arg_idx);
 	return result;
 }
 
 // Overload bindings: (x, y), (x, y, alpha), (x, y, alpha, alternative).
 
-static unique_ptr<FunctionData> PearsonBind2(ClientContext &, AggregateFunction &,
-                                              vector<unique_ptr<Expression>> &) {
+STATS_DUCK_AGGREGATE_BIND(PearsonBind2) {
 	return make_uniq<PearsonBindData>();
 }
 
-static unique_ptr<FunctionData> PearsonBind3(ClientContext &context, AggregateFunction &function,
-                                              vector<unique_ptr<Expression>> &arguments) {
+STATS_DUCK_AGGREGATE_BIND(PearsonBind3) {
 	auto bd = make_uniq<PearsonBindData>();
 	bd->alpha = ExtractConstantDouble(context, function, arguments, 2);
 	sdv::ValidateAlpha(bd->alpha, "pearson_test");
 	return std::move(bd);
 }
 
-static unique_ptr<FunctionData> PearsonBind4(ClientContext &context, AggregateFunction &function,
-                                              vector<unique_ptr<Expression>> &arguments) {
+STATS_DUCK_AGGREGATE_BIND(PearsonBind4) {
 	auto bd = make_uniq<PearsonBindData>();
 	bd->alternative = ExtractConstantString(context, function, arguments, 3);
 	sdv::ValidateAlternative(bd->alternative, "pearson_test");
@@ -127,7 +126,7 @@ struct PearsonState {
 	double cxy;  // sum_i (x_i - mean_x) * (y_i - mean_y)
 };
 
-static void PearsonInit(const AggregateFunction &, data_ptr_t state_p) {
+STATS_DUCK_AGGREGATE_INIT(PearsonInit) {
 	auto &state = *reinterpret_cast<PearsonState *>(state_p);
 	state.n = 0;
 	state.mean_x = 0.0;
@@ -216,7 +215,7 @@ static double ComputePValue(double t_stat, double df, const std::string &alterna
 	return 1.0 - stats_duck::StudentTCDF(t_stat, df);
 }
 
-static void PearsonFinalize(Vector &state_vector, AggregateInputData &aggr_input_data, Vector &result, idx_t count,
+static void PearsonFinalize(Vector &state_vector, compat::FinalizeInput &aggr_input_data, Vector &result, idx_t count,
                               idx_t offset) {
 	auto states = FlatVector::GetData<PearsonState *>(state_vector);
 	auto &children = StructVector::GetEntries(result);
@@ -273,16 +272,16 @@ static void PearsonFinalize(Vector &state_vector, AggregateInputData &aggr_input
 			ci_upper = std::tanh(z + z_crit * se);
 		}
 
-		FlatVector::GetData<string_t>(*children[0])[idx] =
-		    StringVector::AddString(*children[0], "Pearson Correlation");
-		FlatVector::GetData<double>(*children[1])[idx] = r;
-		FlatVector::GetData<double>(*children[2])[idx] = t_stat;
-		FlatVector::GetData<double>(*children[3])[idx] = df;
-		FlatVector::GetData<double>(*children[4])[idx] = p_value;
-		FlatVector::GetData<string_t>(*children[5])[idx] = StringVector::AddString(*children[5], alternative);
-		FlatVector::GetData<double>(*children[6])[idx] = ci_lower;
-		FlatVector::GetData<double>(*children[7])[idx] = ci_upper;
-		FlatVector::GetData<int64_t>(*children[8])[idx] = state.n;
+		compat::WriteData<string_t>(compat::Deref(children[0]))[idx] =
+		    StringVector::AddString(compat::Deref(children[0]), "Pearson Correlation");
+		compat::WriteData<double>(compat::Deref(children[1]))[idx] = r;
+		compat::WriteData<double>(compat::Deref(children[2]))[idx] = t_stat;
+		compat::WriteData<double>(compat::Deref(children[3]))[idx] = df;
+		compat::WriteData<double>(compat::Deref(children[4]))[idx] = p_value;
+		compat::WriteData<string_t>(compat::Deref(children[5]))[idx] = StringVector::AddString(compat::Deref(children[5]), alternative);
+		compat::WriteData<double>(compat::Deref(children[6]))[idx] = ci_lower;
+		compat::WriteData<double>(compat::Deref(children[7]))[idx] = ci_upper;
+		compat::WriteData<int64_t>(compat::Deref(children[8]))[idx] = state.n;
 	}
 }
 

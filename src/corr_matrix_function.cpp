@@ -2,6 +2,7 @@
 #include "register_documented.hpp"
 
 #include "duckdb/catalog/catalog.hpp"
+#include "duckdb_compat.hpp"
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/common/types/value.hpp"
@@ -17,6 +18,8 @@
 #include <vector>
 
 namespace duckdb {
+
+namespace compat = statsduck::compat;
 
 namespace {
 
@@ -136,7 +139,7 @@ static bool IsNumericKind(LogicalTypeId tid) {
 
 static unique_ptr<FunctionData> CorrMatrixBind(ClientContext &context, TableFunctionBindInput &input,
                                                 vector<LogicalType> &return_types,
-                                                vector<string> &names) {
+                                                compat::BindNames &names) {
 	auto bd = make_uniq<CorrMatrixBindData>();
 
 	if (input.inputs.empty() || input.inputs[0].IsNull()) {
@@ -168,16 +171,16 @@ static unique_ptr<FunctionData> CorrMatrixBind(ClientContext &context, TableFunc
 	// Catalog lookup — confirm each variable exists and is numeric.
 	auto &catalog = Catalog::GetCatalog(context, INVALID_CATALOG);
 	auto &schema = DEFAULT_SCHEMA;
-	auto entry = catalog.GetEntry(context, CatalogType::TABLE_ENTRY, schema, bd->data_table,
+	auto entry = catalog.GetEntry(context, CatalogType::TABLE_ENTRY, compat::Ident(schema), compat::Ident(bd->data_table),
 	                              OnEntryNotFound::THROW_EXCEPTION);
 	auto &tbl = entry->Cast<TableCatalogEntry>();
 	auto &cols = tbl.GetColumns();
 	for (auto &v : bd->variables) {
-		if (!cols.ColumnExists(v)) {
+		if (!cols.ColumnExists(compat::Ident(v))) {
 			throw BinderException("corr_matrix: column '%s' not found in table '%s'", v,
 			                      bd->data_table);
 		}
-		auto &col = cols.GetColumn(v);
+		auto &col = cols.GetColumn(compat::Ident(v));
 		if (!IsNumericKind(col.GetType().id())) {
 			throw BinderException(
 			    "corr_matrix: column '%s' is not numeric (type %s); "
@@ -306,8 +309,8 @@ static void CorrMatrixExecute(ClientContext &, TableFunctionInput &input, DataCh
 void RegisterCorrMatrix(ExtensionLoader &loader) {
 	TableFunction fn("corr_matrix", {LogicalType::VARCHAR}, CorrMatrixExecute, CorrMatrixBind,
 	                  CorrMatrixInitGlobal);
-	fn.named_parameters["variables"] = LogicalType::LIST(LogicalType::VARCHAR);
-	fn.named_parameters["method"] = LogicalType::VARCHAR;
+	compat::AddNamedParameter(fn, "variables", LogicalType::LIST(LogicalType::VARCHAR));
+	compat::AddNamedParameter(fn, "method", LogicalType::VARCHAR);
 	statsduck::RegisterDocumented(loader, std::move(fn),
 	                              "Long-format pairwise correlation matrix over a table's numeric columns "
 	                              "(pearson, spearman, or kendall).",

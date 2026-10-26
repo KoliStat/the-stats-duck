@@ -4,7 +4,7 @@
 #include "lin_hyp.hpp"   // statsduck::lin_hyp — the DuckDB-free kernel
 #include "list_read.hpp" // ListVectorReader, ListMatrixReader
 
-#include "duckdb/common/types/vector.hpp"
+#include "duckdb_compat.hpp"
 #include "duckdb/function/scalar_function.hpp"
 #include "duckdb/main/extension/extension_loader.hpp"
 
@@ -12,6 +12,8 @@
 #include <vector>
 
 namespace duckdb {
+
+namespace compat = statsduck::compat;
 
 namespace {
 
@@ -44,7 +46,7 @@ static inline void SetD(Vector &v, idx_t row, double x) {
 	if (std::isnan(x)) {
 		FlatVector::SetNull(v, row, true);
 	} else {
-		FlatVector::GetData<double>(v)[row] = x;
+		compat::WriteData<double>(v)[row] = x;
 	}
 }
 
@@ -137,14 +139,14 @@ static void LinHypExec(DataChunk &args, ExpressionState &, Vector &result) {
 	// estimates: LIST<STRUCT>. Reserve first, then fetch the child pointers —
 	// Reserve can reallocate, and fetching first is the classic bug. See
 	// notes/engineering/2026-06-lm-fit-robust-se-aggregate.md §2.
-	Vector &rows_list = *children[0];
-	auto row_entries_out = FlatVector::GetData<list_entry_t>(rows_list);
+	Vector &rows_list = compat::Deref(children[0]);
+	auto row_entries_out = compat::WriteData<list_entry_t>(rows_list);
 	ListVector::Reserve(rows_list, total_rows);
 	ListVector::SetListSize(rows_list, total_rows);
-	Vector &rows_child = ListVector::GetEntry(rows_list);
+	Vector &rows_child = compat::ListChild(rows_list);
 	auto &rf = StructVector::GetEntries(rows_child);
 
-	auto df_num_data = FlatVector::GetData<int64_t>(*children[2]);
+	auto df_num_data = compat::WriteData<int64_t>(compat::Deref(children[2]));
 
 	idx_t out = 0;
 	for (idx_t i = 0; i < count; i++) {
@@ -158,20 +160,20 @@ static void LinHypExec(DataChunk &args, ExpressionState &, Vector &result) {
 		row_entries_out[i] = list_entry_t(out, q);
 		for (idx_t a = 0; a < q; a++) {
 			const idx_t pos = out + a;
-			SetD(*rf[0], pos, r.estimate[a]);
-			SetD(*rf[1], pos, r.std_error[a]);
-			SetD(*rf[2], pos, r.t_statistic[a]);
-			SetD(*rf[3], pos, r.p_value[a]);
+			SetD(compat::Deref(rf[0]), pos, r.estimate[a]);
+			SetD(compat::Deref(rf[1]), pos, r.std_error[a]);
+			SetD(compat::Deref(rf[2]), pos, r.t_statistic[a]);
+			SetD(compat::Deref(rf[3]), pos, r.p_value[a]);
 		}
 		out += q;
 
-		SetD(*children[1], i, r.ss);
+		SetD(compat::Deref(children[1]), i, r.ss);
 		df_num_data[i] = static_cast<int64_t>(r.df_num);
-		SetD(*children[3], i, r.df_den);
-		SetD(*children[4], i, r.f_statistic);
-		SetD(*children[5], i, r.f_p_value);
-		SetD(*children[6], i, r.chisq);
-		SetD(*children[7], i, r.chisq_p_value);
+		SetD(compat::Deref(children[3]), i, r.df_den);
+		SetD(compat::Deref(children[4]), i, r.f_statistic);
+		SetD(compat::Deref(children[5]), i, r.f_p_value);
+		SetD(compat::Deref(children[6]), i, r.chisq);
+		SetD(compat::Deref(children[7]), i, r.chisq_p_value);
 	}
 }
 

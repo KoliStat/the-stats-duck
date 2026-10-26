@@ -4,6 +4,7 @@
 #include "lm_core.hpp" // statsduck::fit_lm — the shared OLS implementation
 
 #include "duckdb/catalog/catalog.hpp"
+#include "duckdb_compat.hpp"
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
 #include "duckdb/common/exception.hpp"
 #include "duckdb/common/string_util.hpp"
@@ -19,6 +20,8 @@
 #include <vector>
 
 namespace duckdb {
+
+namespace compat = statsduck::compat;
 
 namespace {
 
@@ -493,17 +496,16 @@ static unique_ptr<FunctionData> LmBindCommon(ClientContext &context, TableFuncti
 
 	// Catalog lookup — y and every x must exist and be numeric.
 	auto &catalog = Catalog::GetCatalog(context, INVALID_CATALOG);
-	auto entry = catalog.GetEntry(context, CatalogType::TABLE_ENTRY, DEFAULT_SCHEMA,
-	                              bd->data_table, OnEntryNotFound::THROW_EXCEPTION);
+	auto entry = catalog.GetEntry(context, CatalogType::TABLE_ENTRY, compat::Ident(DEFAULT_SCHEMA), compat::Ident(bd->data_table), OnEntryNotFound::THROW_EXCEPTION);
 	auto &tbl = entry->Cast<TableCatalogEntry>();
 	auto &cols = tbl.GetColumns();
 
 	auto check_col = [&](const std::string &c, const char *role) {
-		if (!cols.ColumnExists(c)) {
+		if (!cols.ColumnExists(compat::Ident(c))) {
 			throw BinderException("%s: %s column '%s' not found in table '%s'", fname, role, c,
 			                      bd->data_table);
 		}
-		auto &col = cols.GetColumn(c);
+		auto &col = cols.GetColumn(compat::Ident(c));
 		if (!IsNumericKind(col.GetType().id())) {
 			throw BinderException(
 			    "%s: %s column '%s' is not numeric (type %s); OLS requires numeric columns",
@@ -518,7 +520,7 @@ static unique_ptr<FunctionData> LmBindCommon(ClientContext &context, TableFuncti
 }
 
 static unique_ptr<FunctionData> LmBind(ClientContext &context, TableFunctionBindInput &input,
-                                       vector<LogicalType> &return_types, vector<string> &names) {
+                                       vector<LogicalType> &return_types, compat::BindNames &names) {
 	auto bd = LmBindCommon(context, input, /*is_summary=*/false);
 	names = {"term", "estimate", "std_error", "t_statistic", "p_value"};
 	return_types = {LogicalType::VARCHAR, LogicalType::DOUBLE, LogicalType::DOUBLE,
@@ -528,7 +530,7 @@ static unique_ptr<FunctionData> LmBind(ClientContext &context, TableFunctionBind
 
 static unique_ptr<FunctionData> LmSummaryBind(ClientContext &context, TableFunctionBindInput &input,
                                               vector<LogicalType> &return_types,
-                                              vector<string> &names) {
+                                              compat::BindNames &names) {
 	auto bd = LmBindCommon(context, input, /*is_summary=*/true);
 	names = {"r_squared",   "adj_r_squared", "f_statistic", "f_p_value",
 	         "df_model",    "df_residual",   "sigma",       "n"};
@@ -610,9 +612,9 @@ static void LmSummaryExecute(ClientContext &, TableFunctionInput &input, DataChu
 void RegisterLm(ExtensionLoader &loader) {
 	{
 		TableFunction fn("lm", {LogicalType::VARCHAR}, LmExecute, LmBind, LmInitGlobal);
-		fn.named_parameters["y"] = LogicalType::VARCHAR;
-		fn.named_parameters["x"] = LogicalType::LIST(LogicalType::VARCHAR);
-		fn.named_parameters["formula"] = LogicalType::VARCHAR;
+		compat::AddNamedParameter(fn, "y", LogicalType::VARCHAR);
+		compat::AddNamedParameter(fn, "x", LogicalType::LIST(LogicalType::VARCHAR));
+		compat::AddNamedParameter(fn, "formula", LogicalType::VARCHAR);
 		statsduck::RegisterDocumented(loader, std::move(fn),
 		                              "OLS regression over a table: per-term coefficient estimates for "
 		                              "y ~ x (or a formula).",
@@ -622,9 +624,9 @@ void RegisterLm(ExtensionLoader &loader) {
 	{
 		TableFunction fn("lm_summary", {LogicalType::VARCHAR}, LmSummaryExecute, LmSummaryBind,
 		                 LmInitGlobal);
-		fn.named_parameters["y"] = LogicalType::VARCHAR;
-		fn.named_parameters["x"] = LogicalType::LIST(LogicalType::VARCHAR);
-		fn.named_parameters["formula"] = LogicalType::VARCHAR;
+		compat::AddNamedParameter(fn, "y", LogicalType::VARCHAR);
+		compat::AddNamedParameter(fn, "x", LogicalType::LIST(LogicalType::VARCHAR));
+		compat::AddNamedParameter(fn, "formula", LogicalType::VARCHAR);
 		statsduck::RegisterDocumented(loader, std::move(fn),
 		                              "OLS model-level summary (R-squared, F, sigma) for y ~ x over a "
 		                              "table.",

@@ -6,7 +6,7 @@
 #include "lm_core.hpp"     // statsduck::Vcov / parse_vcov / vcov_name
 
 #include "duckdb/common/string_util.hpp"
-#include "duckdb/common/types/vector.hpp"
+#include "duckdb_compat.hpp"
 #include "duckdb/execution/expression_executor.hpp"
 #include "duckdb/function/aggregate_function.hpp"
 #include "duckdb/function/function_set.hpp"
@@ -19,6 +19,8 @@
 #include <vector>
 
 namespace duckdb {
+
+namespace compat = statsduck::compat;
 
 namespace {
 
@@ -196,13 +198,14 @@ static optional_ptr<Expression> StructFieldExpr(Expression &expr, idx_t idx) {
 		return nullptr;
 	}
 	auto &fn = expr.Cast<BoundFunctionExpression>();
-	if (fn.function.name != "struct_pack") {
+	if (compat::FunctionName(fn) != "struct_pack") {
 		return nullptr;
 	}
-	if (fn.children.size() != StructType::GetChildCount(expr.return_type) || idx >= fn.children.size()) {
+	if (compat::Children(fn).size() != StructType::GetChildCount(compat::ReturnType(expr)) ||
+	    idx >= compat::Children(fn).size()) {
 		return nullptr;
 	}
-	return fn.children[idx].get();
+	return compat::Children(fn)[idx].get();
 }
 
 // CR0/CR1 need a cluster key, which only the options struct can carry.
@@ -223,11 +226,11 @@ static void RequireClusterVcov(statsduck::Vcov vcov, bool has_cluster) {
 
 // Read the trailing options struct at `idx`. Returns true when the struct
 // carries at least one per-row field and must stay as a runtime argument.
-static bool ReadOptions(ClientContext &context, AggregateFunction &function,
+static bool ReadOptions(ClientContext &context, compat::BindFunction &function,
                         vector<unique_ptr<Expression>> &arguments, idx_t idx, GlmFitBindData &bd,
                         bool &link_given) {
 	auto &opts_expr = *arguments[idx];
-	const LogicalType &opts_type = opts_expr.return_type;
+	const LogicalType &opts_type = compat::ReturnType(opts_expr);
 	if (opts_type.id() != LogicalTypeId::STRUCT) {
 		throw BinderException("glm_fit: the options argument must be a STRUCT, for example "
 		                      "{'link': 'probit', 'vcov': 'HC1'}");
@@ -276,7 +279,8 @@ static bool ReadOptions(ClientContext &context, AggregateFunction &function,
 	bool want_weights = false, want_offset = false, want_cluster = false;
 
 	for (idx_t f = 0; f < fields.size(); f++) {
-		const string &name = fields[f].first;
+		// child_list_t pairs are Identifier-keyed on 2.0, string-keyed on 1.x
+		const string name = compat::Str(fields[f].first);
 		idx_t match = kOptionCount; // sentinel: no match
 		for (idx_t o = 0; o < kOptionCount; o++) {
 			if (StringUtil::CIEquals(name, kOptionNames[o].name)) {
@@ -369,31 +373,28 @@ static bool ReadOptions(ClientContext &context, AggregateFunction &function,
 	// cluster key needs no cast from the caller), and drops the constant
 	// fields this bind has already folded. Leaving the placeholder in place
 	// would make that an unresolved cast target.
-	function.arguments[idx] = LogicalType::STRUCT(std::move(per_row));
+	compat::BindArguments(function)[idx] = LogicalType::STRUCT(std::move(per_row));
 	return true;
 }
 
 // glm_fit(y, x) — gaussian with its canonical identity link.
-static unique_ptr<FunctionData> GlmFitBind2(ClientContext &, AggregateFunction &,
-                                            vector<unique_ptr<Expression>> &) {
+STATS_DUCK_AGGREGATE_BIND(GlmFitBind2) {
 	auto bd = make_uniq<GlmFitBindData>();
 	bd->opts.link = statsduck::canonical_link(bd->opts.family);
 	return std::move(bd);
 }
 
 // glm_fit(y, x, family)
-static unique_ptr<FunctionData> GlmFitBind3(ClientContext &context, AggregateFunction &function,
-                                            vector<unique_ptr<Expression>> &arguments) {
+STATS_DUCK_AGGREGATE_BIND(GlmFitBind3) {
 	auto bd = make_uniq<GlmFitBindData>();
 	bd->opts.family = ParseFamilyArg(context, *arguments[2]);
 	bd->opts.link = statsduck::canonical_link(bd->opts.family);
-	Function::EraseArgument(function, arguments, 2);
+	compat::EraseArgument(function, arguments, 2);
 	return std::move(bd);
 }
 
 // glm_fit(y, x, family, options)
-static unique_ptr<FunctionData> GlmFitBind4(ClientContext &context, AggregateFunction &function,
-                                            vector<unique_ptr<Expression>> &arguments) {
+STATS_DUCK_AGGREGATE_BIND(GlmFitBind4) {
 	auto bd = make_uniq<GlmFitBindData>();
 	bd->opts.family = ParseFamilyArg(context, *arguments[2]);
 	bool link_given = false;
@@ -410,9 +411,9 @@ static unique_ptr<FunctionData> GlmFitBind4(ClientContext &context, AggregateFun
 	// Erase high → low so the lower index stays valid. The options struct, if
 	// it survived, becomes runtime input 2 once the family is gone.
 	if (!bd->has_options_arg) {
-		Function::EraseArgument(function, arguments, 3);
+		compat::EraseArgument(function, arguments, 3);
 	}
-	Function::EraseArgument(function, arguments, 2);
+	compat::EraseArgument(function, arguments, 2);
 	return std::move(bd);
 }
 
@@ -438,7 +439,7 @@ struct GlmFitState {
 	GlmFitAccumulator *acc;
 };
 
-static void GlmFitInit(const AggregateFunction &, data_ptr_t state_p) {
+STATS_DUCK_AGGREGATE_INIT(GlmFitInit) {
 	reinterpret_cast<GlmFitState *>(state_p)->acc = nullptr;
 }
 
@@ -457,7 +458,7 @@ static void GlmFitUpdate(Vector inputs[], AggregateInputData &aggr_input, idx_t,
 	auto y_vals = UnifiedVectorFormat::GetData<double>(y_fmt);
 	auto list_entries = UnifiedVectorFormat::GetData<list_entry_t>(x_fmt);
 
-	auto &child = ListVector::GetEntry(x_in);
+	auto &child = compat::ListChild(x_in);
 	const idx_t child_size = ListVector::GetListSize(x_in);
 	UnifiedVectorFormat child_fmt;
 	child.ToUnifiedFormat(child_size, child_fmt);
@@ -486,15 +487,15 @@ static void GlmFitUpdate(Vector inputs[], AggregateInputData &aggr_input, idx_t,
 		inputs[2].ToUnifiedFormat(count, opt_fmt);
 		auto &opt_children = StructVector::GetEntries(inputs[2]);
 		if (has_weights) {
-			opt_children[NumericCast<idx_t>(bd->weights_child)]->ToUnifiedFormat(count, w_fmt);
+			compat::Deref(opt_children[NumericCast<idx_t>(bd->weights_child)]).ToUnifiedFormat(count, w_fmt);
 			w_vals = UnifiedVectorFormat::GetData<double>(w_fmt);
 		}
 		if (has_offset) {
-			opt_children[NumericCast<idx_t>(bd->offset_child)]->ToUnifiedFormat(count, off_fmt);
+			compat::Deref(opt_children[NumericCast<idx_t>(bd->offset_child)]).ToUnifiedFormat(count, off_fmt);
 			off_vals = UnifiedVectorFormat::GetData<double>(off_fmt);
 		}
 		if (has_cluster) {
-			opt_children[NumericCast<idx_t>(bd->cluster_child)]->ToUnifiedFormat(count, cl_fmt);
+			compat::Deref(opt_children[NumericCast<idx_t>(bd->cluster_child)]).ToUnifiedFormat(count, cl_fmt);
 			cl_vals = UnifiedVectorFormat::GetData<string_t>(cl_fmt);
 		}
 	}
@@ -660,11 +661,11 @@ static inline void SetD(Vector &v, idx_t row, double x) {
 	if (std::isnan(x)) {
 		FlatVector::SetNull(v, row, true);
 	} else {
-		FlatVector::GetData<double>(v)[row] = x;
+		compat::WriteData<double>(v)[row] = x;
 	}
 }
 
-static void GlmFitFinalize(Vector &state_vector, AggregateInputData &input_data, Vector &result, idx_t count,
+static void GlmFitFinalize(Vector &state_vector, compat::FinalizeInput &input_data, Vector &result, idx_t count,
                            idx_t offset) {
 	auto states = FlatVector::GetData<GlmFitState *>(state_vector);
 
@@ -720,32 +721,32 @@ static void GlmFitFinalize(Vector &state_vector, AggregateInputData &input_data,
 	auto &children = StructVector::GetEntries(result);
 
 	// coefficients: LIST<STRUCT>. Grow the list child, then fetch field pointers.
-	Vector &coef_list = *children[0];
-	auto coef_entries = FlatVector::GetData<list_entry_t>(coef_list);
+	Vector &coef_list = compat::Deref(children[0]);
+	auto coef_entries = compat::WriteData<list_entry_t>(coef_list);
 	const idx_t anchor = ListVector::GetListSize(coef_list);
 	ListVector::Reserve(coef_list, anchor + total_coefs);
-	Vector &coef_child = ListVector::GetEntry(coef_list); // STRUCT vector
+	Vector &coef_child = compat::ListChild(coef_list); // STRUCT vector
 	auto &cf = StructVector::GetEntries(coef_child);
-	auto term_d = FlatVector::GetData<string_t>(*cf[0]);
+	auto term_d = compat::WriteData<string_t>(compat::Deref(cf[0]));
 
 	// cov: a second, independently managed LIST child — one flat row-major k×k
 	// block per group. Same rule: Reserve first, then fetch the child pointer.
-	Vector &cov_list = *children[18];
-	auto cov_entries = FlatVector::GetData<list_entry_t>(cov_list);
+	Vector &cov_list = compat::Deref(children[18]);
+	auto cov_entries = compat::WriteData<list_entry_t>(cov_list);
 	const idx_t cov_anchor = ListVector::GetListSize(cov_list);
 	ListVector::Reserve(cov_list, cov_anchor + total_cov);
-	Vector &cov_child = ListVector::GetEntry(cov_list);
-	auto cov_d = FlatVector::GetData<double>(cov_child);
+	Vector &cov_child = compat::ListChild(cov_list);
+	auto cov_d = compat::WriteData<double>(cov_child);
 
-	auto n_d = FlatVector::GetData<int64_t>(*children[1]);
-	auto k_d = FlatVector::GetData<int64_t>(*children[2]);
-	auto dfr_d = FlatVector::GetData<int64_t>(*children[3]);
-	auto iter_d = FlatVector::GetData<int64_t>(*children[9]);
-	auto conv_d = FlatVector::GetData<bool>(*children[10]);
-	auto sep_d = FlatVector::GetData<bool>(*children[11]);
-	auto hint_d = FlatVector::GetData<bool>(*children[14]);
-	auto ncl_d = FlatVector::GetData<int64_t>(*children[16]);
-	auto rank_d = FlatVector::GetData<int64_t>(*children[17]);
+	auto n_d = compat::WriteData<int64_t>(compat::Deref(children[1]));
+	auto k_d = compat::WriteData<int64_t>(compat::Deref(children[2]));
+	auto dfr_d = compat::WriteData<int64_t>(compat::Deref(children[3]));
+	auto iter_d = compat::WriteData<int64_t>(compat::Deref(children[9]));
+	auto conv_d = compat::WriteData<bool>(compat::Deref(children[10]));
+	auto sep_d = compat::WriteData<bool>(compat::Deref(children[11]));
+	auto hint_d = compat::WriteData<bool>(compat::Deref(children[14]));
+	auto ncl_d = compat::WriteData<int64_t>(compat::Deref(children[16]));
+	auto rank_d = compat::WriteData<int64_t>(compat::Deref(children[17]));
 
 	// The three echoed names come from the bind rather than from the fit, so
 	// they are known for every group, a failed one included.
@@ -761,12 +762,12 @@ static void GlmFitFinalize(Vector &state_vector, AggregateInputData &input_data,
 		// about to be set NULL. FlatVector::SetNull on a STRUCT also nulls
 		// its children, so a failed group still reads NULL here — the write
 		// exists so the string_t slot is never uninitialized memory.
-		FlatVector::GetData<string_t>(*children[12])[idx] =
-		    StringVector::AddString(*children[12], family_str);
-		FlatVector::GetData<string_t>(*children[13])[idx] =
-		    StringVector::AddString(*children[13], link_str);
-		FlatVector::GetData<string_t>(*children[15])[idx] =
-		    StringVector::AddString(*children[15], vcov_str);
+		compat::WriteData<string_t>(compat::Deref(children[12]))[idx] =
+		    StringVector::AddString(compat::Deref(children[12]), family_str);
+		compat::WriteData<string_t>(compat::Deref(children[13]))[idx] =
+		    StringVector::AddString(compat::Deref(children[13]), link_str);
+		compat::WriteData<string_t>(compat::Deref(children[15]))[idx] =
+		    StringVector::AddString(compat::Deref(children[15]), vcov_str);
 
 		if (!ok[i]) {
 			FlatVector::SetNull(result, idx, true);
@@ -778,13 +779,13 @@ static void GlmFitFinalize(Vector &state_vector, AggregateInputData &input_data,
 		coef_entries[idx] = list_entry_t(out, r.k);
 		for (std::size_t j = 0; j < r.k; j++) {
 			const idx_t pos = out + j;
-			term_d[pos] = StringVector::AddString(*cf[0], r.terms[j]);
+			term_d[pos] = StringVector::AddString(compat::Deref(cf[0]), r.terms[j]);
 			// Every numeric field goes through SetD: an aliased term (a column
 			// dropped as dependent) carries NaN, which SetD renders as NULL.
-			SetD(*cf[1], pos, r.beta[j]);
-			SetD(*cf[2], pos, r.std_error[j]);
-			SetD(*cf[3], pos, r.z_statistic[j]);
-			SetD(*cf[4], pos, r.p_value[j]);
+			SetD(compat::Deref(cf[1]), pos, r.beta[j]);
+			SetD(compat::Deref(cf[2]), pos, r.std_error[j]);
+			SetD(compat::Deref(cf[3]), pos, r.z_statistic[j]);
+			SetD(compat::Deref(cf[4]), pos, r.p_value[j]);
 		}
 		out += r.k;
 
@@ -803,11 +804,11 @@ static void GlmFitFinalize(Vector &state_vector, AggregateInputData &input_data,
 		n_d[idx] = static_cast<int64_t>(r.n);
 		k_d[idx] = static_cast<int64_t>(r.k);
 		dfr_d[idx] = static_cast<int64_t>(r.df_residual);
-		SetD(*children[4], idx, r.deviance);
-		SetD(*children[5], idx, r.null_deviance);
-		SetD(*children[6], idx, r.dispersion);
-		SetD(*children[7], idx, r.loglik);
-		SetD(*children[8], idx, r.aic);
+		SetD(compat::Deref(children[4]), idx, r.deviance);
+		SetD(compat::Deref(children[5]), idx, r.null_deviance);
+		SetD(compat::Deref(children[6]), idx, r.dispersion);
+		SetD(compat::Deref(children[7]), idx, r.loglik);
+		SetD(compat::Deref(children[8]), idx, r.aic);
 		iter_d[idx] = static_cast<int64_t>(r.iterations);
 		conv_d[idx] = r.converged;
 		sep_d[idx] = r.separation;
@@ -818,7 +819,7 @@ static void GlmFitFinalize(Vector &state_vector, AggregateInputData &input_data,
 		if (r.n_clusters > 0) {
 			ncl_d[idx] = static_cast<int64_t>(r.n_clusters);
 		} else {
-			FlatVector::SetNull(*children[16], idx, true); // NULL for classical/HC
+			FlatVector::SetNull(compat::Deref(children[16]), idx, true); // NULL for classical/HC
 		}
 		rank_d[idx] = static_cast<int64_t>(r.rank);
 	}

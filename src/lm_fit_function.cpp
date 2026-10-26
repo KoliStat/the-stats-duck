@@ -4,7 +4,7 @@
 #include "cluster_ids.hpp"  // statsduck::densify_clusters
 #include "lm_core.hpp"      // statsduck::fit_lm / Vcov / LmResult / parse_vcov / vcov_name
 
-#include "duckdb/common/types/vector.hpp"
+#include "duckdb_compat.hpp"
 #include "duckdb/execution/expression_executor.hpp"
 #include "duckdb/function/aggregate_function.hpp"
 #include "duckdb/function/function_set.hpp"
@@ -17,6 +17,8 @@
 #include <vector>
 
 namespace duckdb {
+
+namespace compat = statsduck::compat;
 
 namespace {
 
@@ -89,7 +91,7 @@ static Value EvalConst(ClientContext &context, Expression &expr, const char *wha
 	return v;
 }
 
-static statsduck::Vcov ParseVcovArg(ClientContext &context, AggregateFunction &function,
+static statsduck::Vcov ParseVcovArg(ClientContext &context, compat::BindFunction &function,
                                     vector<unique_ptr<Expression>> &arguments, idx_t idx) {
 	Value v = EvalConst(context, *arguments[idx], "vcov");
 	statsduck::Vcov out;
@@ -119,56 +121,51 @@ static void RequireClusterVcov(statsduck::Vcov vcov) {
 }
 
 // lm_fit(y, x) — defaults: classical SEs, intercept on.
-static unique_ptr<FunctionData> LmFitBind2(ClientContext &, AggregateFunction &,
-                                           vector<unique_ptr<Expression>> &) {
+STATS_DUCK_AGGREGATE_BIND(LmFitBind2) {
 	return make_uniq<LmFitBindData>();
 }
 
 // lm_fit(y, x, vcov)
-static unique_ptr<FunctionData> LmFitBind3(ClientContext &context, AggregateFunction &function,
-                                           vector<unique_ptr<Expression>> &arguments) {
+STATS_DUCK_AGGREGATE_BIND(LmFitBind3) {
 	auto bd = make_uniq<LmFitBindData>();
 	bd->vcov = ParseVcovArg(context, function, arguments, 2);
 	RejectClusterlessCR(bd->vcov);
-	Function::EraseArgument(function, arguments, 2);
+	compat::EraseArgument(function, arguments, 2);
 	return std::move(bd);
 }
 
 // lm_fit(y, x, vcov, add_intercept)
-static unique_ptr<FunctionData> LmFitBind4(ClientContext &context, AggregateFunction &function,
-                                           vector<unique_ptr<Expression>> &arguments) {
+STATS_DUCK_AGGREGATE_BIND(LmFitBind4) {
 	auto bd = make_uniq<LmFitBindData>();
 	// Evaluate both constants first, then erase high→low so indices stay valid.
 	bd->intercept = EvalConst(context, *arguments[3], "add_intercept").GetValue<bool>();
 	bd->vcov = ParseVcovArg(context, function, arguments, 2);
 	RejectClusterlessCR(bd->vcov);
-	Function::EraseArgument(function, arguments, 3);
-	Function::EraseArgument(function, arguments, 2);
+	compat::EraseArgument(function, arguments, 3);
+	compat::EraseArgument(function, arguments, 2);
 	return std::move(bd);
 }
 
 // lm_fit(y, x, vcov, cluster) — vcov must be CR*; the cluster column is real
 // per-row data and stays as runtime input 2 after vcov is erased.
-static unique_ptr<FunctionData> LmFitBind4Cluster(ClientContext &context, AggregateFunction &function,
-                                                  vector<unique_ptr<Expression>> &arguments) {
+STATS_DUCK_AGGREGATE_BIND(LmFitBind4Cluster) {
 	auto bd = make_uniq<LmFitBindData>();
 	bd->vcov = ParseVcovArg(context, function, arguments, 2);
 	RequireClusterVcov(bd->vcov);
 	bd->has_cluster = true;
-	Function::EraseArgument(function, arguments, 2);
+	compat::EraseArgument(function, arguments, 2);
 	return std::move(bd);
 }
 
 // lm_fit(y, x, vcov, cluster, add_intercept)
-static unique_ptr<FunctionData> LmFitBind5Cluster(ClientContext &context, AggregateFunction &function,
-                                                  vector<unique_ptr<Expression>> &arguments) {
+STATS_DUCK_AGGREGATE_BIND(LmFitBind5Cluster) {
 	auto bd = make_uniq<LmFitBindData>();
 	bd->intercept = EvalConst(context, *arguments[4], "add_intercept").GetValue<bool>();
 	bd->vcov = ParseVcovArg(context, function, arguments, 2);
 	RequireClusterVcov(bd->vcov);
 	bd->has_cluster = true;
-	Function::EraseArgument(function, arguments, 4); // add_intercept
-	Function::EraseArgument(function, arguments, 2); // vcov (cluster stays at idx 2)
+	compat::EraseArgument(function, arguments, 4); // add_intercept
+	compat::EraseArgument(function, arguments, 2); // vcov (cluster stays at idx 2)
 	return std::move(bd);
 }
 
@@ -190,7 +187,7 @@ struct LmFitState {
 	LmFitAccumulator *acc;
 };
 
-static void LmFitInit(const AggregateFunction &, data_ptr_t state_p) {
+STATS_DUCK_AGGREGATE_INIT(LmFitInit) {
 	reinterpret_cast<LmFitState *>(state_p)->acc = nullptr;
 }
 
@@ -208,7 +205,7 @@ static void LmFitUpdate(Vector inputs[], AggregateInputData &aggr_input, idx_t, 
 	auto y_vals = UnifiedVectorFormat::GetData<double>(y_fmt);
 	auto list_entries = UnifiedVectorFormat::GetData<list_entry_t>(x_fmt);
 
-	auto &child = ListVector::GetEntry(x_in);
+	auto &child = compat::ListChild(x_in);
 	const idx_t child_size = ListVector::GetListSize(x_in);
 	UnifiedVectorFormat child_fmt;
 	child.ToUnifiedFormat(child_size, child_fmt);
@@ -339,11 +336,11 @@ static inline void SetD(Vector &v, idx_t row, double x) {
 	if (std::isnan(x)) {
 		FlatVector::SetNull(v, row, true);
 	} else {
-		FlatVector::GetData<double>(v)[row] = x;
+		compat::WriteData<double>(v)[row] = x;
 	}
 }
 
-static void LmFitFinalize(Vector &state_vector, AggregateInputData &input_data, Vector &result, idx_t count,
+static void LmFitFinalize(Vector &state_vector, compat::FinalizeInput &input_data, Vector &result, idx_t count,
                           idx_t offset) {
 	auto states = FlatVector::GetData<LmFitState *>(state_vector);
 
@@ -394,29 +391,29 @@ static void LmFitFinalize(Vector &state_vector, AggregateInputData &input_data, 
 	auto &children = StructVector::GetEntries(result);
 
 	// coefficients: LIST<STRUCT>. Grow the list child, then fetch field pointers.
-	Vector &coef_list = *children[0];
-	auto coef_entries = FlatVector::GetData<list_entry_t>(coef_list);
+	Vector &coef_list = compat::Deref(children[0]);
+	auto coef_entries = compat::WriteData<list_entry_t>(coef_list);
 	const idx_t anchor = ListVector::GetListSize(coef_list);
 	ListVector::Reserve(coef_list, anchor + total_coefs);
-	Vector &coef_child = ListVector::GetEntry(coef_list); // STRUCT vector
+	Vector &coef_child = compat::ListChild(coef_list); // STRUCT vector
 	auto &cf = StructVector::GetEntries(coef_child);
-	auto term_d = FlatVector::GetData<string_t>(*cf[0]);
+	auto term_d = compat::WriteData<string_t>(compat::Deref(cf[0]));
 
 	// cov: a second, independently managed LIST child — one flat row-major k×k
 	// block per group. Same rule: Reserve first, then fetch the child pointer.
-	Vector &cov_list = *children[14];
-	auto cov_entries = FlatVector::GetData<list_entry_t>(cov_list);
+	Vector &cov_list = compat::Deref(children[14]);
+	auto cov_entries = compat::WriteData<list_entry_t>(cov_list);
 	const idx_t cov_anchor = ListVector::GetListSize(cov_list);
 	ListVector::Reserve(cov_list, cov_anchor + total_cov);
-	Vector &cov_child = ListVector::GetEntry(cov_list);
-	auto cov_d = FlatVector::GetData<double>(cov_child);
+	Vector &cov_child = compat::ListChild(cov_list);
+	auto cov_d = compat::WriteData<double>(cov_child);
 
-	auto n_d = FlatVector::GetData<int64_t>(*children[1]);
-	auto k_d = FlatVector::GetData<int64_t>(*children[2]);
-	auto dfr_d = FlatVector::GetData<int64_t>(*children[3]);
-	auto hint_d = FlatVector::GetData<bool>(*children[9]);
-	auto ncl_d = FlatVector::GetData<int64_t>(*children[11]);
-	auto rank_d = FlatVector::GetData<int64_t>(*children[12]);
+	auto n_d = compat::WriteData<int64_t>(compat::Deref(children[1]));
+	auto k_d = compat::WriteData<int64_t>(compat::Deref(children[2]));
+	auto dfr_d = compat::WriteData<int64_t>(compat::Deref(children[3]));
+	auto hint_d = compat::WriteData<bool>(compat::Deref(children[9]));
+	auto ncl_d = compat::WriteData<int64_t>(compat::Deref(children[11]));
+	auto rank_d = compat::WriteData<int64_t>(compat::Deref(children[12]));
 
 	idx_t out = anchor;
 	idx_t cov_out = cov_anchor;
@@ -432,13 +429,13 @@ static void LmFitFinalize(Vector &state_vector, AggregateInputData &input_data, 
 		coef_entries[idx] = list_entry_t(out, r.k);
 		for (std::size_t j = 0; j < r.k; j++) {
 			const idx_t pos = out + j;
-			term_d[pos] = StringVector::AddString(*cf[0], r.terms[j]);
+			term_d[pos] = StringVector::AddString(compat::Deref(cf[0]), r.terms[j]);
 			// Every numeric field goes through SetD: an aliased term (a column
 			// dropped as dependent) carries NaN, which SetD renders as NULL.
-			SetD(*cf[1], pos, r.beta[j]);
-			SetD(*cf[2], pos, r.std_error[j]);
-			SetD(*cf[3], pos, r.t_statistic[j]);
-			SetD(*cf[4], pos, r.p_value[j]);
+			SetD(compat::Deref(cf[1]), pos, r.beta[j]);
+			SetD(compat::Deref(cf[2]), pos, r.std_error[j]);
+			SetD(compat::Deref(cf[3]), pos, r.t_statistic[j]);
+			SetD(compat::Deref(cf[4]), pos, r.p_value[j]);
 		}
 		out += r.k;
 
@@ -457,21 +454,21 @@ static void LmFitFinalize(Vector &state_vector, AggregateInputData &input_data, 
 		n_d[idx] = static_cast<int64_t>(r.n);
 		k_d[idx] = static_cast<int64_t>(r.k);
 		dfr_d[idx] = static_cast<int64_t>(r.df_residual);
-		SetD(*children[4], idx, r.r_squared);
-		SetD(*children[5], idx, r.adj_r_squared);
-		SetD(*children[6], idx, r.sigma);
-		SetD(*children[7], idx, r.f_statistic);
-		SetD(*children[8], idx, r.f_p_value);
+		SetD(compat::Deref(children[4]), idx, r.r_squared);
+		SetD(compat::Deref(children[5]), idx, r.adj_r_squared);
+		SetD(compat::Deref(children[6]), idx, r.sigma);
+		SetD(compat::Deref(children[7]), idx, r.f_statistic);
+		SetD(compat::Deref(children[8]), idx, r.f_p_value);
 		hint_d[idx] = r.has_intercept;
-		FlatVector::GetData<string_t>(*children[10])[idx] =
-		    StringVector::AddString(*children[10], statsduck::vcov_name(r.vcov));
+		compat::WriteData<string_t>(compat::Deref(children[10]))[idx] =
+		    StringVector::AddString(compat::Deref(children[10]), statsduck::vcov_name(r.vcov));
 		if (r.n_clusters > 0) {
 			ncl_d[idx] = static_cast<int64_t>(r.n_clusters);
 		} else {
-			FlatVector::SetNull(*children[11], idx, true); // NULL for classical/HC
+			FlatVector::SetNull(compat::Deref(children[11]), idx, true); // NULL for classical/HC
 		}
 		rank_d[idx] = static_cast<int64_t>(r.rank);
-		SetD(*children[13], idx, r.loglik);
+		SetD(compat::Deref(children[13]), idx, r.loglik);
 	}
 	ListVector::SetListSize(coef_list, out);
 	ListVector::SetListSize(cov_list, cov_out);

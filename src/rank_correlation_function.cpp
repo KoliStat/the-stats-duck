@@ -5,7 +5,7 @@
 
 #include "duckdb/function/aggregate_function.hpp"
 #include "duckdb/function/function_set.hpp"
-#include "duckdb/common/types/vector.hpp"
+#include "duckdb_compat.hpp"
 #include "duckdb/execution/expression_executor.hpp"
 #include "duckdb/main/extension/extension_loader.hpp"
 #include "duckdb/planner/expression.hpp"
@@ -17,6 +17,8 @@
 #include <vector>
 
 namespace duckdb {
+
+namespace compat = statsduck::compat;
 
 namespace {
 
@@ -53,7 +55,7 @@ struct KendallBindData : public FunctionData {
 	}
 };
 
-static double ExtractConstantDouble(ClientContext &context, AggregateFunction &function,
+static double ExtractConstantDouble(ClientContext &context, compat::BindFunction &function,
                                     vector<unique_ptr<Expression>> &arguments, idx_t arg_idx,
                                     const char *fn_name) {
 	if (!arguments[arg_idx]->IsFoldable()) {
@@ -61,11 +63,11 @@ static double ExtractConstantDouble(ClientContext &context, AggregateFunction &f
 	}
 	Value val = ExpressionExecutor::EvaluateScalar(context, *arguments[arg_idx]);
 	double result = val.GetValue<double>();
-	Function::EraseArgument(function, arguments, arg_idx);
+	compat::EraseArgument(function, arguments, arg_idx);
 	return result;
 }
 
-static std::string ExtractConstantString(ClientContext &context, AggregateFunction &function,
+static std::string ExtractConstantString(ClientContext &context, compat::BindFunction &function,
                                          vector<unique_ptr<Expression>> &arguments, idx_t arg_idx,
                                          const char *fn_name) {
 	if (!arguments[arg_idx]->IsFoldable()) {
@@ -73,27 +75,24 @@ static std::string ExtractConstantString(ClientContext &context, AggregateFuncti
 	}
 	Value val = ExpressionExecutor::EvaluateScalar(context, *arguments[arg_idx]);
 	std::string result = val.GetValue<std::string>();
-	Function::EraseArgument(function, arguments, arg_idx);
+	compat::EraseArgument(function, arguments, arg_idx);
 	return result;
 }
 
 // Spearman binders: (x,y), (x,y,alpha), (x,y,alpha,alternative)
 
-static unique_ptr<FunctionData> SpearmanBind2(ClientContext &, AggregateFunction &,
-                                              vector<unique_ptr<Expression>> &) {
+STATS_DUCK_AGGREGATE_BIND(SpearmanBind2) {
 	return make_uniq<SpearmanBindData>();
 }
 
-static unique_ptr<FunctionData> SpearmanBind3(ClientContext &context, AggregateFunction &function,
-                                              vector<unique_ptr<Expression>> &arguments) {
+STATS_DUCK_AGGREGATE_BIND(SpearmanBind3) {
 	auto bd = make_uniq<SpearmanBindData>();
 	bd->alpha = ExtractConstantDouble(context, function, arguments, 2, "spearman_test");
 	sdv::ValidateAlpha(bd->alpha, "spearman_test");
 	return std::move(bd);
 }
 
-static unique_ptr<FunctionData> SpearmanBind4(ClientContext &context, AggregateFunction &function,
-                                              vector<unique_ptr<Expression>> &arguments) {
+STATS_DUCK_AGGREGATE_BIND(SpearmanBind4) {
 	auto bd = make_uniq<SpearmanBindData>();
 	bd->alternative = ExtractConstantString(context, function, arguments, 3, "spearman_test");
 	sdv::ValidateAlternative(bd->alternative, "spearman_test");
@@ -104,13 +103,11 @@ static unique_ptr<FunctionData> SpearmanBind4(ClientContext &context, AggregateF
 
 // Kendall binders: (x,y), (x,y,alternative)
 
-static unique_ptr<FunctionData> KendallBind2(ClientContext &, AggregateFunction &,
-                                             vector<unique_ptr<Expression>> &) {
+STATS_DUCK_AGGREGATE_BIND(KendallBind2) {
 	return make_uniq<KendallBindData>();
 }
 
-static unique_ptr<FunctionData> KendallBind3(ClientContext &context, AggregateFunction &function,
-                                             vector<unique_ptr<Expression>> &arguments) {
+STATS_DUCK_AGGREGATE_BIND(KendallBind3) {
 	auto bd = make_uniq<KendallBindData>();
 	bd->alternative = ExtractConstantString(context, function, arguments, 2, "kendall_test");
 	sdv::ValidateAlternative(bd->alternative, "kendall_test");
@@ -124,7 +121,7 @@ struct CorrelationState {
 	std::vector<double> *y;
 };
 
-static void CorrelationInit(const AggregateFunction &, data_ptr_t state_p) {
+STATS_DUCK_AGGREGATE_INIT(CorrelationInit) {
 	auto &state = *reinterpret_cast<CorrelationState *>(state_p);
 	state.x = nullptr;
 	state.y = nullptr;
@@ -239,7 +236,7 @@ static double SpearmanPValue(double t_stat, double df, const std::string &altern
 	return 1.0 - stats_duck::StudentTCDF(t_stat, df);
 }
 
-static void SpearmanFinalize(Vector &state_vector, AggregateInputData &aggr_input_data,
+static void SpearmanFinalize(Vector &state_vector, compat::FinalizeInput &aggr_input_data,
                              Vector &result, idx_t count, idx_t offset) {
 	auto states = FlatVector::GetData<CorrelationState *>(state_vector);
 	auto &children = StructVector::GetEntries(result);
@@ -319,17 +316,17 @@ static void SpearmanFinalize(Vector &state_vector, AggregateInputData &aggr_inpu
 			ci_upper = std::tanh(z + z_crit * se);
 		}
 
-		FlatVector::GetData<string_t>(*children[0])[idx] =
-		    StringVector::AddString(*children[0], "Spearman Correlation");
-		FlatVector::GetData<double>(*children[1])[idx] = rho;
-		FlatVector::GetData<double>(*children[2])[idx] = t_stat;
-		FlatVector::GetData<double>(*children[3])[idx] = df;
-		FlatVector::GetData<double>(*children[4])[idx] = p_value;
-		FlatVector::GetData<string_t>(*children[5])[idx] =
-		    StringVector::AddString(*children[5], alternative);
-		FlatVector::GetData<double>(*children[6])[idx] = ci_lower;
-		FlatVector::GetData<double>(*children[7])[idx] = ci_upper;
-		FlatVector::GetData<int64_t>(*children[8])[idx] = static_cast<int64_t>(n);
+		compat::WriteData<string_t>(compat::Deref(children[0]))[idx] =
+		    StringVector::AddString(compat::Deref(children[0]), "Spearman Correlation");
+		compat::WriteData<double>(compat::Deref(children[1]))[idx] = rho;
+		compat::WriteData<double>(compat::Deref(children[2]))[idx] = t_stat;
+		compat::WriteData<double>(compat::Deref(children[3]))[idx] = df;
+		compat::WriteData<double>(compat::Deref(children[4]))[idx] = p_value;
+		compat::WriteData<string_t>(compat::Deref(children[5]))[idx] =
+		    StringVector::AddString(compat::Deref(children[5]), alternative);
+		compat::WriteData<double>(compat::Deref(children[6]))[idx] = ci_lower;
+		compat::WriteData<double>(compat::Deref(children[7]))[idx] = ci_upper;
+		compat::WriteData<int64_t>(compat::Deref(children[8]))[idx] = static_cast<int64_t>(n);
 	}
 }
 
@@ -394,7 +391,7 @@ static double KendallPValue(double z, const std::string &alternative) {
 	return 1.0 - stats_duck::NormalCDF(z);
 }
 
-static void KendallFinalize(Vector &state_vector, AggregateInputData &aggr_input_data,
+static void KendallFinalize(Vector &state_vector, compat::FinalizeInput &aggr_input_data,
                             Vector &result, idx_t count, idx_t offset) {
 	auto states = FlatVector::GetData<CorrelationState *>(state_vector);
 	auto &children = StructVector::GetEntries(result);
@@ -467,14 +464,14 @@ static void KendallFinalize(Vector &state_vector, AggregateInputData &aggr_input
 		double z = (var_S > 0.0) ? (P - Q) / std::sqrt(var_S) : 0.0;
 		double p_value = KendallPValue(z, alternative);
 
-		FlatVector::GetData<string_t>(*children[0])[idx] =
-		    StringVector::AddString(*children[0], "Kendall tau-b");
-		FlatVector::GetData<double>(*children[1])[idx] = tau;
-		FlatVector::GetData<double>(*children[2])[idx] = z;
-		FlatVector::GetData<double>(*children[3])[idx] = p_value;
-		FlatVector::GetData<string_t>(*children[4])[idx] =
-		    StringVector::AddString(*children[4], alternative);
-		FlatVector::GetData<int64_t>(*children[5])[idx] = static_cast<int64_t>(n);
+		compat::WriteData<string_t>(compat::Deref(children[0]))[idx] =
+		    StringVector::AddString(compat::Deref(children[0]), "Kendall tau-b");
+		compat::WriteData<double>(compat::Deref(children[1]))[idx] = tau;
+		compat::WriteData<double>(compat::Deref(children[2]))[idx] = z;
+		compat::WriteData<double>(compat::Deref(children[3]))[idx] = p_value;
+		compat::WriteData<string_t>(compat::Deref(children[4]))[idx] =
+		    StringVector::AddString(compat::Deref(children[4]), alternative);
+		compat::WriteData<int64_t>(compat::Deref(children[5]))[idx] = static_cast<int64_t>(n);
 	}
 }
 

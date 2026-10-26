@@ -2,6 +2,7 @@
 #include "register_documented.hpp"
 
 #include "duckdb/catalog/catalog.hpp"
+#include "duckdb_compat.hpp"
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
 #include "duckdb/common/types/value.hpp"
 #include "duckdb/function/table_function.hpp"
@@ -18,6 +19,8 @@
 #include <vector>
 
 namespace duckdb {
+
+namespace compat = statsduck::compat;
 
 // table_one — Table-1 style descriptives summary, MVP shape (v0.4).
 //
@@ -168,7 +171,7 @@ static std::string FormatPercent(double n, double total) {
 
 static unique_ptr<FunctionData> TableOneBind(ClientContext &context, TableFunctionBindInput &input,
                                              vector<LogicalType> &return_types,
-                                             vector<string> &names) {
+                                             compat::BindNames &names) {
 	auto bd = make_uniq<TableOneBindData>();
 
 	// Positional arg 0: data table name (VARCHAR).
@@ -251,17 +254,17 @@ static unique_ptr<FunctionData> TableOneBind(ClientContext &context, TableFuncti
 	// Catalog lookup — get column types so we can classify each variable.
 	auto &catalog = Catalog::GetCatalog(context, INVALID_CATALOG);
 	auto &schema = DEFAULT_SCHEMA;
-	auto entry = catalog.GetEntry(context, CatalogType::TABLE_ENTRY, schema, bd->data_table,
+	auto entry = catalog.GetEntry(context, CatalogType::TABLE_ENTRY, compat::Ident(schema), compat::Ident(bd->data_table),
 	                              OnEntryNotFound::THROW_EXCEPTION);
 	auto &tbl = entry->Cast<TableCatalogEntry>();
 	auto &cols = tbl.GetColumns();
 
 	for (auto &v : bd->variables) {
-		if (!cols.ColumnExists(v)) {
+		if (!cols.ColumnExists(compat::Ident(v))) {
 			throw BinderException("table_one: column '%s' not found in table '%s'",
 			                      v, bd->data_table);
 		}
-		auto &col = cols.GetColumn(v);
+		auto &col = cols.GetColumn(compat::Ident(v));
 		bool numeric = IsNumericKind(col.GetType().id());
 		if (std::find(force_categorical.begin(), force_categorical.end(), v) !=
 		    force_categorical.end()) {
@@ -273,7 +276,7 @@ static unique_ptr<FunctionData> TableOneBind(ClientContext &context, TableFuncti
 		bd->is_numeric.push_back(numeric);
 	}
 	for (auto &b : bd->by_columns) {
-		if (!cols.ColumnExists(b)) {
+		if (!cols.ColumnExists(compat::Ident(b))) {
 			throw BinderException("table_one: 'by' column '%s' not found in table '%s'",
 			                      b, bd->data_table);
 		}
@@ -676,10 +679,10 @@ static void TableOneExecute(ClientContext &context, TableFunctionInput &input, D
 void RegisterTableOne(ExtensionLoader &loader) {
 	TableFunction fn("table_one", {LogicalType::VARCHAR}, TableOneExecute, TableOneBind,
 	                  TableOneInitGlobal);
-	fn.named_parameters["variables"] = LogicalType::LIST(LogicalType::VARCHAR);
-	fn.named_parameters["by"] = LogicalType::LIST(LogicalType::VARCHAR);
-	fn.named_parameters["force_categorical"] = LogicalType::LIST(LogicalType::VARCHAR);
-	fn.named_parameters["force_numerical"] = LogicalType::LIST(LogicalType::VARCHAR);
+	compat::AddNamedParameter(fn, "variables", LogicalType::LIST(LogicalType::VARCHAR));
+	compat::AddNamedParameter(fn, "by", LogicalType::LIST(LogicalType::VARCHAR));
+	compat::AddNamedParameter(fn, "force_categorical", LogicalType::LIST(LogicalType::VARCHAR));
+	compat::AddNamedParameter(fn, "force_numerical", LogicalType::LIST(LogicalType::VARCHAR));
 	statsduck::RegisterDocumented(loader, std::move(fn),
 	                              "Clinical 'Table 1': long-format descriptives for mixed variable types, "
 	                              "optionally stratified with between-group tests.",
