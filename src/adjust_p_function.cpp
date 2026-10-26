@@ -4,7 +4,7 @@
 #include "p_adjust.hpp" // statsduck::adjust_p, parse_adjust, adjust_name
 
 #include "duckdb/function/scalar_function.hpp"
-#include "duckdb/common/types/vector.hpp"
+#include "duckdb_compat.hpp"
 #include "duckdb/main/extension/extension_loader.hpp"
 
 #include <cmath>
@@ -12,6 +12,8 @@
 #include <vector>
 
 namespace duckdb {
+
+namespace compat = statsduck::compat;
 
 // Multiple-testing corrections: adjusted p-values from a vector of raw
 // p-values. The methods, their formulas, and the NULL-handling convention
@@ -33,7 +35,7 @@ static void AdjustPExec(DataChunk &args, ExpressionState &, Vector &result) {
 	auto method_data = UnifiedVectorFormat::GetData<string_t>(method_fmt);
 
 	// Child vector of the input list (the flat array of doubles).
-	auto &input_child = ListVector::GetEntry(list_input);
+	auto &input_child = compat::ListChild(list_input);
 	UnifiedVectorFormat child_fmt;
 	input_child.ToUnifiedFormat(ListVector::GetListSize(list_input), child_fmt);
 	auto child_data = UnifiedVectorFormat::GetData<double>(child_fmt);
@@ -49,10 +51,10 @@ static void AdjustPExec(DataChunk &args, ExpressionState &, Vector &result) {
 	ListVector::Reserve(result, total_output);
 	ListVector::SetListSize(result, total_output);
 
-	auto result_list_entries = FlatVector::GetData<list_entry_t>(result);
-	auto &result_child = ListVector::GetEntry(result);
-	auto result_child_data = FlatVector::GetData<double>(result_child);
-	auto &result_child_validity = FlatVector::Validity(result_child);
+	auto result_list_entries = compat::WriteData<list_entry_t>(result);
+	auto &result_child = compat::ListChild(result);
+	auto result_child_data = compat::WriteData<double>(result_child);
+	auto &result_child_validity = compat::WriteValidity(result_child);
 
 	std::vector<double> p_in_buf;
 	std::vector<bool> valid_buf;
