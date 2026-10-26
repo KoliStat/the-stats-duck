@@ -58,13 +58,15 @@ static vector<double> ExtractDoubleList(const Value &val) {
 // Templated on the map type: the bind input hands over named_parameter_map_t on
 // the DuckDB 1.x line and named_argument_map_t on 2.0. Both expose find(),
 // end() and an iterator whose ->second is the Value, so one body serves both.
+// Inside the template that Value is a dependent name, so GetValue<T> needs the
+// template keyword; GCC rejects the call without it, MSVC does not.
 template <class MAP>
 static double GetNamedDouble(const MAP &params, const string &name, double default_val) {
 	auto it = params.find(compat::NamedKey(name));
 	if (it == params.end()) {
 		return default_val;
 	}
-	return it->second.GetValue<double>();
+	return it->second.template GetValue<double>();
 }
 
 template <class MAP>
@@ -82,7 +84,7 @@ static bool GetNamedBool(const MAP &params, const string &name, bool default_val
 	if (it == params.end()) {
 		return default_val;
 	}
-	return it->second.GetValue<bool>();
+	return it->second.template GetValue<bool>();
 }
 
 static void ValidateAlpha(double alpha) {

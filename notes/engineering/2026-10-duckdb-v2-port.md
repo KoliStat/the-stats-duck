@@ -216,6 +216,25 @@ other four are changes to the extension, all behind the compat guard, so
 the 1.x lines see only the fallible mark and a function that returns
 false.
 
+## What GCC found that MSVC did not
+
+Every local build here is MSVC. The pipeline does not trigger on a pull
+request into `v0.9` (it runs on pushes to `main` and pull requests into
+`main`), so the first GCC build of the port was a manual dispatch on the
+branch. It failed on the 1.5.6 and 2.0 lines at the same two lines of
+`src/ttest_function.cpp` before the run was cancelled. The port had
+templated three named-parameter helpers on the map type, so that one body
+serves the 1.x `named_parameter_map_t` and the 2.0 `named_argument_map_t`.
+Inside such a template `it->second.GetValue<double>()` is a call through a
+dependent name, and the standard requires the `template` keyword there:
+`it->second.template GetValue<double>()`. MSVC accepts the form without
+it. GCC rejects it. The same run printed three deprecation warnings that
+MSVC never shows; they are listed in #79. A syntax-only pass with the
+local GCC 10.3 over every binding file, against the 2.0.0 headers and
+the 1.4.3 headers, now reports zero errors, and the same pass on the
+unfixed file reports the six error lines CI printed, so the pass is a
+real check and not a silent one.
+
 ## Running the v2 suite on Windows
 
 DuckDB v2.0.0's own `tools/cpp/tests/test_cpp_api_*.cpp` do not compile
@@ -251,10 +270,11 @@ last run on the tree before those fixes; no kernel file changed since.
 
 ## Left for later
 
-- v2.0 deprecates the counted `ToUnifiedFormat(count, data)`; this tree
-  calls it at 66 sites. MSVC is silent; GCC and Clang warn. A
-  `compat::ToUnified` shim would remove the warnings with no behaviour
-  change.
+- v2.0 deprecates the counted `ToUnifiedFormat(count, data)`, which this
+  tree calls at 66 sites, and `DataChunk::SetValue` and
+  `DataChunk::SetCardinality`. MSVC is silent; GCC warns. A
+  `compat::ToUnified` shim would remove the first with no behaviour
+  change; the other two need a look per site. Tracked in #79.
 - `ListVector::GetEntry` is deprecated on 2.0 but still present; the
   compat header does not call it on that line.
 - The layer SQL on 2.0 carries reconstructed spacing. Exact text would
