@@ -235,6 +235,15 @@ the 1.4.3 headers, now reports zero errors, and the same pass on the
 unfixed file reports the six error lines CI printed, so the pass is a
 real check and not a silent one.
 
+The second run's LTS job failed on `windows_amd64` before compiling
+anything of ours. The vcpkg commit that extension-ci-tools `v1.4-andium`
+pins builds zlib with a MSYS2 runtime package that the MSYS2 mirrors no
+longer serve, and the download fails with HTTP 404. The 2.0 ci-tools pin
+a vcpkg release from June 2026 that built every Windows target in the
+same run, so the LTS job now passes that commit explicitly. The
+community registry's own LTS workflow uses the 1.4 default and meets the
+same download; our pin guards our code, not their build.
+
 ## Running the v2 suite on Windows
 
 DuckDB v2.0.0's own `tools/cpp/tests/test_cpp_api_*.cpp` do not compile

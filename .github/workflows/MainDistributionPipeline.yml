@@ -46,6 +46,11 @@ jobs:
       duckdb_version: v1.4.5
       ci_tools_version: v1.4-andium
       artifact_postfix: -lts
+      # The v1.4-andium default vcpkg (ce613c41) builds zlib with a MSYS2 runtime
+      # package the MSYS2 mirrors no longer serve (HTTP 404), so windows_amd64
+      # failed before our sources compiled. The v2.0-cyanoptera default (vcpkg
+      # release 2026.06.24) built every Windows target in the same run.
+      vcpkg_commit: cd61e1e26a038e82d6550a3ebbe0fbbfe7da78e3
 
   # The line the community registry builds by default since 2026-10-20
   # (build.yml pins DuckDB v2.0.0 with ci-tools v2.0-cyanoptera). The port
