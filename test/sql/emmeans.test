@@ -23,7 +23,7 @@ SELECT printf('%.4f', (e).means[1].estimate),
        printf('%.4f', (e).means[2].estimate),
        printf('%.4f', (e).means[3].estimate)
 FROM (SELECT emmeans([[1,0,0],[0,1,0],[0,0,1]],
-                     list_transform(m.coefficients, c -> c.estimate),
+                     list_transform(m.coefficients, lambda c: c.estimate),
                      m.cov, m.df_residual) AS e
       FROM (SELECT lm_fit(y, [g1, g2, g3], 'const', false) AS m FROM ds1));
 ----
@@ -35,7 +35,7 @@ SELECT printf('%.4f', (e).means[1].std_error),
        printf('%.4f', (e).means[2].std_error),
        printf('%.4f', (e).means[3].std_error)
 FROM (SELECT emmeans([[1,0,0],[0,1,0],[0,0,1]],
-                     list_transform(m.coefficients, c -> c.estimate),
+                     list_transform(m.coefficients, lambda c: c.estimate),
                      m.cov, m.df_residual) AS e
       FROM (SELECT lm_fit(y, [g1, g2, g3], 'const', false) AS m FROM ds1));
 ----
@@ -49,7 +49,7 @@ SELECT printf('%.4f', (e).diffs[1].estimate),
        printf('%.4f', (e).diffs[1].t_statistic),
        printf('%.4f', (e).diffs[1].p_value)
 FROM (SELECT emmeans([[1,0,0],[0,1,0],[0,0,1]],
-                     list_transform(m.coefficients, c -> c.estimate),
+                     list_transform(m.coefficients, lambda c: c.estimate),
                      m.cov, m.df_residual) AS e
       FROM (SELECT lm_fit(y, [g1, g2, g3], 'const', false) AS m FROM ds1));
 ----
@@ -63,7 +63,7 @@ SELECT printf('%.4f', (e).means[1].t_statistic),
        printf('%.4f', (e).means[1].lower_cl),
        printf('%.4f', (e).means[1].upper_cl)
 FROM (SELECT emmeans([[1,0,0],[0,1,0],[0,0,1]],
-                     list_transform(m.coefficients, c -> c.estimate),
+                     list_transform(m.coefficients, lambda c: c.estimate),
                      m.cov, m.df_residual) AS e
       FROM (SELECT lm_fit(y, [g1, g2, g3], 'const', false) AS m FROM ds1));
 ----
@@ -76,7 +76,7 @@ SELECT (e).diffs[1].i, (e).diffs[1].j,
        (e).diffs[2].i, (e).diffs[2].j,
        (e).diffs[3].i, (e).diffs[3].j
 FROM (SELECT emmeans([[1,0,0],[0,1,0],[0,0,1]],
-                     list_transform(m.coefficients, c -> c.estimate),
+                     list_transform(m.coefficients, lambda c: c.estimate),
                      m.cov, m.df_residual) AS e
       FROM (SELECT lm_fit(y, [g1, g2, g3], 'const', false) AS m FROM ds1));
 ----
@@ -87,7 +87,7 @@ FROM (SELECT emmeans([[1,0,0],[0,1,0],[0,0,1]],
 query IIII
 SELECT len((e).means), len((e).diffs), (e).k_compare, printf('%.1f', (e).df_den)
 FROM (SELECT emmeans([[1,0,0],[0,1,0],[0,0,1]],
-                     list_transform(m.coefficients, c -> c.estimate),
+                     list_transform(m.coefficients, lambda c: c.estimate),
                      m.cov, m.df_residual) AS e
       FROM (SELECT lm_fit(y, [g1, g2, g3], 'const', false) AS m FROM ds1));
 ----
@@ -99,7 +99,7 @@ SELECT printf('%.4f', (e).diffs[3].estimate),
        printf('%.4f', (e).diffs[3].p_value),
        (e).diffs[3].estimate IS NULL
 FROM (SELECT emmeans([[1,0,0],[0,1,0],[0,0,1]],
-                     list_transform(m.coefficients, c -> c.estimate),
+                     list_transform(m.coefficients, lambda c: c.estimate),
                      m.cov, m.df_residual) AS e
       FROM (SELECT lm_fit(y, [g1, g2, g3], 'const', false) AS m FROM ds1));
 ----
@@ -112,7 +112,7 @@ SELECT (d).adjust, (f).adjust, printf('%.2f', (d).alpha)
 FROM (SELECT emmeans(gr, b, cv, dfr) AS d,
              emmeans(gr, b, cv, dfr, 0.05, 'fdr') AS f
       FROM (SELECT [[1,0,0],[0,1,0],[0,0,1]] AS gr,
-                   list_transform(m.coefficients, c -> c.estimate) AS b,
+                   list_transform(m.coefficients, lambda c: c.estimate) AS b,
                    m.cov AS cv, m.df_residual AS dfr
             FROM (SELECT lm_fit(y, [g1, g2, g3], 'const', false) AS m FROM ds1)));
 ----
@@ -135,7 +135,7 @@ SELECT printf('%.4f', (h).diffs[1].lower_cl),
 FROM (SELECT emmeans(gr, b, cv, dfr, 0.05, 'tukey') AS t,
              emmeans(gr, b, cv, dfr, 0.05, 'holm') AS h
       FROM (SELECT [[1,0,0],[0,1,0],[0,0,1]] AS gr,
-                   list_transform(m.coefficients, c -> c.estimate) AS b,
+                   list_transform(m.coefficients, lambda c: c.estimate) AS b,
                    m.cov AS cv, m.df_residual AS dfr
             FROM (SELECT lm_fit(y, [g1, g2, g3], 'const', false) AS m FROM ds1)));
 ----
@@ -156,7 +156,7 @@ SELECT printf('%.4f', (bf).diffs[1].p_adjusted),
 FROM (SELECT emmeans(gr, bt, cv, dfr, 0.05, 'bonferroni') AS bf,
              emmeans(gr, bt, cv, dfr, 0.05, 'holm') AS hm
       FROM (SELECT [[1,0,0],[0,1,0],[0,0,1]] AS gr,
-                   list_transform(m.coefficients, c -> c.estimate) AS bt,
+                   list_transform(m.coefficients, lambda c: c.estimate) AS bt,
                    m.cov AS cv, m.df_residual AS dfr
             FROM (SELECT lm_fit(y, [g1, g2, g3], 'const', false) AS m FROM ds1)));
 ----
@@ -176,7 +176,7 @@ FROM (SELECT emmeans(gr, bt, cv, dfr, 0.05, 'hochberg') AS hc,
              emmeans(gr, bt, cv, dfr, 0.05, 'BY') AS bq,
              emmeans(gr, bt, cv, dfr, 0.05, 'none') AS nn
       FROM (SELECT [[1,0,0],[0,1,0],[0,0,1]] AS gr,
-                   list_transform(m.coefficients, c -> c.estimate) AS bt,
+                   list_transform(m.coefficients, lambda c: c.estimate) AS bt,
                    m.cov AS cv, m.df_residual AS dfr
             FROM (SELECT lm_fit(y, [g1, g2, g3], 'const', false) AS m FROM ds1)));
 ----
@@ -192,7 +192,7 @@ SELECT printf('%.6f', (e).diffs[1].p_adjusted),
            (1 - ptukey(sqrt(2) * abs((e).diffs[1].t_statistic),
                        (e).k_compare, (e).df_den))) < 1e-12
 FROM (SELECT emmeans([[1,0,0],[0,1,0],[0,0,1]],
-                     list_transform(m.coefficients, c -> c.estimate),
+                     list_transform(m.coefficients, lambda c: c.estimate),
                      m.cov, m.df_residual) AS e
       FROM (SELECT lm_fit(y, [g1, g2, g3], 'const', false) AS m FROM ds1));
 ----
@@ -204,7 +204,7 @@ query II
 SELECT printf('%.4f', (e).means[1].lower_cl),
        printf('%.4f', (e).means[1].upper_cl)
 FROM (SELECT emmeans([[1,0,0],[0,1,0],[0,0,1]],
-                     list_transform(m.coefficients, c -> c.estimate),
+                     list_transform(m.coefficients, lambda c: c.estimate),
                      m.cov, m.df_residual, 0.01) AS e
       FROM (SELECT lm_fit(y, [g1, g2, g3], 'const', false) AS m FROM ds1));
 ----
@@ -214,7 +214,7 @@ FROM (SELECT emmeans([[1,0,0],[0,1,0],[0,0,1]],
 query IIII
 SELECT len((e).means), len((e).diffs), (e).diffs IS NULL, (e).k_compare
 FROM (SELECT emmeans([[1,0,0]],
-                     list_transform(m.coefficients, c -> c.estimate),
+                     list_transform(m.coefficients, lambda c: c.estimate),
                      m.cov, m.df_residual) AS e
       FROM (SELECT lm_fit(y, [g1, g2, g3], 'const', false) AS m FROM ds1));
 ----
@@ -244,7 +244,7 @@ SELECT grp,
        (e).k_compare
 FROM (
   SELECT grp, emmeans([[1,0,0],[0,1,0],[0,0,1]],
-                      list_transform(m.coefficients, c -> c.estimate),
+                      list_transform(m.coefficients, lambda c: c.estimate),
                       m.cov, m.df_residual) AS e
   FROM (SELECT grp, lm_fit(y, [g1, g2, g3], 'const', false) AS m
         FROM ds_multi GROUP BY grp)
@@ -269,7 +269,7 @@ SELECT grp,
        (e).diffs[3].estimate IS NULL
 FROM (
   SELECT grp, emmeans([[1,0,0],[0,1,0],[0,0,1]],
-                      list_transform(m.coefficients, c -> c.estimate),
+                      list_transform(m.coefficients, lambda c: c.estimate),
                       m.cov, m.df_residual) AS e
   FROM (SELECT grp, lm_fit(y, [g1, g2, g3], 'const', false) AS m
         FROM ds_multi GROUP BY grp)
@@ -318,7 +318,7 @@ SELECT printf('%.4f', (e).means[1].estimate),
        (e).means[3].estimate IS NULL,
        (e).diffs[3].estimate IS NULL
 FROM (SELECT emmeans([[1,0,0],[0,1,0],[0,0,1]],
-                     list_transform(m.coefficients, c -> c.estimate),
+                     list_transform(m.coefficients, lambda c: c.estimate),
                      m.cov, m.df_residual) AS e
       FROM (SELECT lm_fit(y, [g1, g2, g3], 'const', false) AS m
             FROM ds_multi WHERE grp = 'b'));
@@ -331,7 +331,7 @@ FROM (SELECT emmeans([[1,0,0],[0,1,0],[0,0,1]],
 query IIII
 SELECT len((e).means), (e).means[1].estimate IS NULL, len((e).diffs), (e).k_compare
 FROM (SELECT emmeans([[0,0,1]],
-                     list_transform(m.coefficients, c -> c.estimate),
+                     list_transform(m.coefficients, lambda c: c.estimate),
                      m.cov, m.df_residual) AS e
       FROM (SELECT lm_fit(y, [g1, g2, g3], 'const', false) AS m
             FROM ds_multi WHERE grp = 'b'));
@@ -347,7 +347,7 @@ SELECT printf('%.4f', (e).means[1].estimate),
        (e).diffs[1].estimate IS NULL,
        (e).k_compare
 FROM (SELECT emmeans([[1,0,0],[0,NULL,0],[0,0,1]],
-                     list_transform(m.coefficients, c -> c.estimate),
+                     list_transform(m.coefficients, lambda c: c.estimate),
                      m.cov, m.df_residual) AS e
       FROM (SELECT lm_fit(y, [g1, g2, g3], 'const', false) AS m FROM ds1));
 ----

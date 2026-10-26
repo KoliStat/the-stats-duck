@@ -764,7 +764,7 @@ CREATE TABLE ds_bin AS SELECT * FROM (VALUES
 query II
 SELECT (h).df_num, printf('%.4f', (h).chisq)
 FROM (SELECT lin_hyp([[0, 1]],
-                     list_transform(g.coefficients, c -> c.estimate),
+                     list_transform(g.coefficients, lambda c: c.estimate),
                      g.cov, g.dispersion, g.df_residual) AS h
       FROM (SELECT glm_fit(y, [x1], 'binomial') AS g FROM ds_bin));
 ----
@@ -779,7 +779,7 @@ FROM (SELECT lin_hyp([[0, 1]],
 query I
 SELECT printf('%.8f', abs((h).chisq - pow((g).coefficients[2].estimate / (g).coefficients[2].std_error, 2)))
 FROM (SELECT glm_fit(y, [x1], 'binomial') AS g,
-             lin_hyp([[0, 1]], list_transform(glm_fit(y, [x1], 'binomial').coefficients, c -> c.estimate),
+             lin_hyp([[0, 1]], list_transform(glm_fit(y, [x1], 'binomial').coefficients, lambda c: c.estimate),
                      glm_fit(y, [x1], 'binomial').cov, 1.0, 1.0) AS h
       FROM ds_bin);
 ----
@@ -812,7 +812,7 @@ FROM (SELECT glm_fit(y, [g1, g2, g3], 'binomial', {'intercept': false}) AS m FRO
 query III
 SELECT (e).k_compare, printf('%.4f', (e).means[1].estimate), (e).diffs[1].p_adjusted IS NOT NULL
 FROM (SELECT emmeans([[1,0,0],[0,1,0],[0,0,1]],
-                     list_transform(g.coefficients, c -> c.estimate),
+                     list_transform(g.coefficients, lambda c: c.estimate),
                      g.cov, g.df_residual) AS e
       FROM (SELECT glm_fit(y, [g1, g2, g3], 'binomial', {'intercept': false}) AS g FROM ds_cells));
 ----
@@ -824,7 +824,7 @@ FROM (SELECT emmeans([[1,0,0],[0,1,0],[0,0,1]],
 query TT
 SELECT printf('%.4f', (e).means[1].std_error), printf('%.4f', (e).means[2].std_error)
 FROM (SELECT emmeans([[1,0,0],[0,1,0],[0,0,1]],
-                     list_transform(g.coefficients, c -> c.estimate),
+                     list_transform(g.coefficients, lambda c: c.estimate),
                      g.cov, g.df_residual) AS e
       FROM (SELECT glm_fit(y, [g1, g2, g3], 'binomial', {'intercept': false}) AS g FROM ds_cells));
 ----

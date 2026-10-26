@@ -56,16 +56,19 @@ VISUALIZE log( AS x FROM penguins DRAW point
 Unbalanced parentheses in input
 
 # Unterminated string literal produces a clear error naming the missing quote.
+# DuckDB 2.0's own tokenizer rejects an unterminated quote before any parser
+# extension runs, with its own message; 1.x handed the text to ours. The
+# expected text below is the part both messages share.
 statement error
 VISUALIZE 'open AS x FROM penguins DRAW point
 ----
-Unterminated string literal or quoted identifier
+string literal
 
 # Unterminated quoted identifier likewise.
 statement error
 VISUALIZE "open AS x FROM penguins DRAW point
 ----
-Unterminated string literal or quoted identifier
+quoted identifier
 
 # SQL comments are skipped like delimiters (matching DuckDB) — but never inside a string.
 

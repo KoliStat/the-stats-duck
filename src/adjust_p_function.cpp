@@ -118,6 +118,7 @@ void RegisterAdjustP(ExtensionLoader &loader) {
 	ScalarFunction fn("adjust_p",
 	                  {LogicalType::LIST(LogicalType::DOUBLE), LogicalType::VARCHAR},
 	                  LogicalType::LIST(LogicalType::DOUBLE), AdjustPExec);
+	compat::SetFallible(fn);
 	statsduck::RegisterDocumented(loader, std::move(fn),
 	                              "Multiple-testing correction over a list of p-values "
 	                              "(bonferroni, holm, hochberg, or BH/fdr).",

@@ -273,7 +273,12 @@ inline auto NamedKey(const duckdb::string &s) -> decltype(Ident(s)) {
 //! map; 2.0 adds a keyword-only parameter to the signature.
 inline void AddNamedParameter(duckdb::TableFunction &fn, const char *name, duckdb::LogicalType type) {
 #ifdef STATS_DUCK_DUCKDB_V2
-	fn.GetSignature().AddKeywordOnly(name, std::move(type));
+	// Without a default a keyword-only parameter is required on 2.0, and a
+	// 1.x named parameter never was. The default is a NULL of the parameter's
+	// type; the binder places it into the bind's map for an omitted
+	// parameter, so a bind reads one as a NULL value, not a missing key.
+	duckdb::Value null_default(type);
+	fn.GetSignature().AddKeywordOnly(name, std::move(type), std::move(null_default));
 #else
 	fn.named_parameters[name] = std::move(type);
 #endif
@@ -421,6 +426,39 @@ inline duckdb::unique_ptr<duckdb::ConstantExpression> ConstantString(const duckd
 	return duckdb::make_uniq<duckdb::ConstantExpression>(duckdb::Literal::String(s));
 #else
 	return duckdb::make_uniq<duckdb::ConstantExpression>(duckdb::Value(s));
+#endif
+}
+
+//! Mark a scalar function as one that can throw while executing. 2.0
+//! enforces the flag: an execution-time error from a function without it
+//! is rethrown as an internal error. 1.x keeps the same flag as a public
+//! field with the same default, so the mark states the same fact there.
+inline void SetFallible(duckdb::ScalarFunction &fn) {
+#ifdef STATS_DUCK_DUCKDB_V2
+	fn.SetFallible();
+#else
+	fn.errors = duckdb::FunctionErrors::CAN_THROW_RUNTIME_ERROR;
+#endif
+}
+
+inline void SetFallible(duckdb::ScalarFunctionSet &set) {
+#ifdef STATS_DUCK_DUCKDB_V2
+	set.SetFallible();
+#else
+	for (auto &fn : set.functions) {
+		fn.errors = duckdb::FunctionErrors::CAN_THROW_RUNTIME_ERROR;
+	}
+#endif
+}
+
+//! Whether a type is 2.0's TUPLE, the unnamed struct that row(...) builds
+//! there. 1.x has no such id: row(...) builds a STRUCT with empty names.
+inline bool IsTuple(const duckdb::LogicalType &type) {
+#ifdef STATS_DUCK_DUCKDB_V2
+	return type.id() == duckdb::LogicalTypeId::TUPLE;
+#else
+	(void)type;
+	return false;
 #endif
 }
 

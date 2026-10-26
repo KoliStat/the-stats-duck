@@ -42,6 +42,22 @@ jobs:
       ci_tools_version: v1.4-andium
       artifact_postfix: -lts
 
+  # The line the community registry builds by default since 2026-10-20
+  # (build.yml pins DuckDB v2.0.0 with ci-tools v2.0-cyanoptera). The port
+  # (#46) was verified by hand on Windows with MSVC; this job builds it with
+  # GCC, Clang and emscripten as well. Build only, as above. The two opt-in
+  # platforms are the ones the registry descriptor will request: osx_amd64
+  # became opt-in under v2.0-cyanoptera, and windows_arm64 always was.
+  duckdb-v2-build:
+    name: Build against DuckDB 2.0 (compatibility guard)
+    uses: duckdb/extension-ci-tools/.github/workflows/_extension_distribution.yml@v2.0-cyanoptera
+    with:
+      extension_name: stats_duck
+      duckdb_version: v2.0.0
+      ci_tools_version: v2.0-cyanoptera
+      artifact_postfix: -v2
+      opt_in_archs: "windows_arm64;osx_amd64"
+
   duckdb-stable-deploy:
     name: Deploy extension binaries
     needs: duckdb-stable-build

@@ -185,6 +185,7 @@ void RegisterLinHyp(ExtensionLoader &loader) {
 	                  {LogicalType::LIST(list_double), list_double, list_double,
 	                   LogicalType::DOUBLE, LogicalType::DOUBLE},
 	                  LinHypResultType(), LinHypExec);
+	compat::SetFallible(fn);
 	statsduck::RegisterDocumented(
 	    loader, std::move(fn),
 	    "General linear hypothesis L·β = 0 against a fit: per-constraint estimates with "

@@ -132,10 +132,14 @@ WHERE row_var = 'b' AND col_var = 'c'
 # straight into a VISUALIZE block via the v0.5 WITH support. We only verify
 # the spec compiles and the layer SQL references corr_matrix correctly.
 # Single line so the paren-preserved whitespace doesn't end up in the fixture.
+# The list literal is written with conventional spacing on purpose: DuckDB 2.0
+# hands VISUALIZE its statement as tokens without positions, so the layer SQL
+# there carries reconstructed spacing, and 1.x carries the input's. Both agree
+# only when the input already uses it.
 query TT
-WITH c AS (SELECT * FROM corr_matrix('penguins', variables := ['bill_len','bill_dep','flipper','mass'])) VISUALIZE row_var AS x, col_var AS y, coef AS color FROM c DRAW heatmap SCALE color TO redblue SCALE color DOMAIN -1 1
+WITH c AS (SELECT * FROM corr_matrix('penguins', variables := ['bill_len', 'bill_dep', 'flipper', 'mass'])) VISUALIZE row_var AS x, col_var AS y, coef AS color FROM c DRAW heatmap SCALE color TO redblue SCALE color DOMAIN -1 1
 ----
-{"$schema":"https://vega.github.io/schema/vega-lite/v5.json","data":{"name":"layer_0"},"mark":"rect","encoding":{"x":{"field":"x","type":"ordinal"},"y":{"field":"y","type":"ordinal"},"color":{"field":"color","type":"quantitative","scale":{"scheme":"redblue","domain":[-1,1]}}}}	{layer_0='WITH c AS (SELECT * FROM corr_matrix(\'penguins\', variables := [\'bill_len\',\'bill_dep\',\'flipper\',\'mass\'])) SELECT row_var AS x, col_var AS y, coef AS color FROM c'}
+{"$schema":"https://vega.github.io/schema/vega-lite/v5.json","data":{"name":"layer_0"},"mark":"rect","encoding":{"x":{"field":"x","type":"ordinal"},"y":{"field":"y","type":"ordinal"},"color":{"field":"color","type":"quantitative","scale":{"scheme":"redblue","domain":[-1,1]}}}}	{layer_0='WITH c AS (SELECT * FROM corr_matrix(\'penguins\', variables := [\'bill_len\', \'bill_dep\', \'flipper\', \'mass\'])) SELECT row_var AS x, col_var AS y, coef AS color FROM c'}
 
 # ─── Error cases ────────────────────────────────────────────────────────────
 

@@ -213,6 +213,9 @@ static unique_ptr<FunctionData> ReadStatBind(ClientContext &context, TableFuncti
 
 	// Named parameters
 	for (auto &kv : input.named_parameters) {
+		if (kv.second.IsNull()) {
+			continue;
+		}
 		if (kv.first == "format") {
 			bind_data->format = StringUtil::Lower(kv.second.GetValue<string>());
 		} else if (kv.first == "encoding") {
@@ -503,6 +506,9 @@ static unique_ptr<FunctionData> ReadStatMetadataBind(ClientContext &context, Tab
 	bind_data->path = input.inputs[0].GetValue<string>();
 
 	for (auto &kv : input.named_parameters) {
+		if (kv.second.IsNull()) {
+			continue;
+		}
 		if (kv.first == "format") {
 			bind_data->format_name = StringUtil::Lower(kv.second.GetValue<string>());
 		} else if (kv.first == "encoding") {

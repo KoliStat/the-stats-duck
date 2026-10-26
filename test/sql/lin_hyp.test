@@ -22,7 +22,7 @@ SELECT (h).df_num, printf('%.1f', (h).df_den),
        printf('%.4f', (h).estimates[1].t_statistic),
        printf('%.4f', (h).f_statistic)
 FROM (SELECT lin_hyp([[0, 1, 0]],
-                     list_transform(m.coefficients, c -> c.estimate),
+                     list_transform(m.coefficients, lambda c: c.estimate),
                      m.cov, m.sigma * m.sigma, m.df_residual) AS h
       FROM (SELECT lm_fit(y, [x1, x2]) AS m FROM ds1))
 ----
@@ -34,7 +34,7 @@ SELECT printf('%.4f', (h).estimates[1].estimate),
        printf('%.4f', (h).estimates[1].std_error),
        printf('%.4f', (h).f_statistic)
 FROM (SELECT lin_hyp([[0, 1, -1]],
-                     list_transform(m.coefficients, c -> c.estimate),
+                     list_transform(m.coefficients, lambda c: c.estimate),
                      m.cov, m.sigma * m.sigma, m.df_residual) AS h
       FROM (SELECT lm_fit(y, [x1, x2]) AS m FROM ds1))
 ----
@@ -55,7 +55,7 @@ SELECT (h).df_num, len((h).estimates),
        printf('%.3e', (h).f_p_value),
        printf('%.4f', (h).chisq_p_value)
 FROM (SELECT lin_hyp([[0, 1, 0], [0, 0, 1]],
-                     list_transform(m.coefficients, c -> c.estimate),
+                     list_transform(m.coefficients, lambda c: c.estimate),
                      m.cov, m.sigma * m.sigma, m.df_residual) AS h, m
       FROM (SELECT lm_fit(y, [x1, x2]) AS m FROM ds1))
 ----
@@ -73,7 +73,7 @@ query TTTT
 SELECT (h).df_num, printf('%.4f', (h).f_statistic),
        printf('%.4f', m.f_statistic), printf('%.3e', (h).f_p_value)
 FROM (SELECT lin_hyp([[0, 1, 0], [0, 0, 1]],
-                     list_transform(m.coefficients, c -> c.estimate),
+                     list_transform(m.coefficients, lambda c: c.estimate),
                      m.cov, m.sigma * m.sigma, m.df_residual) AS h, m
       FROM (SELECT lm_fit(y, [x1 * 1e3, x2 * 1e-3]) AS m FROM ds1))
 ----
@@ -84,7 +84,7 @@ query TTTT
 SELECT (h).df_num, printf('%.4f', (h).f_statistic),
        printf('%.4f', m.f_statistic), printf('%.3e', (h).f_p_value)
 FROM (SELECT lin_hyp([[0, 1, 0], [0, 0, 1]],
-                     list_transform(m.coefficients, c -> c.estimate),
+                     list_transform(m.coefficients, lambda c: c.estimate),
                      m.cov, m.sigma * m.sigma, m.df_residual) AS h, m
       FROM (SELECT lm_fit(y, [x1 * 1e6, x2]) AS m FROM ds1))
 ----
@@ -108,7 +108,7 @@ true	true
 query TT
 SELECT (h).df_num, printf('%.4f', (h).f_statistic)
 FROM (SELECT lin_hyp([[0, 1, -1], [0, -1, 1]],
-                     list_transform(m.coefficients, c -> c.estimate),
+                     list_transform(m.coefficients, lambda c: c.estimate),
                      m.cov, m.sigma * m.sigma, m.df_residual) AS h
       FROM (SELECT lm_fit(y, [x1, x2]) AS m FROM ds1))
 ----
@@ -118,7 +118,7 @@ FROM (SELECT lin_hyp([[0, 1, -1], [0, -1, 1]],
 query TT
 SELECT printf('%.4f', (h).estimates[1].std_error), printf('%.4f', (h).f_statistic)
 FROM (SELECT lin_hyp([[0, 1, 0]],
-                     list_transform(m.coefficients, c -> c.estimate),
+                     list_transform(m.coefficients, lambda c: c.estimate),
                      m.cov, m.sigma * m.sigma, m.df_residual) AS h
       FROM (SELECT lm_fit(y, [x1, x2], 'HC1') AS m FROM ds1))
 ----
@@ -130,7 +130,7 @@ FROM (SELECT lin_hyp([[0, 1, 0]],
 # is NULL.
 query T
 SELECT lin_hyp([[0, 0, 0, 1]],
-               list_transform(m.coefficients, c -> c.estimate),
+               list_transform(m.coefficients, lambda c: c.estimate),
                m.cov, m.sigma * m.sigma, m.df_residual)
 FROM (SELECT lm_fit(y, [x1, x2, x1 + x2]) AS m FROM ds1)
 ----
@@ -141,7 +141,7 @@ NULL
 query TT
 SELECT (h).df_num, printf('%.4f', (h).estimates[1].estimate)
 FROM (SELECT lin_hyp([[0, 1, 0, 0]],
-                     list_transform(m.coefficients, c -> c.estimate),
+                     list_transform(m.coefficients, lambda c: c.estimate),
                      m.cov, m.sigma * m.sigma, m.df_residual) AS h
       FROM (SELECT lm_fit(y, [x1, x2, x1 + x2]) AS m FROM ds1))
 ----

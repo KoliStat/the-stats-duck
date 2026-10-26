@@ -299,6 +299,7 @@ void RegisterEmmeans(ExtensionLoader &loader) {
 	set.AddFunction(ScalarFunction({grid, list_double, list_double, dbl, dbl}, ret, EmmeansExec));
 	set.AddFunction(
 	    ScalarFunction({grid, list_double, list_double, dbl, dbl, LogicalType::VARCHAR}, ret, EmmeansExec));
+	compat::SetFallible(set);
 
 	statsduck::RegisterDocumented(
 	    loader, std::move(set),

@@ -231,7 +231,7 @@ static bool ReadOptions(ClientContext &context, compat::BindFunction &function,
                         bool &link_given) {
 	auto &opts_expr = *arguments[idx];
 	const LogicalType &opts_type = compat::ReturnType(opts_expr);
-	if (opts_type.id() != LogicalTypeId::STRUCT) {
+	if (opts_type.id() != LogicalTypeId::STRUCT && !compat::IsTuple(opts_type)) {
 		throw BinderException("glm_fit: the options argument must be a STRUCT, for example "
 		                      "{'link': 'probit', 'vcov': 'HC1'}");
 	}

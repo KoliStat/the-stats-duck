@@ -569,26 +569,127 @@ ParserExtensionPlanResult GgsqlPlan(ParserExtensionInfo *, ClientContext &contex
 
 // The parse callback's input changed in DuckDB v2.0. A 1.x parser extension
 // received the statement text, once DuckDB's own parser had rejected it. On
-// v2.0 it receives the statement's tokens instead, each carrying its text.
-// Our parser works on text, so on that line the tokens are joined back into
-// a statement before the shared body runs. Comment tokens are dropped: the
-// 1.x path delivered comments inside the text and GgsqlParseString skips
-// them itself, so nothing that mattered is lost. The whitespace between
-// tokens is not the original, which only matters inside a quoted literal,
-// and a literal is one token.
+// v2.0 it receives the remaining tokens of the whole query instead, each
+// carrying its text but not its position, and it must report how many of
+// them it consumed. The adapter below finds where this statement ends (the
+// first terminator, or the end-of-input sentinel that always closes the
+// view), rebuilds the statement text from the tokens, and hands that text
+// to the shared body. On success it claims the statement and its
+// terminator, as DuckDB's own top-level statements do. A result that is
+// not ours claims nothing, so the original syntax error surfaces. An error
+// of ours is reported as such.
+//
+// The rebuilt text uses conventional spacing, not the user's. One space
+// goes between tokens, with these exceptions: none before , ) ] } ; :: .
+// and none after ( [ { . :: : ; none between a word and the ( that opens
+// its argument list, or the : that starts its type override, unless the
+// word is a clause keyword (AS, IN, FROM and so on); and none after a sign
+// that cannot be a binary operator because nothing that ends an operand
+// comes before it. The layer SQL that VISUALIZE reports on 2.0 shows this
+// spacing. Comments never reach the view, and a quoted literal is one
+// token, so neither is affected.
 #ifdef STATS_DUCK_DUCKDB_V2
+static bool NoSpaceBefore(const string &text) {
+	return text == "," || text == ")" || text == "]" || text == "}" || text == ";" || text == "::" || text == ".";
+}
+
+static bool NoSpaceAfter(const string &text) {
+	return text == "(" || text == "[" || text == "{" || text == "." || text == "::" || text == ":";
+}
+
+static bool IsWordToken(const string &text) {
+	if (text.empty()) {
+		return false;
+	}
+	char c = text[0];
+	return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_' || c == '"';
+}
+
+// A keyword that opens or separates clauses. It is written with a space
+// before a ( or a :, and it cannot end an operand, so a sign after it is
+// unary. The list covers SQL and the VISUALIZE grammar; a word not in it
+// is read as an identifier or a function name.
+static bool IsClauseKeyword(const string &text) {
+	static const char *const kWords[] = {
+	    "AS",        "IN",       "FROM",   "WHERE",  "AND",    "OR",        "NOT",   "ON",        "BY",
+	    "SELECT",    "VALUES",   "EXISTS", "JOIN",   "THEN",   "ELSE",      "WHEN",  "OVER",      "BETWEEN",
+	    "LIKE",      "ILIKE",    "IS",     "WITH",   "HAVING", "LIMIT",     "OFFSET", "UNION",    "EXCEPT",
+	    "INTERSECT", "ALL",      "DISTINCT", "CASE", "END",    "USING",     "ANY",   "SOME",      "INTO",
+	    "GROUP",     "ORDER",    "RETURNING", "SET", "VISUALIZE", "DRAW",   "FACET", "SCALE",     "TITLE",
+	    "SUBTITLE",  "DOMAIN",   "LABEL",  "TO",     "ROWS",   "COLUMNS",   "ZERO",  "RETURN"};
+	auto upper = StringUtil::Upper(text);
+	for (auto word : kWords) {
+		if (upper == word) {
+			return true;
+		}
+	}
+	return false;
+}
+
+// Whether a token can end an operand: a number, a string, a closing
+// bracket, or a word that is not a clause keyword. A sign after one is a
+// binary operator and keeps its spaces.
+static bool EndsOperand(const SimpleToken &token) {
+	if (token.type == TokenType::NUMBER_LITERAL || token.type == TokenType::STRING_LITERAL) {
+		return true;
+	}
+	auto &text = token.text;
+	if (text == ")" || text == "]" || text == "}") {
+		return true;
+	}
+	return IsWordToken(text) && !IsClauseKeyword(text);
+}
+
 static ParserExtensionParseResult GgsqlParse(ParserExtensionInfo *info, const vector<SimpleToken> &tokens) {
+	idx_t end = 0;
+	while (end < tokens.size()) {
+		auto type = tokens[end].type;
+		if (type == TokenType::TERMINATOR || type == TokenType::END_OF_INPUT ||
+		    type == TokenType::END_OF_INPUT_AUTOCOMPLETE) {
+			break;
+		}
+		end++;
+	}
 	string query;
-	for (auto &token : tokens) {
-		if (token.type == TokenType::COMMENT) {
+	const SimpleToken *previous = nullptr;
+	const SimpleToken *before_previous = nullptr;
+	for (idx_t i = 0; i < end; i++) {
+		auto &token = tokens[i];
+		auto &text = token.text;
+		if (token.type == TokenType::COMMENT || text.empty()) {
 			continue;
 		}
-		if (!query.empty()) {
-			query += ' ';
+		if (previous) {
+			auto &prev = previous->text;
+			bool space = !NoSpaceBefore(text) && !NoSpaceAfter(prev);
+			if (space && (text == "(" || text == ":") && IsWordToken(prev) && !IsClauseKeyword(prev)) {
+				space = false;
+			}
+			if (space && (prev == "-" || prev == "+") && (!before_previous || !EndsOperand(*before_previous))) {
+				space = false;
+			}
+			if (space) {
+				query += ' ';
+			}
 		}
-		query += token.text;
+		query += text;
+		before_previous = previous;
+		previous = &token;
 	}
-	return GgsqlParseString(info, query);
+	auto result = GgsqlParseString(info, query);
+	switch (result.type) {
+	case ParserExtensionResultType::PARSE_SUCCESSFUL:
+		// The statement and its terminator; the sentinel counts as one too.
+		result.consumed_tokens = NumericCast<int64_t>(end < tokens.size() ? end + 1 : end);
+		break;
+	case ParserExtensionResultType::DISPLAY_EXTENSION_ERROR:
+		result.consumed_tokens = -1;
+		break;
+	default:
+		result.consumed_tokens = 0;
+		break;
+	}
+	return result;
 }
 #else
 static ParserExtensionParseResult GgsqlParse(ParserExtensionInfo *info, const string &query) {
