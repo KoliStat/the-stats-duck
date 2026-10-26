@@ -5,13 +5,15 @@
 #include "duckdb/catalog/catalog_entry/scalar_function_catalog_entry.hpp"
 #include "duckdb/common/exception.hpp"
 #include "duckdb/common/string_util.hpp"
-#include "duckdb/common/types/vector.hpp"
+#include "duckdb_compat.hpp"
 #include "duckdb/main/extension/extension_loader.hpp"
 #include "duckdb/planner/expression/bound_function_expression.hpp"
 
 #include <map>
 
 namespace duckdb {
+
+namespace compat = statsduck::compat;
 namespace ggsql {
 
 namespace {
@@ -34,7 +36,7 @@ string BuildIntrospectionString(const string &name, const vector<string> &requir
 
 void MarkIntrospectionStub(DataChunk &args, ExpressionState &state, Vector &result) {
 	auto &func_expr = state.expr.Cast<BoundFunctionExpression>();
-	auto &info = func_expr.function.function_info->Cast<MarkInfo>();
+	auto &info = compat::ExtraFunctionInfo(func_expr).Cast<MarkInfo>();
 	auto desc = BuildIntrospectionString(info.name, info.required_aesthetics);
 	result.SetVectorType(VectorType::CONSTANT_VECTOR);
 	auto data = ConstantVector::GetData<string_t>(result);
@@ -324,14 +326,14 @@ MarkResult RenderHistogram(const MarkContext &ctx) {
 
 void RegisterMark(ExtensionLoader &loader, const string &name,
                   vector<string> required_aesthetics, mark_render_t render) {
-	ScalarFunction func(CatalogName(name), {}, LogicalType::VARCHAR, MarkIntrospectionStub);
+	ScalarFunction func(compat::Ident(CatalogName(name)), {}, LogicalType::VARCHAR, MarkIntrospectionStub);
 
 	auto info = make_shared_ptr<MarkInfo>();
 	info->abi_version = GGSQL_MARK_ABI_VERSION;
 	info->name = name;
 	info->required_aesthetics = std::move(required_aesthetics);
 	info->render = render;
-	func.function_info = std::move(info);
+	compat::SetExtraFunctionInfo(func, std::move(info));
 
 	statsduck::RegisterDocumented(loader, std::move(func),
 	                              "Internal VISUALIZE support function: mark registry entry for DRAW " + name +
@@ -341,8 +343,7 @@ void RegisterMark(ExtensionLoader &loader, const string &name,
 
 const MarkInfo &LookupMark(ClientContext &context, const string &name) {
 	auto &catalog = Catalog::GetSystemCatalog(context);
-	auto entry = catalog.GetEntry(context, CatalogType::SCALAR_FUNCTION_ENTRY, DEFAULT_SCHEMA,
-	                              CatalogName(name), OnEntryNotFound::RETURN_NULL);
+	auto entry = catalog.GetEntry(context, CatalogType::SCALAR_FUNCTION_ENTRY, compat::Ident(DEFAULT_SCHEMA), compat::Ident(CatalogName(name)), OnEntryNotFound::RETURN_NULL);
 	if (!entry) {
 		throw InvalidInputException("visualize: unknown mark '%s'", name);
 	}
@@ -350,11 +351,11 @@ const MarkInfo &LookupMark(ClientContext &context, const string &name) {
 	if (func_entry.functions.Size() == 0) {
 		throw InvalidInputException("visualize: unknown mark '%s'", name);
 	}
-	auto &func = func_entry.functions.GetFunctionReferenceByOffset(0);
-	if (!func.function_info) {
+	auto info_ptr = compat::FirstExtraFunctionInfo(func_entry.functions);
+	if (!info_ptr) {
 		throw InvalidInputException("visualize: '%s' is not a registered mark", name);
 	}
-	auto &info = func.function_info->Cast<MarkInfo>();
+	auto &info = info_ptr->Cast<MarkInfo>();
 	if (info.abi_version != GGSQL_MARK_ABI_VERSION) {
 		throw InvalidInputException(
 		    "visualize: mark '%s' uses ABI version %u but this build expects %u", name,

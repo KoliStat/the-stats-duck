@@ -3,7 +3,7 @@
 
 #include "distributions.hpp"
 #include "duckdb/common/exception.hpp"
-#include "duckdb/common/types/vector.hpp"
+#include "duckdb_compat.hpp"
 #include "duckdb/function/aggregate_function.hpp"
 #include "duckdb/function/function_set.hpp"
 
@@ -12,6 +12,8 @@
 #include <vector>
 
 namespace duckdb {
+
+namespace compat = statsduck::compat;
 
 namespace {
 
@@ -89,7 +91,7 @@ struct Ks1SampState {
 	std::vector<double> *values;
 };
 
-static void Ks1Init(const AggregateFunction &, data_ptr_t state_p) {
+STATS_DUCK_AGGREGATE_INIT(Ks1Init) {
 	auto &state = *reinterpret_cast<Ks1SampState *>(state_p);
 	state.values = nullptr;
 }
@@ -139,7 +141,7 @@ static void Ks1Destroy(Vector &state_vector, AggregateInputData &, idx_t count) 
 	}
 }
 
-static void Ks1Finalize(Vector &state_vector, AggregateInputData &, Vector &result, idx_t count, idx_t offset) {
+static void Ks1Finalize(Vector &state_vector, compat::FinalizeInput &, Vector &result, idx_t count, idx_t offset) {
 	auto states = FlatVector::GetData<Ks1SampState *>(state_vector);
 	auto &children = StructVector::GetEntries(result);
 
@@ -196,11 +198,11 @@ static void Ks1Finalize(Vector &state_vector, AggregateInputData &, Vector &resu
 
 		double p = KsPValue(d, n_d);
 
-		FlatVector::GetData<string_t>(*children[0])[idx] =
-		    StringVector::AddString(*children[0], "Kolmogorov-Smirnov (one-sample, fitted normal)");
-		FlatVector::GetData<double>(*children[1])[idx] = d;
-		FlatVector::GetData<double>(*children[2])[idx] = p;
-		FlatVector::GetData<int64_t>(*children[3])[idx] = static_cast<int64_t>(n);
+		compat::WriteData<string_t>(compat::Deref(children[0]))[idx] =
+		    StringVector::AddString(compat::Deref(children[0]), "Kolmogorov-Smirnov (one-sample, fitted normal)");
+		compat::WriteData<double>(compat::Deref(children[1]))[idx] = d;
+		compat::WriteData<double>(compat::Deref(children[2]))[idx] = p;
+		compat::WriteData<int64_t>(compat::Deref(children[3]))[idx] = static_cast<int64_t>(n);
 	}
 }
 
@@ -213,7 +215,7 @@ struct Ks2SampState {
 	std::vector<double> *y;
 };
 
-static void Ks2Init(const AggregateFunction &, data_ptr_t state_p) {
+STATS_DUCK_AGGREGATE_INIT(Ks2Init) {
 	auto &state = *reinterpret_cast<Ks2SampState *>(state_p);
 	state.x = nullptr;
 	state.y = nullptr;
@@ -282,7 +284,7 @@ static void Ks2Destroy(Vector &state_vector, AggregateInputData &, idx_t count) 
 	}
 }
 
-static void Ks2Finalize(Vector &state_vector, AggregateInputData &, Vector &result, idx_t count, idx_t offset) {
+static void Ks2Finalize(Vector &state_vector, compat::FinalizeInput &, Vector &result, idx_t count, idx_t offset) {
 	auto states = FlatVector::GetData<Ks2SampState *>(state_vector);
 	auto &children = StructVector::GetEntries(result);
 
@@ -343,12 +345,12 @@ static void Ks2Finalize(Vector &state_vector, AggregateInputData &, Vector &resu
 		double en = nx_d * ny_d / (nx_d + ny_d);
 		double p = KsPValue(d, en);
 
-		FlatVector::GetData<string_t>(*children[0])[idx] =
-		    StringVector::AddString(*children[0], "Kolmogorov-Smirnov (two-sample)");
-		FlatVector::GetData<double>(*children[1])[idx] = d;
-		FlatVector::GetData<double>(*children[2])[idx] = p;
-		FlatVector::GetData<int64_t>(*children[3])[idx] = static_cast<int64_t>(nx);
-		FlatVector::GetData<int64_t>(*children[4])[idx] = static_cast<int64_t>(ny);
+		compat::WriteData<string_t>(compat::Deref(children[0]))[idx] =
+		    StringVector::AddString(compat::Deref(children[0]), "Kolmogorov-Smirnov (two-sample)");
+		compat::WriteData<double>(compat::Deref(children[1]))[idx] = d;
+		compat::WriteData<double>(compat::Deref(children[2]))[idx] = p;
+		compat::WriteData<int64_t>(compat::Deref(children[3]))[idx] = static_cast<int64_t>(nx);
+		compat::WriteData<int64_t>(compat::Deref(children[4]))[idx] = static_cast<int64_t>(ny);
 	}
 }
 

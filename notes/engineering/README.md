@@ -89,3 +89,15 @@ that has been written down than to re-derive it.
   built extension can be a silent no-op: the catalog already has the
   function, by name, from the stale static copy. How to detect each, and
   what to run instead.
+
+- [`2026-10-duckdb-v2-port.md`](2026-10-duckdb-v2-port.md) — one source
+  tree builds on DuckDB 1.4, 1.5 and 2.0 through `src/include/duckdb_compat.hpp`,
+  detected with `__has_include`. What 2.0 changed in shape (the aggregate bind
+  and Init signatures, the parser extension's parse callback) and what it
+  removed. The transformer's counts were wrong five times and the compiler
+  right. Then five things the compiler could not see and the suite did: a
+  keyword-only parameter without a default is required, the parse callback
+  must report consumed tokens from a view without byte offsets, a throwing
+  scalar function must be marked fallible, `row()` is a TUPLE, and the arrow
+  lambda is rejected. Also: 2.0 links an extension into `unittest` only on
+  request, and a suite with every file skipped still exits 0.

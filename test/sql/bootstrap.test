@@ -21,7 +21,7 @@ SELECT len(bootstrap(x, 'mean', 100, 42)) FROM t
 # All elements are doubles (no NaN/NULL with non-empty input + n ≥ 1 for the
 # stats that need it).
 query I
-SELECT len(list_filter(bootstrap(x, 'mean', 50, 7), v -> v IS NOT NULL)) FROM t
+SELECT len(list_filter(bootstrap(x, 'mean', 50, 7), lambda v: v IS NOT NULL)) FROM t
 ----
 50
 
@@ -89,7 +89,7 @@ b	20
 
 # Bootstrap stddev produces a list of n_iters non-negative doubles.
 query I
-SELECT len(list_filter(bootstrap(x, 'stddev', 100, 5), v -> v >= 0)) FROM t
+SELECT len(list_filter(bootstrap(x, 'stddev', 100, 5), lambda v: v >= 0)) FROM t
 ----
 100
 

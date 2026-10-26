@@ -6,6 +6,11 @@ on:
   pull_request:
     branches:
       - main
+  # Manual runs on a branch: the full matrix before a release-branch PR
+  # merges, since pull requests into v0.* do not trigger this pipeline.
+  # Nothing deploys from such a run; both deploy flags below are false
+  # unless the ref is main or a tag.
+  workflow_dispatch:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}-${{ github.head_ref || '' }}-${{ github.base_ref || '' }}-${{ github.ref != 'refs/heads/main' || github.sha }}
@@ -41,6 +46,27 @@ jobs:
       duckdb_version: v1.4.5
       ci_tools_version: v1.4-andium
       artifact_postfix: -lts
+      # The v1.4-andium default vcpkg (ce613c41) builds zlib with a MSYS2 runtime
+      # package the MSYS2 mirrors no longer serve (HTTP 404), so windows_amd64
+      # failed before our sources compiled. The v2.0-cyanoptera default (vcpkg
+      # release 2026.06.24) built every Windows target in the same run.
+      vcpkg_commit: cd61e1e26a038e82d6550a3ebbe0fbbfe7da78e3
+
+  # The line the community registry builds by default since 2026-10-20
+  # (build.yml pins DuckDB v2.0.0 with ci-tools v2.0-cyanoptera). The port
+  # (#46) was verified by hand on Windows with MSVC; this job builds it with
+  # GCC, Clang and emscripten as well. Build only, as above. The two opt-in
+  # platforms are the ones the registry descriptor will request: osx_amd64
+  # became opt-in under v2.0-cyanoptera, and windows_arm64 always was.
+  duckdb-v2-build:
+    name: Build against DuckDB 2.0 (compatibility guard)
+    uses: duckdb/extension-ci-tools/.github/workflows/_extension_distribution.yml@v2.0-cyanoptera
+    with:
+      extension_name: stats_duck
+      duckdb_version: v2.0.0
+      ci_tools_version: v2.0-cyanoptera
+      artifact_postfix: -v2
+      opt_in_archs: "windows_arm64;osx_amd64"
 
   duckdb-stable-deploy:
     name: Deploy extension binaries

@@ -2,6 +2,7 @@
 #include "read_stat_types.hpp"
 
 #include "duckdb/function/copy_function.hpp"
+#include "duckdb_compat.hpp"
 #include "duckdb/main/extension/extension_loader.hpp"
 #include "duckdb/main/client_context.hpp"
 #include "duckdb/execution/execution_context.hpp"
@@ -24,6 +25,8 @@ extern "C" {
 }
 
 namespace duckdb {
+
+namespace compat = statsduck::compat;
 
 enum class SasFormat { XPT, SAS7BDAT, SAV, POR };
 
@@ -241,7 +244,7 @@ static const char *FormatLabel(SasFormat f) {
 }
 
 static unique_ptr<FunctionData> SasExportBind(ClientContext &context, CopyFunctionBindInput &input,
-                                              const vector<string> &names, const vector<LogicalType> &sql_types) {
+                                              const compat::BindNames &names, const vector<LogicalType> &sql_types) {
 	auto bind_data = make_uniq<SasExportBindData>();
 	bind_data->format = FormatFromInfo(input.info);
 	const auto fmt = bind_data->format;
@@ -267,7 +270,7 @@ static unique_ptr<FunctionData> SasExportBind(ClientContext &context, CopyFuncti
 
 	bool table_name_user_provided = false;
 	for (auto &option : input.info.options) {
-		auto loption = StringUtil::Lower(option.first);
+		auto loption = StringUtil::Lower(compat::Str(option.first));
 		if (option.second.size() != 1) {
 			throw BinderException("%s %s requires exactly one argument", fmt_label, StringUtil::Upper(loption));
 		}
@@ -332,10 +335,10 @@ static unique_ptr<FunctionData> SasExportBind(ClientContext &context, CopyFuncti
 	bind_data->columns.reserve(names.size());
 	for (idx_t i = 0; i < names.size(); i++) {
 		ColumnSpec spec;
-		spec.original_name = names[i];
+		spec.original_name = compat::Str(names[i]);
 		spec.duckdb_type = sql_types[i];
 		MapDuckDBType(sql_types[i], fmt, spec);
-		spec.mangled_name = ValidateColumnName(names[i], fmt, "column name", bind_data->xpt_version);
+		spec.mangled_name = ValidateColumnName(compat::Str(names[i]), fmt, "column name", bind_data->xpt_version);
 		bind_data->columns.push_back(std::move(spec));
 	}
 
@@ -345,18 +348,27 @@ static unique_ptr<FunctionData> SasExportBind(ClientContext &context, CopyFuncti
 	// intentional: a SELECT has no comment metadata of its own, only its source
 	// columns do, and reaching through the projection would mislabel computed
 	// columns.
+#ifdef STATS_DUCK_DUCKDB_V2
+	if (!input.info.GetQualifiedName().Name().empty()) {
+		// v2.0: the COPY target is a QualifiedName, and the lookup takes it whole.
+		auto entry_base = Catalog::GetEntry(context, EntryLookupInfo(CatalogType::TABLE_ENTRY, input.info.GetQualifiedName()),
+		                                    OnEntryNotFound::RETURN_NULL);
+		optional_ptr<TableCatalogEntry> entry = entry_base ? &entry_base->Cast<TableCatalogEntry>() : nullptr;
+		if (entry) {
+#else
 	if (!input.info.table.empty()) {
 		auto &catalog_name = input.info.catalog;
 		auto &schema_name = input.info.schema;
 		auto entry = Catalog::GetEntry<TableCatalogEntry>(context, catalog_name, schema_name, input.info.table,
 		                                                 OnEntryNotFound::RETURN_NULL);
 		if (entry) {
+#endif
 			auto &columns = entry->GetColumns();
 			for (auto &spec : bind_data->columns) {
-				if (!columns.ColumnExists(spec.original_name)) {
+				if (!columns.ColumnExists(compat::Ident(spec.original_name))) {
 					continue;
 				}
-				const auto &col = columns.GetColumn(spec.original_name);
+				const auto &col = columns.GetColumn(compat::Ident(spec.original_name));
 				const Value &comment = col.Comment();
 				if (!comment.IsNull()) {
 					spec.label = comment.ToString();
@@ -538,7 +550,7 @@ static void InsertValue(readstat_writer_t *writer, const readstat_variable_t *va
 		break;
 	}
 	case LogicalTypeId::TIME: {
-		auto micros = UnifiedVectorFormat::GetData<dtime_t>(fmt)[idx].micros;
+		auto micros = compat::TimeMicros(UnifiedVectorFormat::GetData<dtime_t>(fmt)[idx]);
 		readstat_insert_double_value(writer, var, static_cast<double>(micros) / 1e6);
 		break;
 	}

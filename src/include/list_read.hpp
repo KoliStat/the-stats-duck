@@ -22,7 +22,7 @@
 
 #include "linalg.hpp"
 
-#include "duckdb/common/types/vector.hpp"
+#include "duckdb_compat.hpp"
 
 #include <cstddef>
 #include <limits>
@@ -56,7 +56,7 @@ struct ListVectorReader {
 	ListVectorReader(Vector &v, idx_t count) {
 		v.ToUnifiedFormat(count, list_fmt);
 		entries = UnifiedVectorFormat::GetData<list_entry_t>(list_fmt);
-		ListVector::GetEntry(v).ToUnifiedFormat(ListVector::GetListSize(v), child_fmt);
+		statsduck::compat::ListChild(v).ToUnifiedFormat(ListVector::GetListSize(v), child_fmt);
 	}
 
 	// False when row's own list argument is NULL. Read() is not meaningful
@@ -86,11 +86,11 @@ struct ListMatrixReader {
 		v.ToUnifiedFormat(count, outer_fmt);
 		outer_entries = UnifiedVectorFormat::GetData<list_entry_t>(outer_fmt);
 
-		auto &rows_vec = ListVector::GetEntry(v);
+		auto &rows_vec = statsduck::compat::ListChild(v);
 		rows_vec.ToUnifiedFormat(ListVector::GetListSize(v), row_fmt);
 		row_entries = UnifiedVectorFormat::GetData<list_entry_t>(row_fmt);
 
-		ListVector::GetEntry(rows_vec).ToUnifiedFormat(ListVector::GetListSize(rows_vec), val_fmt);
+		statsduck::compat::ListChild(rows_vec).ToUnifiedFormat(ListVector::GetListSize(rows_vec), val_fmt);
 	}
 
 	// False when row's own list argument is NULL. Rows() and Read() are not

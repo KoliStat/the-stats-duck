@@ -2,6 +2,7 @@
 #include "register_documented.hpp"
 
 #include "duckdb/catalog/catalog.hpp"
+#include "duckdb_compat.hpp"
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
 #include "duckdb/common/exception.hpp"
 #include "duckdb/common/types/value.hpp"
@@ -18,6 +19,8 @@
 #include <vector>
 
 namespace duckdb {
+
+namespace compat = statsduck::compat;
 
 // meta — per-column dataset profile.
 //
@@ -152,7 +155,7 @@ struct MetaGlobalState : public GlobalTableFunctionState {
 
 static unique_ptr<FunctionData> MetaBind(ClientContext &context, TableFunctionBindInput &input,
                                          vector<LogicalType> &return_types,
-                                         vector<string> &names) {
+                                         compat::BindNames &names) {
 	auto bd = make_uniq<MetaBindData>();
 
 	if (input.inputs.empty() || input.inputs[0].IsNull()) {
@@ -161,12 +164,11 @@ static unique_ptr<FunctionData> MetaBind(ClientContext &context, TableFunctionBi
 	bd->data_table = input.inputs[0].GetValue<string>();
 
 	auto &catalog = Catalog::GetCatalog(context, INVALID_CATALOG);
-	auto entry = catalog.GetEntry(context, CatalogType::TABLE_ENTRY, DEFAULT_SCHEMA,
-	                              bd->data_table, OnEntryNotFound::THROW_EXCEPTION);
+	auto entry = catalog.GetEntry(context, CatalogType::TABLE_ENTRY, compat::Ident(DEFAULT_SCHEMA), compat::Ident(bd->data_table), OnEntryNotFound::THROW_EXCEPTION);
 	auto &tbl = entry->Cast<TableCatalogEntry>();
 	auto &cols = tbl.GetColumns();
 	for (auto &col : cols.Logical()) {
-		bd->column_names.push_back(col.GetName());
+		bd->column_names.push_back(compat::Str(col.GetName()));
 		bd->column_types.push_back(col.GetType().ToString());
 		bd->kinds.push_back(ClassifyKind(col.GetType().id()));
 	}

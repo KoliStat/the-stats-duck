@@ -4,7 +4,7 @@
 #include "emmeans.hpp"   // statsduck::emmeans — the DuckDB-free kernel
 #include "list_read.hpp" // ListVectorReader, ListMatrixReader
 
-#include "duckdb/common/types/vector.hpp"
+#include "duckdb_compat.hpp"
 #include "duckdb/function/scalar_function.hpp"
 #include "duckdb/main/extension/extension_loader.hpp"
 
@@ -13,6 +13,8 @@
 #include <vector>
 
 namespace duckdb {
+
+namespace compat = statsduck::compat;
 
 namespace {
 
@@ -69,7 +71,7 @@ static inline void SetD(Vector &v, idx_t row, double x) {
 	if (std::isnan(x)) {
 		FlatVector::SetNull(v, row, true);
 	} else {
-		FlatVector::GetData<double>(v)[row] = x;
+		compat::WriteData<double>(v)[row] = x;
 	}
 }
 
@@ -197,21 +199,21 @@ static void EmmeansExec(DataChunk &args, ExpressionState &, Vector &result) {
 	// its own offset. Reserve before fetching the child vector — Reserve can
 	// reallocate, and fetching first is the mistake this ordering prevents. See
 	// notes/engineering/2026-06-lm-fit-robust-se-aggregate.md §2.
-	Vector &means_list = *children[0];
+	Vector &means_list = compat::Deref(children[0]);
 	ListVector::Reserve(means_list, total_means);
 	ListVector::SetListSize(means_list, total_means);
-	auto means_entries = FlatVector::GetData<list_entry_t>(means_list);
-	auto &mean_f = StructVector::GetEntries(ListVector::GetEntry(means_list));
+	auto means_entries = compat::WriteData<list_entry_t>(means_list);
+	auto &mean_f = StructVector::GetEntries(compat::ListChild(means_list));
 
-	Vector &diffs_list = *children[1];
+	Vector &diffs_list = compat::Deref(children[1]);
 	ListVector::Reserve(diffs_list, total_diffs);
 	ListVector::SetListSize(diffs_list, total_diffs);
-	auto diffs_entries = FlatVector::GetData<list_entry_t>(diffs_list);
-	auto &diff_f = StructVector::GetEntries(ListVector::GetEntry(diffs_list));
+	auto diffs_entries = compat::WriteData<list_entry_t>(diffs_list);
+	auto &diff_f = StructVector::GetEntries(compat::ListChild(diffs_list));
 
-	auto i_data = FlatVector::GetData<int64_t>(*diff_f[0]);
-	auto j_data = FlatVector::GetData<int64_t>(*diff_f[1]);
-	auto k_compare_data = FlatVector::GetData<int64_t>(*children[5]);
+	auto i_data = compat::WriteData<int64_t>(compat::Deref(diff_f[0]));
+	auto j_data = compat::WriteData<int64_t>(compat::Deref(diff_f[1]));
+	auto k_compare_data = compat::WriteData<int64_t>(compat::Deref(children[5]));
 
 	// Both offsets walk per row. Each row's list_entry_t is set from the same
 	// counter the writes use, so the two agree only while the counter advances
@@ -231,7 +233,7 @@ static void EmmeansExec(DataChunk &args, ExpressionState &, Vector &result) {
 			// result row readable: struct_extract just references the child
 			// vector and does not propagate the parent's validity, and a debug
 			// build asserts that a NULL struct entry has NULL children.
-			FlatVector::SetNull(*children[4], row, true);
+			FlatVector::SetNull(compat::Deref(children[4]), row, true);
 			continue;
 		}
 		const auto &r = fits[row];
@@ -243,12 +245,12 @@ static void EmmeansExec(DataChunk &args, ExpressionState &, Vector &result) {
 			const auto &m = r.means[a];
 			// No branch on m.estimable: a non-estimable mean carries NaN in
 			// every numeric field, and SetD renders each NaN as SQL NULL.
-			SetD(*mean_f[0], pos, m.estimate);
-			SetD(*mean_f[1], pos, m.std_error);
-			SetD(*mean_f[2], pos, m.t_statistic);
-			SetD(*mean_f[3], pos, m.p_value);
-			SetD(*mean_f[4], pos, m.lower_cl);
-			SetD(*mean_f[5], pos, m.upper_cl);
+			SetD(compat::Deref(mean_f[0]), pos, m.estimate);
+			SetD(compat::Deref(mean_f[1]), pos, m.std_error);
+			SetD(compat::Deref(mean_f[2]), pos, m.t_statistic);
+			SetD(compat::Deref(mean_f[3]), pos, m.p_value);
+			SetD(compat::Deref(mean_f[4]), pos, m.lower_cl);
+			SetD(compat::Deref(mean_f[5]), pos, m.upper_cl);
 		}
 		means_out += n_means;
 
@@ -263,20 +265,20 @@ static void EmmeansExec(DataChunk &args, ExpressionState &, Vector &result) {
 			// indices: only the numeric fields go NULL.
 			i_data[pos] = static_cast<int64_t>(d.i) + 1;
 			j_data[pos] = static_cast<int64_t>(d.j) + 1;
-			SetD(*diff_f[2], pos, d.estimate);
-			SetD(*diff_f[3], pos, d.std_error);
-			SetD(*diff_f[4], pos, d.t_statistic);
-			SetD(*diff_f[5], pos, d.p_value);
-			SetD(*diff_f[6], pos, d.p_adjusted);
-			SetD(*diff_f[7], pos, d.lower_cl);
-			SetD(*diff_f[8], pos, d.upper_cl);
+			SetD(compat::Deref(diff_f[2]), pos, d.estimate);
+			SetD(compat::Deref(diff_f[3]), pos, d.std_error);
+			SetD(compat::Deref(diff_f[4]), pos, d.t_statistic);
+			SetD(compat::Deref(diff_f[5]), pos, d.p_value);
+			SetD(compat::Deref(diff_f[6]), pos, d.p_adjusted);
+			SetD(compat::Deref(diff_f[7]), pos, d.lower_cl);
+			SetD(compat::Deref(diff_f[8]), pos, d.upper_cl);
 		}
 		diffs_out += n_diffs;
 
-		SetD(*children[2], row, r.df_den);
-		SetD(*children[3], row, r.alpha);
-		FlatVector::GetData<string_t>(*children[4])[row] =
-		    StringVector::AddString(*children[4], statsduck::emm_adjust_name(r.adjust));
+		SetD(compat::Deref(children[2]), row, r.df_den);
+		SetD(compat::Deref(children[3]), row, r.alpha);
+		compat::WriteData<string_t>(compat::Deref(children[4]))[row] =
+		    StringVector::AddString(compat::Deref(children[4]), statsduck::emm_adjust_name(r.adjust));
 		k_compare_data[row] = static_cast<int64_t>(r.k_compare);
 	}
 }
@@ -297,6 +299,7 @@ void RegisterEmmeans(ExtensionLoader &loader) {
 	set.AddFunction(ScalarFunction({grid, list_double, list_double, dbl, dbl}, ret, EmmeansExec));
 	set.AddFunction(
 	    ScalarFunction({grid, list_double, list_double, dbl, dbl, LogicalType::VARCHAR}, ret, EmmeansExec));
+	compat::SetFallible(set);
 
 	statsduck::RegisterDocumented(
 	    loader, std::move(set),

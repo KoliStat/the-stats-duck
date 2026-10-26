@@ -39,3 +39,6 @@ vcpkg_installed/
 # duckdb-wasm verification harness: track the scripts, ignore deps + run logs
 /scripts/wasm-verify/node_modules/
 /scripts/wasm-verify/*.log
+
+# Scratch helpers for the DuckDB v2 port (not part of the build)
+.port_tools/

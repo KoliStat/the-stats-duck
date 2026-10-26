@@ -680,7 +680,7 @@ CREATE TABLE ds_bin AS SELECT * FROM (VALUES
 
 SELECT (h).df_num, printf('%.4f', (h).chisq)
 FROM (SELECT lin_hyp([[0, 1]],
-                     list_transform(g.coefficients, c -> c.estimate),
+                     list_transform(g.coefficients, lambda c: c.estimate),
                      g.cov, g.dispersion, g.df_residual) AS h
       FROM (SELECT glm_fit(y, [x1], 'binomial') AS g FROM ds_bin));
 --   df_num  chisq
@@ -706,7 +706,7 @@ it works with any fit, and it is what SAS's CONTRAST and ESTIMATE compute.
 -- Is x1's coefficient zero? (a Type III test of one term)
 SELECT (h).df_num, (h).f_statistic, (h).f_p_value
 FROM (SELECT lin_hyp([[0, 1, 0]],
-                     list_transform(m.coefficients, c -> c.estimate),
+                     list_transform(m.coefficients, lambda c: c.estimate),
                      m.cov, m.sigma * m.sigma, m.df_residual) AS h
       FROM (SELECT lm_fit(y, [x1, x2]) AS m FROM ds1));
 --   df_num  f_statistic  f_p_value
@@ -795,7 +795,7 @@ SELECT printf('%.4f', (u).estimate)  AS estimate,
        printf('%.4f', (u).lower_cl)  AS lower_cl,
        printf('%.4f', (u).upper_cl)  AS upper_cl
 FROM (SELECT unnest((emmeans([[1,0,0],[0,1,0],[0,0,1]],
-                     list_transform(m.coefficients, c -> c.estimate),
+                     list_transform(m.coefficients, lambda c: c.estimate),
                      m.cov, m.df_residual)).means) AS u
       FROM (SELECT lm_fit(y, [g1, g2, g3], 'const', false) AS m FROM ds1));
 --   estimate  std_error  lower_cl  upper_cl
@@ -808,7 +808,7 @@ SELECT (u).i, (u).j,
        printf('%.4f', (u).p_value)    AS p_value,
        printf('%.4f', (u).p_adjusted) AS p_adjusted
 FROM (SELECT unnest((emmeans([[1,0,0],[0,1,0],[0,0,1]],
-                     list_transform(m.coefficients, c -> c.estimate),
+                     list_transform(m.coefficients, lambda c: c.estimate),
                      m.cov, m.df_residual)).diffs) AS u
       FROM (SELECT lm_fit(y, [g1, g2, g3], 'const', false) AS m FROM ds1));
 --   i  j  estimate  p_value  p_adjusted
@@ -848,7 +848,7 @@ SELECT printf('%.4f', (e).means[1].estimate),
        printf('%.4f', (e).means[2].estimate),
        printf('%.4f', (e).means[3].estimate)
 FROM (SELECT emmeans([[1,0,0],[0,1,0],[0,0,1]],
-                     list_transform(g.coefficients, c -> c.estimate),
+                     list_transform(g.coefficients, lambda c: c.estimate),
                      g.cov, g.df_residual) AS e
       FROM (SELECT glm_fit(y, [g1, g2, g3], 'binomial', {'intercept': false}) AS g FROM ds_cells));
 --   -1.0986  0.0000  1.0986

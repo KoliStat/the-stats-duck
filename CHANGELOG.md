@@ -229,28 +229,43 @@ that name is preserved across releases for backward compatibility.
   hit on the current `windows-latest` image (duckdb/extension-ci-tools#371).
   The `duckdb/` submodule stays on v1.4.3 for the browser builds in `docs/`,
   because `@duckdb/duckdb-wasm` 1.32.0 and 1.33.0 both bundle v1.4.3.
-- **This release does not build against DuckDB v2.0, and that was
-  measured rather than assumed.** v2.0.0 went stable on 2026-10-21,
-  after this cycle's work was complete. Building this tree against it
-  fails in 30 of the `*_function.cpp` binding files. The numeric kernels
-  are untouched — `glm_core`, `glm_fit_core`, `lm_core`, `emmeans` and
-  `lin_hyp` all compile clean, which is what `docs/kernel_api.md`'s
-  DuckDB-free design was for. The causes are mechanical, and each has a
-  named replacement in the v2.0 headers:
-  `ListVector` and `StructVector` moved to `duckdb/common/vector/`;
-  `FlatVector::GetData` became const, with `GetDataMutable` for writes;
-  `ListVector::GetEntry` is deprecated in favour of `GetChild` and
-  `GetChildMutable`; table-function named arguments changed from
-  `named_parameter_map_t` to `named_argument_map_t`; the
-  `AggregateFunction` constructor now takes an `Identifier` first; and
-  `Function::EraseArgument` was removed outright.
-  `VISUALIZE`'s parser extension survives unchanged — `GetCallbackManager`
-  and `Register(ParserExtension)` keep their v1.5 signatures — so moving
-  to the new PEG grammar hooks is an upgrade this port does not require.
-  The port has to keep one tree building against v1.4.5 and v2.0 at once,
-  so it needs `__has_include` shims like the parser guard already uses.
-  That work, and the community registry's changed signing arrangement,
-  are tracked in #46. Use the 1.5.x or 1.4.x line with this release.
+- **The binding layer builds on DuckDB 2.0, and still on 1.4 and 1.5, from
+  one tree** (#46). v2.0.0 went stable on 2026-10-21. Building this tree
+  against it first failed in 30 of the `*_function.cpp` binding files; the
+  numeric kernels compiled clean, which is what `docs/kernel_api.md`'s
+  DuckDB-free design was for. `src/include/duckdb_compat.hpp` now detects
+  v2 with `__has_include`, the way `src/ggsql.cpp` already detects the 1.5
+  parser change, and carries every shim; thirty binding files route
+  through it. What v2.0 changed in shape: the aggregate bind callback
+  takes one input object (44 binds, behind a macro), aggregate Init
+  initializes a batch (20 Inits, behind a macro), and the parser
+  extension's parse callback receives tokens and must report how many it
+  consumed. `Function::EraseArgument` and the `ExecuteWithNulls` executors
+  were removed and are re-provided. The `VISUALIZE` parser registration
+  survives unchanged, which #46 had not expected. Five more differences
+  showed only when the test suite ran against 2.0, and each is handled: a
+  keyword-only table-function parameter without a default is required
+  there, so the named parameters of `read_stat`, `table_one`, `lm` and
+  `corr_matrix` carry a NULL default; a scalar function that throws while
+  executing must be marked fallible, so `adjust_p`, `lin_hyp` and
+  `emmeans` are; `row(...)` builds a TUPLE rather than an unnamed STRUCT,
+  which `glm_fit`'s options check accepts before rejecting it for having
+  no names; the arrow lambda `x -> ...` is a binder error under 2.0's
+  default setting, so the tests and the README use `lambda x: ...`, which
+  1.4 accepts as well; and the parse callback's token view has no
+  positions, so on 2.0 the layer SQL that `VISUALIZE` reports carries
+  conventional spacing rather than the user's. `extension_config.cmake`
+  opts into static linking on 2.0 (`duckdb_extension_statically_link`,
+  behind `if(COMMAND ...)`): without it 2.0 builds the extension loadable
+  and unlinked, and the test suite reports a pass with all 67 files
+  skipped. Verified on one tree with each stage's exit code recorded to a
+  file: v2.0.0 compiles clean and passes 2639 assertions in 67 test cases,
+  the same count as before the port on 1.x; v1.4.3 and v1.4.5 each compile clean and pass
+  that same count after the port. CI builds against
+  v2.0.0 with extension-ci-tools v2.0-cyanoptera as a third job, with
+  `windows_arm64` and `osx_amd64` opted in, which is what the community
+  registry builds by default since 2026-10-20. Engineering note:
+  `notes/engineering/2026-10-duckdb-v2-port.md`.
 
 ### Fixed
 
