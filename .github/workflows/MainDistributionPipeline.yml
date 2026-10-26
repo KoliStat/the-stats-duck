@@ -27,6 +27,21 @@ jobs:
       duckdb_version: v1.5.6
       ci_tools_version: v1.5.6
 
+  # The LTS line the community registry still builds (build_andium.yml pins
+  # DuckDB v1.4.5 with ci-tools v1.4-andium). v0.9 was verified against it by
+  # hand - clean build, 2639 SQL assertions - and this job keeps that true
+  # instead of leaving it a one-off measurement. Build only, no deploy: the
+  # registry produces the LTS binaries it serves, so ours would be redundant.
+  # artifact_postfix keeps these artifacts from colliding with the stable job's.
+  duckdb-lts-build:
+    name: Build against the LTS line (compatibility guard)
+    uses: duckdb/extension-ci-tools/.github/workflows/_extension_distribution.yml@v1.4-andium
+    with:
+      extension_name: stats_duck
+      duckdb_version: v1.4.5
+      ci_tools_version: v1.4-andium
+      artifact_postfix: -lts
+
   duckdb-stable-deploy:
     name: Deploy extension binaries
     needs: duckdb-stable-build
