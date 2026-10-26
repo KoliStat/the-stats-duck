@@ -213,6 +213,14 @@ that name is preserved across releases for backward compatibility.
   2639 and the 3269 C++ checks are verified on the v1.4.3 submodule pin that
   this repository builds against locally. Read the v1.5.6 line as checked
   for the release's earlier work, not re-checked for all of it.
+- **Verified against DuckDB v1.4.5, the LTS line, on the final release
+  tree.** Built from this commit against DuckDB at tag `v1.4.5`
+  (`f31be57c`, the pin the community registry's LTS channel uses) with
+  extension-ci-tools `v1.4-andium`, in a checkout kept outside this one.
+  Zero compile errors, and the full SQL suite passes: 2639 assertions in
+  67 test cases, `emmeans` and `glm_fit` included. No source change was
+  needed. Unlike the v1.5.6 line above, this one covers the whole
+  release.
 - CI: the distribution pipeline now builds against DuckDB v1.5.6 with
   extension-ci-tools v1.5.6 (up from v1.4.3). That matches the DuckDB stable
   the community registry builds against. The `windows_amd64` (MSVC) job is
@@ -221,13 +229,28 @@ that name is preserved across releases for backward compatibility.
   hit on the current `windows-latest` image (duckdb/extension-ci-tools#371).
   The `duckdb/` submodule stays on v1.4.3 for the browser builds in `docs/`,
   because `@duckdb/duckdb-wasm` 1.32.0 and 1.33.0 both bundle v1.4.3.
-- **This release targets the DuckDB 1.5.x line and has not been verified
-  against DuckDB v2.0.** v2.0.0 went stable on 2026-10-21, after this
-  cycle's work was complete. v2.0 needs more than a rebuild: the
-  `VISUALIZE` parser extension has to move to the PEG grammar hooks, the
-  extension has to be ported to the stable ABI, and the community
-  registry's signing arrangement changes. That work is tracked in #46.
-  Use the 1.5.x line with this release.
+- **This release does not build against DuckDB v2.0, and that was
+  measured rather than assumed.** v2.0.0 went stable on 2026-10-21,
+  after this cycle's work was complete. Building this tree against it
+  fails in 30 of the `*_function.cpp` binding files. The numeric kernels
+  are untouched — `glm_core`, `glm_fit_core`, `lm_core`, `emmeans` and
+  `lin_hyp` all compile clean, which is what `docs/kernel_api.md`'s
+  DuckDB-free design was for. The causes are mechanical, and each has a
+  named replacement in the v2.0 headers:
+  `ListVector` and `StructVector` moved to `duckdb/common/vector/`;
+  `FlatVector::GetData` became const, with `GetDataMutable` for writes;
+  `ListVector::GetEntry` is deprecated in favour of `GetChild` and
+  `GetChildMutable`; table-function named arguments changed from
+  `named_parameter_map_t` to `named_argument_map_t`; the
+  `AggregateFunction` constructor now takes an `Identifier` first; and
+  `Function::EraseArgument` was removed outright.
+  `VISUALIZE`'s parser extension survives unchanged — `GetCallbackManager`
+  and `Register(ParserExtension)` keep their v1.5 signatures — so moving
+  to the new PEG grammar hooks is an upgrade this port does not require.
+  The port has to keep one tree building against v1.4.5 and v2.0 at once,
+  so it needs `__has_include` shims like the parser guard already uses.
+  That work, and the community registry's changed signing arrangement,
+  are tracked in #46. Use the 1.5.x or 1.4.x line with this release.
 
 ### Fixed
 
