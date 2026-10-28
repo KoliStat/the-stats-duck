@@ -91,6 +91,17 @@ async function q(conn, sql, label, ms = 30000) {
     ['lm_fit-hc1', `SELECT (lm_fit(body_mass_g, [bill_length_mm], 'HC1')).k AS k FROM penguins`],
     ['lm_fit-cluster-cr1', `SELECT (lm_fit(body_mass_g, [bill_length_mm], 'CR1', species)).n_clusters AS g FROM penguins`],
     ['lm_fit-cluster-unnest', `SELECT count(*) AS n FROM (SELECT unnest((lm_fit(body_mass_g, [bill_length_mm], 'CR1', species)).coefficients) FROM penguins)`],
+    // 0.9 additions: glm_fit (IRLS on glm_core), emmeans and lin_hyp (kernels over
+    // linalg), ptukey/qtukey (the studentized range), adjust_p's BY method, and
+    // lm_summary. Each is a new code path that only a run inside duckdb-wasm can
+    // prove free of unexported libc++ imports.
+    ['glm_fit-binomial', `SELECT (glm_fit(CASE WHEN body_mass_g > 3800 THEN 1.0 ELSE 0.0 END, [bill_length_mm], 'binomial')).converged AS c FROM penguins`],
+    ['glm_fit-gaussian', `SELECT (glm_fit(body_mass_g, [bill_length_mm])).n AS n FROM penguins`],
+    ['ptukey-qtukey', `SELECT ptukey(3.5, 3, 20) AS p, qtukey(0.95, 3, 20) AS q`],
+    ['emmeans', `SELECT emmeans([[1, 0, 0], [0, 1, 0], [0, 0, 1]], [2.0, 6.0, 6.0], [0.8889,0,0, 0,0.8889,0, 0,0,0.8889], 6.0)::VARCHAR AS e`],
+    ['lin_hyp', `SELECT lin_hyp([[0, 1, -1]], [10.0, 2.0, -1.0], [4.3,-0.14,-0.52, -0.14,0.017,0.0023, -0.52,0.0023,0.101], 7.46, 9.0)::VARCHAR AS h`],
+    ['adjust_p-BY', `SELECT adjust_p([0.01, 0.04, 0.20], 'BY') AS a`],
+    ['lm_summary-tablefn', `SELECT count(*) AS n FROM lm_summary('penguins', y := 'body_mass_g', x := ['bill_length_mm'])`],
   ];
   const results = [];
   for (const [name, sql] of probes) {
