@@ -218,6 +218,13 @@ SELECT lin_hyp([[0, 1]], [1.0, 2.0], [1.0,0,0,1.0], 1.0, 0.0)
 ----
 df must be positive
 
+# An infinite df. The sign test alone lets +Inf through, and the t and F
+# CDFs would then compute Inf/Inf = NaN: NULL p-values with no error.
+statement error
+SELECT lin_hyp([[0, 1]], [1.0, 2.0], [1.0,0,0,1.0], 1.0, 'inf'::DOUBLE)
+----
+df must be positive
+
 # A NULL row inside L — not a NULL element inside a row, but the row itself
 # missing. A NULL row carries no width, so it cannot be read as k NaNs
 # without inventing k: it is a malformed matrix, not a missing value, so it

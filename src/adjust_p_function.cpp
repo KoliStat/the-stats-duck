@@ -121,7 +121,7 @@ void RegisterAdjustP(ExtensionLoader &loader) {
 	compat::SetFallible(fn);
 	statsduck::RegisterDocumented(loader, std::move(fn),
 	                              "Multiple-testing correction over a list of p-values "
-	                              "(bonferroni, holm, hochberg, or BH/fdr).",
+	                              "(bonferroni, holm, hochberg, BH/fdr, BY, or none).",
 	                              {"pvals", "method"}, "SELECT adjust_p([0.01, 0.04, 0.20], 'holm')");
 }
 

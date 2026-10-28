@@ -915,3 +915,13 @@ FROM (SELECT glm_fit(y, [x1], 'poisson',
                      {'offset': CASE WHEN x1 > 5 THEN 'inf'::DOUBLE ELSE 0.0 END}) AS g FROM ds);
 ----
 5
+
+# A non-finite weight is dropped the same way. Only the sign of a weight is
+# checked at this layer: a negative weight is kept so the kernel fails the
+# group (tested above), a NaN or infinite one is missing data.
+query I
+SELECT (g).n
+FROM (SELECT glm_fit(y, [x1], 'poisson',
+                     {'weights': CASE WHEN x1 > 5 THEN 'inf'::DOUBLE ELSE 1.0 END}) AS g FROM ds);
+----
+5

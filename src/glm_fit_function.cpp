@@ -532,7 +532,10 @@ static void GlmFitUpdate(Vector inputs[], AggregateInputData &aggr_input, idx_t,
 				// dropped like a NULL and is absent from n. Counting it would
 				// inflate df_residual and deflate the dispersion. A NEGATIVE
 				// weight is bad data, not missing data: it is kept so the
-				// kernel fails the group.
+				// kernel fails the group. A NaN or infinite weight is missing
+				// data at this layer, as a NaN or infinite response or offset
+				// is; the kernel's own finiteness check serves callers that do
+				// not come through here.
 				if (!std::isfinite(wv) || wv == 0.0) {
 					continue;
 				}

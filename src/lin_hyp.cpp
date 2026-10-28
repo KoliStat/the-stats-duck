@@ -42,8 +42,11 @@ LinHypResult lin_hyp(const linalg::Mat &L, const std::vector<double> &beta, cons
 		            std::to_string(k) + ", got " + std::to_string(V.rows) + "×" +
 		            std::to_string(V.cols));
 	}
-	if (!(df > 0.0)) {
-		return Fail("lin_hyp: df must be positive");
+	// The sign test alone lets +Inf through, and the t and F CDFs then compute
+	// Inf/Inf = NaN: every p-value would come back NaN with ok still true.
+	// emmeans makes the same check.
+	if (!(df > 0.0) || !std::isfinite(df)) {
+		return Fail("lin_hyp: df must be positive and finite");
 	}
 	if (!std::isfinite(sigma2) || sigma2 < 0.0) {
 		return Fail("lin_hyp: sigma2 must be finite and not negative");

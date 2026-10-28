@@ -421,6 +421,15 @@ static void test_errors() {
 	// df must be positive.
 	CHECK(!lin_hyp(mat(1, 3, {0, 1, 0}), kBeta, kCov, kSigma2, 0.0).ok);
 	CHECK(!lin_hyp(mat(1, 3, {0, 1, 0}), kBeta, kCov, kSigma2, -1.0).ok);
+	// A df of +Inf passes the sign test alone; the t and F CDFs would then
+	// compute Inf/Inf = NaN and every p-value would come back NaN with ok
+	// still true. emmeans rejects the same input, so lin_hyp does too.
+	CHECK(!lin_hyp(mat(1, 3, {0, 1, 0}), kBeta, kCov, kSigma2,
+	               std::numeric_limits<double>::infinity())
+	           .ok);
+	CHECK(!lin_hyp(mat(1, 3, {0, 1, 0}), kBeta, kCov, kSigma2,
+	               std::numeric_limits<double>::quiet_NaN())
+	           .ok);
 	// sigma2 must be finite and non-negative.
 	CHECK(!lin_hyp(mat(1, 3, {0, 1, 0}), kBeta, kCov, -1.0, kDf).ok);
 	CHECK(!lin_hyp(mat(1, 3, {0, 1, 0}), kBeta, kCov,
