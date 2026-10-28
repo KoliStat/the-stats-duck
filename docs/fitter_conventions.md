@@ -1,0 +1,270 @@
+# Fitter conventions: the model-fitting API standard
+
+Every SQL-facing model-fitting function in `stats_duck` follows the
+conventions on this page. Today that is `lm_fit`, `lin_hyp` (#20),
+`emmeans` (#21), and `glm_fit` (#22). Next come the fitters in downstream
+sibling repos. The conventions exist for two reasons. A new fitter can be
+designed by following them step by step. And a user who has learned one
+fitter can predict how the others behave.
+
+[`kernel_api.md`](kernel_api.md) covers the DuckDB-free C++ kernel
+underneath. This page covers the SQL surface and the numeric and
+validation rules that apply across fitters.
+
+The functions that predate this standard (the hypothesis-test aggregates,
+`summary_stats`, the `lm` table functions) deviate in places. The appendix
+at the end records each deviation. New fitters follow this page without
+exception.
+
+## Input conventions
+
+- **One row is one observation.** Fitters are aggregates, so `GROUP BY`
+  gives one fit per group. Post-fit helpers such as `lin_hyp` and `emmeans`
+  are scalar functions over a fit's outputs instead.
+- **The design row is a `LIST(DOUBLE)` of predictor values.** An aggregate
+  sees values, not column names, so coefficients are positional. Terms are
+  labelled `x1` … `xk` in list order, with `(Intercept)` first when
+  `add_intercept` is true (the default). Callers pass predictors without a
+  constant column.
+- **A matrix argument goes flat or nested, depending on who builds it.** A
+  machine-produced matrix goes flat and row-major: a plain `LIST(DOUBLE)`
+  with its dimension inferred from its length (k² for a k×k covariance).
+  `cov` is the example; `lm_fit` assembles it that way. A matrix a human
+  writes into a query goes nested instead, as `LIST(LIST(DOUBLE))`.
+  `lin_hyp`'s and `emmeans`'s `L` are the examples there. Readability is the
+  reason: `[[0,1,0],[0,0,1]]` reads as a matrix, while the same four numbers
+  flattened have to be chunked by eye to see where one row ends and the
+  next begins. Break the rule for a matrix argument evaluated once per data
+  row, or one large enough for offsets to matter. Neither case has come up
+  yet.
+- **Per-row key columns (cluster, subject, strata) are `VARCHAR`
+  arguments.** DuckDB does not cast integers to `VARCHAR` in this position
+  on its own, so callers write `id::VARCHAR` (`test/sql/lm_fit_agg.test`
+  does). Keys are opaque labels. A fitter must not depend on their order
+  or density.
+- **Optional behavior arrives as trailing arguments or new overloads.** An
+  existing position never changes meaning. Before adding an overload, check
+  the full positional matrix for ambiguity. WLS (Increment B, #19) is
+  deferred for exactly this reason: a weight column and a cluster column
+  must not land in the same position.
+- **Once the optional inputs outgrow what position can disambiguate, they
+  go in one trailing STRUCT instead.** This is the rule the bullet above
+  runs into: position can tell apart a handful of options, but it cannot
+  tell apart two options of the same type that both vary per row, such as a
+  weight column and an offset column. The struct's fields are read by
+  name, never by position, so `{'link': 'probit', 'vcov': 'HC1'}` and
+  `{'vcov': 'HC1', 'link': 'probit'}` must give the same fit. An
+  unrecognized field name is a bind error that lists the valid names, so a
+  typo cannot silently fall back to a default. `glm_fit` (#22) is the first
+  fitter built this way: it has six optional inputs against `lm_fit`'s
+  three, and two of them, `weights` and `offset`, are both per-row
+  `DOUBLE` columns that no position could ever tell apart. `lm_fit` itself
+  keeps its positional overloads rather than being converted, because a
+  released position never changes meaning; a struct overload could still
+  be added to it later, alongside the positional ones rather than instead
+  of them.
+- **Missing data: listwise drop.** A row leaves the fit when the response,
+  any element of the design row, or the key column is NULL, NaN, or
+  infinite (the complete-case loop in `src/lm_fit_function.cpp`). A design
+  row whose length differs from the first one seen marks the whole group
+  as failed. A group where too few rows survive is a failed fit, which is
+  a NULL result, not an error.
+
+## The return STRUCT
+
+- **One STRUCT per fit.** Never parallel columns. Never several return
+  variants for the same fitter.
+- **Field order is part of the contract, and it is append-only.** Finalize
+  writes the children by index. The type function carries the comment
+  `// Field order MUST match the writes in Finalize` with an index comment
+  per field (`LmFitResultType` in `src/lm_fit_function.cpp`). A released
+  field never moves or disappears. New fields are appended.
+- **NaN becomes SQL NULL at the vector layer** (the `SetD` helper in
+  `src/lm_fit_function.cpp`). ±Inf passes through unchanged, so
+  `loglik = +inf` at zero RSS stays representable.
+- **Failure is a value.**
+  - A *data-shaped* failure (too few rows, a degenerate design, fewer than
+    two clusters) makes the group's STRUCT NULL. It never raises an
+    exception.
+  - *Misuse* (an unknown `vcov` name, a non-constant option flag) is a
+    bind-time error. The query fails before it runs.
+  - *Iterative* fitters (`glm_fit` and later) also expose
+    `converged BOOLEAN` and `iterations BIGINT`. They return the best
+    iterate with `converged = false` instead of NULL. This mirrors
+    `optimize::Result` in the kernel, which reports `converged = false`
+    with its best point rather than failing.
+- **Covariance is a flat row-major `LIST<DOUBLE>`** of length k², with
+  `cov[i*k + j] = cov(βᵢ, βⱼ)`, in `coefficients` order. Every entry
+  involving an aliased term is NaN, and so NULL.
+- **Degrees of freedom follow the estimated rank.** A fitter reports
+  `rank`, and every df formula uses it: σ², adjusted R², the HC and CR
+  small-sample factors, and the t reference. `df_residual = n − rank` is a
+  property of the fit. A t-referenced fitter's cluster-robust inference
+  uses a `t(G−1)` reference, and it does not change `df_residual`.
+  statsmodels does the same without saying so; this page says so. A
+  z-referenced fitter has no t reference to switch to, so it keeps its
+  normal reference under cluster-robust covariance too; a caller who wants
+  the `G − 1` reference reads `n_clusters` directly. `glm_fit`'s row in the
+  audit table below is the example.
+- **A rank-deficient design is a fit, not a failure.** Dependent columns
+  are dropped left to right, so the earlier column of a dependent set is
+  kept and the later one is aliased: NULL estimate, standard error, t and
+  p, and NULL covariance entries, while the term keeps its name. This is
+  R's convention, not the minimum-norm one — statsmodels spreads the
+  coefficient across the dependent set instead, so it cannot oracle a
+  dropped fit directly. Oracle the reduced design instead.
+- **p-values and confidence intervals come from the in-repo distribution
+  kernels** (`src/include/distributions.hpp`). There is never a second CDF
+  implementation.
+- **Statistic naming.** A t-referenced fitter names the column
+  `t_statistic`. A z-referenced fitter names it `z_statistic`. A fitter
+  STRUCT never has a bare `statistic` field.
+
+### Worked example: `lm_fit`, the template
+
+Fields 0–14 are shipped; 12–14 landed with lm_fit Increment A (#34, #35).
+
+| # | Field | Type | Notes |
+|---|-------|------|-------|
+| 0 | `coefficients` | `LIST<STRUCT(term VARCHAR, estimate, std_error, t_statistic, p_value DOUBLE)>` | positional terms, `(Intercept)` first |
+| 1 | `n` | `BIGINT` | rows used, after the listwise drop |
+| 2 | `k` | `BIGINT` | design columns, intercept included |
+| 3 | `df_residual` | `BIGINT` | `n − rank` |
+| 4 | `r_squared` | `DOUBLE` | |
+| 5 | `adj_r_squared` | `DOUBLE` | |
+| 6 | `sigma` | `DOUBLE` | residual standard error |
+| 7 | `f_statistic` | `DOUBLE` | classical, not robustified |
+| 8 | `f_p_value` | `DOUBLE` | |
+| 9 | `has_intercept` | `BOOLEAN` | |
+| 10 | `vcov_type` | `VARCHAR` | the canonical estimator name, echoed back |
+| 11 | `n_clusters` | `BIGINT` | NULL unless CR0/CR1 |
+| 12 | `rank` | `BIGINT` | parameters actually estimated; below `k` when dependent columns were dropped |
+| 13 | `loglik` | `DOUBLE` | Gaussian MLE value; `+inf` at RSS = 0 |
+| 14 | `cov` | `LIST<DOUBLE>` | row-major k², in `coefficients` order; the diagonal is `std_error²`; NULL wherever an aliased term is involved |
+
+## Numeric and portability discipline
+
+- **Deterministic by construction, on a given platform.** A fitter never
+  draws random numbers and never sums in an order that depends on a hash
+  table, so identical inputs give identical results on every run of the
+  same build. That is not the same promise as bit-identical results
+  *across* platforms. Fixed loop orders, fixed node and iteration counts
+  where a choice exists to fix, and a fixed summation order mean the
+  algorithm itself contributes no platform dependence of its own, but
+  `std::erfc`, `std::exp`, `std::pow`, `std::cos` and similar calls are
+  not bit-identical across libm implementations, and the wasm build uses
+  a different one from the desktop build. Anything that calls them can
+  differ in the last few bits between platforms, through no choice the
+  algorithm makes. Randomness exists only in the sampling functions. The
+  `r*` scalars draw from a per-thread generator seeded from
+  `std::random_device` and are registered `VOLATILE`
+  (`src/random_sampling_function.cpp`). `bootstrap` takes an optional seed
+  argument for reproducible runs.
+- **The wasm string-hash pitfall.** Never put a default-hash
+  `std::string`-keyed `std::unordered_map` or `unordered_set` in extension
+  code. It pulls in a libc++ symbol (`std::__hash_memory`) that duckdb-wasm
+  does not export, and the extension then fails at load time in the
+  browser. Use `PortableStringHash` (`src/include/portable_string_hash.hpp`),
+  as `anova_oneway`, `chisq_*`, and the ReadStat type tables do. Or avoid
+  hashing: the `lm_fit` cluster path groups keys by sorting
+  (`DensifyClusters` in `src/lm_fit_function.cpp`).
+  `scripts/check-wasm-string-hash.sh` enforces the rule in CI.
+- **Buffer rows when the estimator needs them.** Leverage-based (HC2, HC3)
+  and score-based (CR*, REML-style) estimators do not reduce to a fixed set
+  of streaming moments. The aggregate state buffers the raw rows and does
+  the math in Finalize. Do not reshape the math to force a streaming form.
+- **The math lives behind the kernel boundary.** Fitting numerics go in a
+  DuckDB-free core translation unit (`src/lm_core.cpp` is the pattern), as
+  described in [`kernel_api.md`](kernel_api.md). The `*_function.cpp` file
+  only binds arguments, buffers rows, and writes vectors.
+
+## Validation discipline
+
+- **The oracle runs offline; the goldens are committed.** Reference values
+  come from statsmodels through a generator script
+  (`test/cpp/gen_lm_fit_fixtures.py` is the pattern) run in a throwaway
+  virtualenv. The oracle is never a build or CI dependency. The generator
+  states its own conventions, and any deliberate difference from the
+  oracle is written down next to the affected golden.
+- **A tolerance band carries a written reason.** A loose band is a finding
+  to explain, not a default to accept. `test/cpp/test_lm_fit.cpp` names
+  its bands in one place (1e-6 for coefficients, standard errors, σ and
+  R²; 1e-3 for the F statistic; 1e-2 relative for p-values) but does not
+  yet say why the F and p bands are looser. New fitters must say why.
+- **A claim about evidence names its evidence.** Any sentence of the form
+  "matches the oracle", "documented elsewhere", "validated against X", or
+  "with N exceptions" must name the file and symbol a reader can check, and
+  must name each exception at its own site as well as in the count. A claim
+  that was not actually run is not written down.
+- **Where a count and a list disagree, the list wins — so do not write the
+  count.** "The exceptions are A, B and C, each marked at its own site" is
+  checkable and cannot fall out of date on its own. "With three exceptions"
+  above a list of four is a defect that exists only because the count was
+  written. The `test/sql/glm_fit.test` header had it twice over: first a
+  list of three where the file held four, then, after commit `22ea3b2`
+  corrected the list and the count beside it, a second count two lines
+  above that still read three. The header now carries the list and no
+  count at all.
+- **Two test layers, both required.** Standalone C++ goldens
+  (`scripts/run-cpp-tests.sh`, no DuckDB) cover the kernel and core math.
+  sqllogictest files (`test/sql/*.test`) cover the SQL surface, with float
+  output through `printf('%.4f', …)` so results are deterministic text.
+- **New-fitter checklist.** Generator script and fixtures header → failing
+  C++ goldens, including the failure-as-value cases → core implementation
+  → SQL tests → README function-table row → cross-links here and in
+  `kernel_api.md` → CHANGELOG entry.
+
+## Appendix: audit of the existing surface (2026-10)
+
+The standard above binds new fitters. Most functions below predate it;
+`glm_fit` (#22) does not — it was designed to this standard from the
+start — and appears anyway for the one deviation worth a reader's
+attention. A deviation is grandfathered when fixing it would rename or
+retype a released field, or change a documented result. A deviation that
+would surprise a consumer writing generic code across functions has a
+follow-up issue in the last column.
+
+Audited on 2026-10-01 from the sources in `src/`. Readers, writers,
+`VISUALIZE`, `table_one`, `meta`, `corr_matrix`, and the list- or
+scalar-returning helpers (`bootstrap`, `bin_edges`, `adjust_p`,
+`poibin_cdf`) are out of scope: they return rows or plain values, not a
+result STRUCT.
+
+| Function | Result | NaN → NULL | Missing data | Data-shaped failure | Deviations and follow-ups |
+|---|---|---|---|---|---|
+| `lm_fit` | STRUCT (the template) | yes, `SetD` | listwise drop: NULL, NaN, Inf; a ragged design row fails the group | NULL group; misuse is a bind error | none; it defines the standard |
+| `glm_fit` | STRUCT | yes, `SetD` | listwise drop: NULL, NaN, Inf; a zero prior weight too; a ragged design row fails the group | NULL group; misuse is a bind error | `z_statistic` stays normal-referenced for all four families, including under CR0/CR1 — the rule above already allows this for a z-referenced fitter, but it differs from `lm_fit`'s t(G−1) cluster-robust reference, so a caller wanting `G − 1` reads `n_clusters` instead (`src/include/glm_core.hpp:570-576`) |
+| `lm`, `lm_summary` | table-function rows | NaN yes, ±Inf no (`SetDoubleOrNull`) | complete-case `WHERE … IS NOT NULL` filter | raises `InvalidInputException` for `n ≤ k` or a singular `X'X` | failure is an error, not a value; the re-host on `lm_core` (#45) decides the replacement |
+| `ttest_1samp`, `ttest_paired` | STRUCT | no | NULL and NaN skipped (paired: either side drops the pair) | `n < 2` → NULL; zero variance → ±Inf or NaN fields | NaN inputs fixed in #52; NaN outputs #53 |
+| `ttest_2samp` | STRUCT | no | the two samples accumulate independently; each skips its own NULL and NaN | either `n < 2` → NULL; Welch `df` is NaN when both variances are 0 | NaN inputs fixed in #52; NaN outputs #53 |
+| `mann_whitney_u` | STRUCT | no | samples independent; each skips its own NULL and NaN | either `n < 2` → NULL; all ties → `z = 0`, `p = 1` | NaN inputs fixed in #52; the all-ties value is grandfathered |
+| `wilcoxon_signed_rank` | STRUCT | no | pair dropped when either side is NULL or NaN; zero differences dropped | fewer than 2 non-zero differences → NULL; tied ranks → `z = 0` | NaN inputs fixed in #52; the tie value is grandfathered |
+| `sign_test_1samp`, `sign_test_paired` | STRUCT | not needed (`p` is always finite) | NULL and NaN skipped; paired drops the pair | no signed difference (`n_pos + n_neg < 1`) → NULL | none |
+| `pearson_test`, `spearman_test` | STRUCT | no | pair dropped when either side is NULL or NaN | `n < 3` or zero variance → NULL; at `n = 3` the CI fields are NaN; `t_statistic` is ±Inf at `\|r\| = 1` | CI NaN #53; ±Inf passes through under the standard |
+| `kendall_test` | STRUCT | no | as Pearson | `n < 3` or a zero denominator → NULL; degenerate variance → `z = 0`, `p = 1` | grandfathered |
+| `anova_oneway` | STRUCT | no | row dropped when the value or the group is NULL, or the value is NaN | fewer than 2 groups, or `n − k ≤ 0` → NULL; zero within-group variance → `f = +Inf`, `p = 0` | sums in hash-table order #54 |
+| `chisq_independence`, `chisq_goodness_of_fit` | STRUCT | no NaN path (VARCHAR inputs) | row dropped when a label is NULL | empty table, `1 × N`, or fewer than 2 categories → NULL | sums in hash-table order #54 |
+| `jarque_bera` | STRUCT | not needed | NULL and NaN skipped | `n < 4` or zero variance → NULL | none |
+| `shapiro_wilk` | STRUCT | clamps `w` and `p` into [0, 1] | NULL and NaN skipped | `n < 3` or `n > 5000` → NULL; all-equal input → `w = 1`, `p = 1` | all-equal input differs from Anderson–Darling and KS, which return NULL; grandfathered |
+| `anderson_darling` | STRUCT | clamps `p` | NULL and NaN skipped | `n < 8` or zero variance → NULL | none |
+| `ks_test_1samp` | STRUCT | clamps `p` | NULL and NaN skipped | `n < 3` or zero variance → NULL | none |
+| `ks_test_2samp` | STRUCT | clamps `p` | the two samples accumulate independently | an empty sample → NULL | none |
+| `summary_stats` | STRUCT | no, by design | NULL and NaN are counted in `n_missing` | empty input → NULL; `n = 1` → `sd = 0` | NaN for `mode`, `skewness`, and `kurtosis` is the documented SAS "Mode ." convention; grandfathered |
+
+Observations across the surface:
+
+- No aggregate raises an exception for a data-shaped failure. Every one
+  returns a NULL STRUCT, which is what the standard asks. Only the `lm`
+  table functions raise.
+- Statistic naming already follows the standard: `t_statistic`,
+  `z_statistic`, `u_statistic`, `w_statistic`, `m_statistic`,
+  `f_statistic`, `chi_square`. No function has a bare `statistic` field.
+- Two-sample tests accumulate their two columns independently
+  (`ttest_2samp`, `mann_whitney_u`, `ks_test_2samp`). That is correct for
+  two independent samples. The listwise rule applies to one observation
+  per row.
+- Bind-time errors use `BinderException` in most files and
+  `InvalidInputException` in `src/ttest_agg_function.cpp`. A caller sees
+  an error either way. New fitters use `BinderException`.
+- `src/ttest_function.cpp` holds table-function t-tests that are compiled
+  but never registered (#55).

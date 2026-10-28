@@ -80,7 +80,7 @@ winpath() {
 
 # Run count(*) once via .timer/.mode list; echo "ROWS REAL_SECONDS".
 # .mode list + .headers off makes the result a bare integer we can grep.
-# tr -d '\r' strips the CLI's CRLF line endings so the integer match is robust.
+# tr -d '\r' strips the CLI's CRLF line endings so the integer match does not break.
 # A read failure (unsupported/corrupt file) yields rows=ERR rather than a count.
 measure() {
   local f="$1" out rows t wf

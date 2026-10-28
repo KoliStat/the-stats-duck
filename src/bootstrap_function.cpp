@@ -1,6 +1,7 @@
 #include "bootstrap_function.hpp"
+#include "register_documented.hpp"
 
-#include "duckdb/common/types/vector.hpp"
+#include "duckdb_compat.hpp"
 #include "duckdb/execution/expression_executor.hpp"
 #include "duckdb/function/aggregate_function.hpp"
 #include "duckdb/function/function_set.hpp"
@@ -15,6 +16,8 @@
 #include <vector>
 
 namespace duckdb {
+
+namespace compat = statsduck::compat;
 
 namespace {
 
@@ -75,7 +78,7 @@ struct BootstrapBindData : public FunctionData {
 //! statistic and n_iters are erased from the function signature so the
 //! aggregate runs as a single-input aggregate over the value column.
 static unique_ptr<FunctionData>
-BootstrapBindCommon(ClientContext &context, AggregateFunction &function,
+BootstrapBindCommon(ClientContext &context, compat::BindFunction &function,
                     vector<unique_ptr<Expression>> &arguments, bool has_seed) {
 	auto bd = make_uniq<BootstrapBindData>();
 	bd->has_seed = has_seed;
@@ -116,22 +119,18 @@ BootstrapBindCommon(ClientContext &context, AggregateFunction &function,
 	// Erase the constant args from highest to lowest index so positions remain
 	// valid as each erase shifts the tail down.
 	if (has_seed) {
-		Function::EraseArgument(function, arguments, 3);
+		compat::EraseArgument(function, arguments, 3);
 	}
-	Function::EraseArgument(function, arguments, 2);
-	Function::EraseArgument(function, arguments, 1);
+	compat::EraseArgument(function, arguments, 2);
+	compat::EraseArgument(function, arguments, 1);
 	return std::move(bd);
 }
 
-static unique_ptr<FunctionData>
-BootstrapBindNoSeed(ClientContext &context, AggregateFunction &function,
-                    vector<unique_ptr<Expression>> &arguments) {
+STATS_DUCK_AGGREGATE_BIND(BootstrapBindNoSeed) {
 	return BootstrapBindCommon(context, function, arguments, false);
 }
 
-static unique_ptr<FunctionData>
-BootstrapBindSeeded(ClientContext &context, AggregateFunction &function,
-                    vector<unique_ptr<Expression>> &arguments) {
+STATS_DUCK_AGGREGATE_BIND(BootstrapBindSeeded) {
 	return BootstrapBindCommon(context, function, arguments, true);
 }
 
@@ -143,7 +142,7 @@ struct BootstrapState {
 	std::vector<double> *values;
 };
 
-static void BootstrapInit(const AggregateFunction &, data_ptr_t state_p) {
+STATS_DUCK_AGGREGATE_INIT(BootstrapInit) {
 	auto &state = *reinterpret_cast<BootstrapState *>(state_p);
 	state.values = nullptr;
 }
@@ -297,11 +296,11 @@ static inline size_t BoundedIndex(std::mt19937_64 &rng, size_t n) {
 	return static_cast<size_t>(r % range);
 }
 
-static void BootstrapFinalize(Vector &state_vector, AggregateInputData &input_data, Vector &result,
+static void BootstrapFinalize(Vector &state_vector, compat::FinalizeInput &input_data, Vector &result,
                               idx_t count, idx_t offset) {
 	auto &bd = input_data.bind_data->Cast<BootstrapBindData>();
 	auto states = FlatVector::GetData<BootstrapState *>(state_vector);
-	auto list_entries = FlatVector::GetData<list_entry_t>(result);
+	auto list_entries = compat::WriteData<list_entry_t>(result);
 
 	// Pre-allocate the seed-derived RNG once; per-row we re-seed deterministically
 	// from (seed, row index) when a seed is supplied so each group in a GROUP BY
@@ -344,8 +343,8 @@ static void BootstrapFinalize(Vector &state_vector, AggregateInputData &input_da
 
 	idx_t child_anchor = ListVector::GetListSize(result);
 	ListVector::Reserve(result, child_anchor + total_new_elements);
-	auto &child = ListVector::GetEntry(result);
-	auto child_data = FlatVector::GetData<double>(child);
+	auto &child = compat::ListChild(result);
+	auto child_data = compat::WriteData<double>(child);
 	idx_t out_offset = child_anchor;
 	for (idx_t i = 0; i < count; i++) {
 		auto idx = i + offset;
@@ -381,7 +380,11 @@ void RegisterBootstrap(ExtensionLoader &loader) {
 	set.AddFunction(make_fn({LogicalType::DOUBLE, LogicalType::VARCHAR, LogicalType::BIGINT,
 	                         LogicalType::BIGINT},
 	                        BootstrapBindSeeded));
-	loader.RegisterFunction(set);
+	statsduck::RegisterDocumented(loader, std::move(set),
+	                              "With-replacement bootstrap of a statistic (mean, median, sum, stddev, "
+	                              "variance, min, max); returns a LIST of n_iters resampled values.",
+	                              {"x", "statistic", "n_iters", "seed"},
+	                              "SELECT bootstrap(revenue, 'mean', 1000, 42) FROM sales");
 }
 
 } // namespace duckdb

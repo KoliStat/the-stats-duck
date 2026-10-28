@@ -1,11 +1,15 @@
 #include "ttest_function.hpp"
+#include "register_documented.hpp"
 #include "ttest_compute.hpp"
 
 #include "duckdb/function/table_function.hpp"
+#include "duckdb_compat.hpp"
 #include "duckdb/main/extension/extension_loader.hpp"
 #include "duckdb/common/types/value.hpp"
 
 namespace duckdb {
+
+namespace compat = statsduck::compat;
 
 // ─── Bind data ──────────────────────────────────────────────────────────────
 
@@ -51,28 +55,36 @@ static vector<double> ExtractDoubleList(const Value &val) {
 	return result;
 }
 
-static double GetNamedDouble(const named_parameter_map_t &params, const string &name, double default_val) {
-	auto it = params.find(name);
+// Templated on the map type: the bind input hands over named_parameter_map_t on
+// the DuckDB 1.x line and named_argument_map_t on 2.0. Both expose find(),
+// end() and an iterator whose ->second is the Value, so one body serves both.
+// Inside the template that Value is a dependent name, so GetValue<T> needs the
+// template keyword; GCC rejects the call without it, MSVC does not.
+template <class MAP>
+static double GetNamedDouble(const MAP &params, const string &name, double default_val) {
+	auto it = params.find(compat::NamedKey(name));
 	if (it == params.end()) {
 		return default_val;
 	}
-	return it->second.GetValue<double>();
+	return it->second.template GetValue<double>();
 }
 
-static string GetNamedString(const named_parameter_map_t &params, const string &name, const string &default_val) {
-	auto it = params.find(name);
+template <class MAP>
+static string GetNamedString(const MAP &params, const string &name, const string &default_val) {
+	auto it = params.find(compat::NamedKey(name));
 	if (it == params.end()) {
 		return default_val;
 	}
 	return it->second.ToString();
 }
 
-static bool GetNamedBool(const named_parameter_map_t &params, const string &name, bool default_val) {
-	auto it = params.find(name);
+template <class MAP>
+static bool GetNamedBool(const MAP &params, const string &name, bool default_val) {
+	auto it = params.find(compat::NamedKey(name));
 	if (it == params.end()) {
 		return default_val;
 	}
-	return it->second.GetValue<bool>();
+	return it->second.template GetValue<bool>();
 }
 
 static void ValidateAlpha(double alpha) {
@@ -89,7 +101,7 @@ static void ValidateAlternative(const string &alt) {
 
 // ─── Output schema ──────────────────────────────────────────────────────────
 
-static void SetTTestOutputSchema(vector<LogicalType> &return_types, vector<string> &names) {
+static void SetTTestOutputSchema(vector<LogicalType> &return_types, compat::BindNames &names) {
 	names.emplace_back("test_type");
 	return_types.emplace_back(LogicalType::VARCHAR);
 
@@ -143,7 +155,7 @@ static void TTestExecute(ClientContext &context, TableFunctionInput &data, DataC
 // ─── One-sample t-test ──────────────────────────────────────────────────────
 
 static unique_ptr<FunctionData> TTest1SampBind(ClientContext &context, TableFunctionBindInput &input,
-                                               vector<LogicalType> &return_types, vector<string> &names) {
+                                               vector<LogicalType> &return_types, compat::BindNames &names) {
 	SetTTestOutputSchema(return_types, names);
 
 	auto sample = ExtractDoubleList(input.inputs[0]);
@@ -162,16 +174,20 @@ static unique_ptr<FunctionData> TTest1SampBind(ClientContext &context, TableFunc
 void RegisterTTest1Samp(ExtensionLoader &loader) {
 	TableFunction func("ttest_1samp", {LogicalType::LIST(LogicalType::DOUBLE)}, TTestExecute, TTest1SampBind,
 	                   TTestInitGlobal);
-	func.named_parameters["mu"] = LogicalType::DOUBLE;
-	func.named_parameters["alpha"] = LogicalType::DOUBLE;
-	func.named_parameters["alternative"] = LogicalType::VARCHAR;
-	loader.RegisterFunction(func);
+	compat::AddNamedParameter(func, "mu", LogicalType::DOUBLE);
+	compat::AddNamedParameter(func, "alpha", LogicalType::DOUBLE);
+	compat::AddNamedParameter(func, "alternative", LogicalType::VARCHAR);
+	statsduck::RegisterDocumented(loader, std::move(func),
+	                              "One-sample t-test over an array literal (table form of the "
+	                              "ttest_1samp aggregate).",
+	                              {"sample", "mu", "alpha", "alternative"},
+	                              "SELECT * FROM ttest_1samp([5.1, 4.9, 5.3], mu := 5.0)");
 }
 
 // ─── Two-sample t-test ──────────────────────────────────────────────────────
 
 static unique_ptr<FunctionData> TTest2SampBind(ClientContext &context, TableFunctionBindInput &input,
-                                               vector<LogicalType> &return_types, vector<string> &names) {
+                                               vector<LogicalType> &return_types, compat::BindNames &names) {
 	SetTTestOutputSchema(return_types, names);
 
 	auto sample1 = ExtractDoubleList(input.inputs[0]);
@@ -191,16 +207,20 @@ static unique_ptr<FunctionData> TTest2SampBind(ClientContext &context, TableFunc
 void RegisterTTest2Samp(ExtensionLoader &loader) {
 	TableFunction func("ttest_2samp", {LogicalType::LIST(LogicalType::DOUBLE), LogicalType::LIST(LogicalType::DOUBLE)},
 	                   TTestExecute, TTest2SampBind, TTestInitGlobal);
-	func.named_parameters["equal_var"] = LogicalType::BOOLEAN;
-	func.named_parameters["alpha"] = LogicalType::DOUBLE;
-	func.named_parameters["alternative"] = LogicalType::VARCHAR;
-	loader.RegisterFunction(func);
+	compat::AddNamedParameter(func, "equal_var", LogicalType::BOOLEAN);
+	compat::AddNamedParameter(func, "alpha", LogicalType::DOUBLE);
+	compat::AddNamedParameter(func, "alternative", LogicalType::VARCHAR);
+	statsduck::RegisterDocumented(loader, std::move(func),
+	                              "Two-sample t-test over two array literals (table form; Welch's by "
+	                              "default).",
+	                              {"sample1", "sample2", "equal_var", "alpha", "alternative"},
+	                              "SELECT * FROM ttest_2samp([1.0, 2.0, 3.0], [2.0, 3.0, 4.0])");
 }
 
 // ─── Paired t-test ──────────────────────────────────────────────────────────
 
 static unique_ptr<FunctionData> TTestPairedBind(ClientContext &context, TableFunctionBindInput &input,
-                                                vector<LogicalType> &return_types, vector<string> &names) {
+                                                vector<LogicalType> &return_types, compat::BindNames &names) {
 	SetTTestOutputSchema(return_types, names);
 
 	auto sample1 = ExtractDoubleList(input.inputs[0]);
@@ -220,9 +240,12 @@ void RegisterTTestPaired(ExtensionLoader &loader) {
 	TableFunction func("ttest_paired",
 	                   {LogicalType::LIST(LogicalType::DOUBLE), LogicalType::LIST(LogicalType::DOUBLE)}, TTestExecute,
 	                   TTestPairedBind, TTestInitGlobal);
-	func.named_parameters["alpha"] = LogicalType::DOUBLE;
-	func.named_parameters["alternative"] = LogicalType::VARCHAR;
-	loader.RegisterFunction(func);
+	compat::AddNamedParameter(func, "alpha", LogicalType::DOUBLE);
+	compat::AddNamedParameter(func, "alternative", LogicalType::VARCHAR);
+	statsduck::RegisterDocumented(loader, std::move(func),
+	                              "Paired t-test over two array literals (table form).",
+	                              {"sample1", "sample2", "alpha", "alternative"},
+	                              "SELECT * FROM ttest_paired([1.0, 2.0], [1.5, 2.5])");
 }
 
 } // namespace duckdb

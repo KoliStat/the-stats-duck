@@ -1,10 +1,11 @@
 #include "sign_test_function.hpp"
+#include "register_documented.hpp"
 #include "distributions.hpp"
 #include "stats_validation.hpp"
 
 #include "duckdb/function/aggregate_function.hpp"
 #include "duckdb/function/function_set.hpp"
-#include "duckdb/common/types/vector.hpp"
+#include "duckdb_compat.hpp"
 #include "duckdb/execution/expression_executor.hpp"
 #include "duckdb/main/extension/extension_loader.hpp"
 #include "duckdb/planner/expression.hpp"
@@ -13,6 +14,8 @@
 #include <cmath>
 
 namespace duckdb {
+
+namespace compat = statsduck::compat;
 
 namespace {
 
@@ -35,7 +38,7 @@ struct SignTestBindData : public FunctionData {
 	}
 };
 
-static double ExtractConstantDouble(ClientContext &context, AggregateFunction &function,
+static double ExtractConstantDouble(ClientContext &context, compat::BindFunction &function,
                                     vector<unique_ptr<Expression>> &arguments, idx_t arg_idx,
                                     const char *fn_name) {
 	if (!arguments[arg_idx]->IsFoldable()) {
@@ -43,11 +46,11 @@ static double ExtractConstantDouble(ClientContext &context, AggregateFunction &f
 	}
 	Value val = ExpressionExecutor::EvaluateScalar(context, *arguments[arg_idx]);
 	double result = val.GetValue<double>();
-	Function::EraseArgument(function, arguments, arg_idx);
+	compat::EraseArgument(function, arguments, arg_idx);
 	return result;
 }
 
-static std::string ExtractConstantString(ClientContext &context, AggregateFunction &function,
+static std::string ExtractConstantString(ClientContext &context, compat::BindFunction &function,
                                          vector<unique_ptr<Expression>> &arguments, idx_t arg_idx,
                                          const char *fn_name) {
 	if (!arguments[arg_idx]->IsFoldable()) {
@@ -55,25 +58,22 @@ static std::string ExtractConstantString(ClientContext &context, AggregateFuncti
 	}
 	Value val = ExpressionExecutor::EvaluateScalar(context, *arguments[arg_idx]);
 	std::string result = val.GetValue<std::string>();
-	Function::EraseArgument(function, arguments, arg_idx);
+	compat::EraseArgument(function, arguments, arg_idx);
 	return result;
 }
 
 // 1-sample binders
-static unique_ptr<FunctionData> Bind1Samp1(ClientContext &, AggregateFunction &,
-                                           vector<unique_ptr<Expression>> &) {
+STATS_DUCK_AGGREGATE_BIND(Bind1Samp1) {
 	return make_uniq<SignTestBindData>();
 }
 
-static unique_ptr<FunctionData> Bind1Samp2(ClientContext &context, AggregateFunction &function,
-                                           vector<unique_ptr<Expression>> &arguments) {
+STATS_DUCK_AGGREGATE_BIND(Bind1Samp2) {
 	auto bd = make_uniq<SignTestBindData>();
 	bd->mu = ExtractConstantDouble(context, function, arguments, 1, "sign_test_1samp");
 	return std::move(bd);
 }
 
-static unique_ptr<FunctionData> Bind1Samp3(ClientContext &context, AggregateFunction &function,
-                                           vector<unique_ptr<Expression>> &arguments) {
+STATS_DUCK_AGGREGATE_BIND(Bind1Samp3) {
 	auto bd = make_uniq<SignTestBindData>();
 	bd->alternative = ExtractConstantString(context, function, arguments, 2, "sign_test_1samp");
 	sdv::ValidateAlternative(bd->alternative, "sign_test_1samp");
@@ -82,13 +82,11 @@ static unique_ptr<FunctionData> Bind1Samp3(ClientContext &context, AggregateFunc
 }
 
 // paired binders
-static unique_ptr<FunctionData> BindPaired2(ClientContext &, AggregateFunction &,
-                                            vector<unique_ptr<Expression>> &) {
+STATS_DUCK_AGGREGATE_BIND(BindPaired2) {
 	return make_uniq<SignTestBindData>();
 }
 
-static unique_ptr<FunctionData> BindPaired3(ClientContext &context, AggregateFunction &function,
-                                            vector<unique_ptr<Expression>> &arguments) {
+STATS_DUCK_AGGREGATE_BIND(BindPaired3) {
 	auto bd = make_uniq<SignTestBindData>();
 	bd->alternative = ExtractConstantString(context, function, arguments, 2, "sign_test_paired");
 	sdv::ValidateAlternative(bd->alternative, "sign_test_paired");
@@ -118,7 +116,7 @@ struct SignTestState {
 	int64_t n_zero;
 };
 
-static void SignTestInit(const AggregateFunction &, data_ptr_t state_p) {
+STATS_DUCK_AGGREGATE_INIT(SignTestInit) {
 	auto &state = *reinterpret_cast<SignTestState *>(state_p);
 	state.n_pos = 0;
 	state.n_neg = 0;
@@ -245,7 +243,7 @@ static double SignTestPValue(int64_t n_pos, int64_t n_eff, const std::string &al
 // ── Finalize ───────────────────────────────────────────────────────────────
 
 template <const char *TEST_TYPE>
-static void SignTestFinalize(Vector &state_vector, AggregateInputData &aggr_input_data, Vector &result, idx_t count,
+static void SignTestFinalize(Vector &state_vector, compat::FinalizeInput &aggr_input_data, Vector &result, idx_t count,
                              idx_t offset) {
 	auto states = FlatVector::GetData<SignTestState *>(state_vector);
 	auto &children = StructVector::GetEntries(result);
@@ -270,14 +268,14 @@ static void SignTestFinalize(Vector &state_vector, AggregateInputData &aggr_inpu
 		double m = (static_cast<double>(state.n_pos) - static_cast<double>(state.n_neg)) / 2.0;
 		double p_value = SignTestPValue(state.n_pos, n_eff, alternative);
 
-		FlatVector::GetData<string_t>(*children[0])[idx] = StringVector::AddString(*children[0], TEST_TYPE);
-		FlatVector::GetData<double>(*children[1])[idx] = m;
-		FlatVector::GetData<int64_t>(*children[2])[idx] = state.n_pos;
-		FlatVector::GetData<int64_t>(*children[3])[idx] = state.n_neg;
-		FlatVector::GetData<int64_t>(*children[4])[idx] = state.n_zero;
-		FlatVector::GetData<double>(*children[5])[idx] = p_value;
-		FlatVector::GetData<string_t>(*children[6])[idx] = StringVector::AddString(*children[6], alternative);
-		FlatVector::GetData<int64_t>(*children[7])[idx] = n_total;
+		compat::WriteData<string_t>(compat::Deref(children[0]))[idx] = StringVector::AddString(compat::Deref(children[0]), TEST_TYPE);
+		compat::WriteData<double>(compat::Deref(children[1]))[idx] = m;
+		compat::WriteData<int64_t>(compat::Deref(children[2]))[idx] = state.n_pos;
+		compat::WriteData<int64_t>(compat::Deref(children[3]))[idx] = state.n_neg;
+		compat::WriteData<int64_t>(compat::Deref(children[4]))[idx] = state.n_zero;
+		compat::WriteData<double>(compat::Deref(children[5]))[idx] = p_value;
+		compat::WriteData<string_t>(compat::Deref(children[6]))[idx] = StringVector::AddString(compat::Deref(children[6]), alternative);
+		compat::WriteData<int64_t>(compat::Deref(children[7]))[idx] = n_total;
 	}
 }
 
@@ -306,13 +304,19 @@ void RegisterSignTest(ExtensionLoader &loader) {
 	one_samp.AddFunction(MakeSignTest1Samp({LogicalType::DOUBLE, LogicalType::DOUBLE}, Bind1Samp2));
 	one_samp.AddFunction(
 	    MakeSignTest1Samp({LogicalType::DOUBLE, LogicalType::DOUBLE, LogicalType::VARCHAR}, Bind1Samp3));
-	loader.RegisterFunction(one_samp);
+	statsduck::RegisterDocumented(loader, std::move(one_samp),
+	                              "Sign test of the median against a hypothesized value (default 0).",
+	                              {"column", "mu", "alternative"},
+	                              "SELECT sign_test_1samp(delta, 0.0) FROM changes");
 
 	AggregateFunctionSet paired("sign_test_paired");
 	paired.AddFunction(MakeSignTestPaired({LogicalType::DOUBLE, LogicalType::DOUBLE}, BindPaired2));
 	paired.AddFunction(
 	    MakeSignTestPaired({LogicalType::DOUBLE, LogicalType::DOUBLE, LogicalType::VARCHAR}, BindPaired3));
-	loader.RegisterFunction(paired);
+	statsduck::RegisterDocumented(loader, std::move(paired),
+	                              "Paired sign test on per-row differences.",
+	                              {"column1", "column2", "alternative"},
+	                              "SELECT sign_test_paired(before, after) FROM measurements");
 }
 
 } // namespace duckdb

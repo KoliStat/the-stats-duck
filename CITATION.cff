@@ -2,21 +2,20 @@ cff-version: 1.2.0
 message: "If you use The Stats Duck in academic work, please cite it as below."
 title: "The Stats Duck: A statistical computing toolkit for DuckDB"
 abstract: >-
-  The Stats Duck is an open-source DuckDB extension that brings statistical
-  computing — descriptive statistics, hypothesis tests, distribution
-  functions, grammar-of-graphics visualization (VISUALIZE), and first-class
-  readers and writers for SAS, SPSS, and Stata files — directly into SQL.
-  Computations are implemented as streaming aggregates and scalar functions
-  so they scale to billion-row datasets and also run in DuckDB-WASM in the
-  browser.
+  The Stats Duck is an open-source DuckDB extension that adds statistical
+  computing to SQL: descriptive statistics, hypothesis tests, distribution
+  functions, grammar-of-graphics visualization (VISUALIZE), and readers and
+  writers for SAS, SPSS, and Stata files. Computations are implemented as
+  streaming aggregates and scalar functions so they scale to billion-row
+  datasets and also run in DuckDB-WASM in the browser.
 type: software
 authors:
   - family-names: Meneghello
     given-names: Massimo
 repository-code: "https://github.com/KoliStat/the-stats-duck"
 url: "https://github.com/KoliStat/the-stats-duck"
-version: 0.8.0-nothing
-date-released: "2026-08-06"
+version: 0.9.0-here-s-your-nine-pence
+date-released: "2026-10-28"
 license: Apache-2.0
 keywords:
   - duckdb

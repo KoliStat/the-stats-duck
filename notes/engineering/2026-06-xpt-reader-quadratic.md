@@ -1,6 +1,6 @@
 # The XPT reader was O(N²): ReadStat's `row_offset` reads, it doesn't seek
 
-*June 2026, while making the `read_stat()` SAS / SPSS / Stata reader performant.*
+*June 2026, while making the `read_stat()` SAS / SPSS / Stata reader fast.*
 
 Reading a SAS Transport (`.xpt`) file with `read_stat()` was pathologically slow
 — not "needs tuning" slow, *quadratic* slow. A 200k-row, 7 MB synthetic file took

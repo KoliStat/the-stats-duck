@@ -1,8 +1,9 @@
 #include "summary_stats_function.hpp"
+#include "register_documented.hpp"
 
 #include "duckdb/function/aggregate_function.hpp"
 #include "duckdb/function/function_set.hpp"
-#include "duckdb/common/types/vector.hpp"
+#include "duckdb_compat.hpp"
 #include "duckdb/execution/expression_executor.hpp"
 #include "duckdb/main/extension/extension_loader.hpp"
 #include "duckdb/planner/expression.hpp"
@@ -12,6 +13,8 @@
 #include <vector>
 
 namespace duckdb {
+
+namespace compat = statsduck::compat;
 
 // summary_stats(column) — exact descriptive statistics.
 //
@@ -57,25 +60,22 @@ struct SummaryStatsBindData : public FunctionData {
 	}
 };
 
-static unique_ptr<FunctionData> SummaryStatsBindNoArg(ClientContext &, AggregateFunction &,
-                                                      vector<unique_ptr<Expression>> &) {
+STATS_DUCK_AGGREGATE_BIND(SummaryStatsBindNoArg) {
 	return make_uniq<SummaryStatsBindData>();
 }
 
-static unique_ptr<FunctionData> SummaryStatsBindBias(ClientContext &context, AggregateFunction &function,
-                                                     vector<unique_ptr<Expression>> &arguments) {
+STATS_DUCK_AGGREGATE_BIND(SummaryStatsBindBias) {
 	if (!arguments[1]->IsFoldable()) {
 		throw BinderException("summary_stats: bias_correction must be a constant boolean");
 	}
 	Value val = ExpressionExecutor::EvaluateScalar(context, *arguments[1]);
 	auto bd = make_uniq<SummaryStatsBindData>();
 	bd->bias_correction = val.GetValue<bool>();
-	Function::EraseArgument(function, arguments, 1);
+	compat::EraseArgument(function, arguments, 1);
 	return std::move(bd);
 }
 
-static unique_ptr<FunctionData> SummaryStatsBindBiasQuantile(ClientContext &context, AggregateFunction &function,
-                                                              vector<unique_ptr<Expression>> &arguments) {
+STATS_DUCK_AGGREGATE_BIND(SummaryStatsBindBiasQuantile) {
 	if (!arguments[1]->IsFoldable() || !arguments[2]->IsFoldable()) {
 		throw BinderException("summary_stats: bias_correction and quantile_type must be constants");
 	}
@@ -88,8 +88,8 @@ static unique_ptr<FunctionData> SummaryStatsBindBiasQuantile(ClientContext &cont
 		throw BinderException("summary_stats: quantile_type must be 5 (SAS) or 7 (R/Excel, default); got %d",
 		                      bd->quantile_type);
 	}
-	Function::EraseArgument(function, arguments, 2);
-	Function::EraseArgument(function, arguments, 1);
+	compat::EraseArgument(function, arguments, 2);
+	compat::EraseArgument(function, arguments, 1);
 	return std::move(bd);
 }
 
@@ -147,7 +147,7 @@ struct SummaryStatsState {
 	int64_t n_missing;
 };
 
-static void SummaryStatsInit(const AggregateFunction &, data_ptr_t state_p) {
+STATS_DUCK_AGGREGATE_INIT(SummaryStatsInit) {
 	auto &state = *reinterpret_cast<SummaryStatsState *>(state_p);
 	state.values = nullptr;
 	state.n_missing = 0;
@@ -205,7 +205,7 @@ static void SummaryStatsDestroy(Vector &state_vector, AggregateInputData &, idx_
 	}
 }
 
-static void SummaryStatsFinalize(Vector &state_vector, AggregateInputData &aggr_input_data, Vector &result,
+static void SummaryStatsFinalize(Vector &state_vector, compat::FinalizeInput &aggr_input_data, Vector &result,
                                  idx_t count, idx_t offset) {
 	auto states = FlatVector::GetData<SummaryStatsState *>(state_vector);
 	auto &children = StructVector::GetEntries(result);
@@ -325,22 +325,22 @@ static void SummaryStatsFinalize(Vector &state_vector, AggregateInputData &aggr_
 		bool is_multimodal = !all_distinct && n_modes_at_max > 1;
 
 		// Write out ──────────────────────────────────────────────────
-		FlatVector::GetData<int64_t>(*children[0])[idx] = static_cast<int64_t>(n);
-		FlatVector::GetData<int64_t>(*children[1])[idx] = state.n_missing;
-		FlatVector::GetData<double>(*children[2])[idx] = mean;
-		FlatVector::GetData<double>(*children[3])[idx] = sd;
-		FlatVector::GetData<double>(*children[4])[idx] = variance;
-		FlatVector::GetData<double>(*children[5])[idx] = vmin;
-		FlatVector::GetData<double>(*children[6])[idx] = q1;
-		FlatVector::GetData<double>(*children[7])[idx] = median;
-		FlatVector::GetData<double>(*children[8])[idx] = q3;
-		FlatVector::GetData<double>(*children[9])[idx] = vmax;
-		FlatVector::GetData<double>(*children[10])[idx] = iqr;
-		FlatVector::GetData<double>(*children[11])[idx] = skewness;
-		FlatVector::GetData<double>(*children[12])[idx] = kurtosis;
-		FlatVector::GetData<double>(*children[13])[idx] = mode_out;
-		FlatVector::GetData<int64_t>(*children[14])[idx] = mode_freq_out;
-		FlatVector::GetData<bool>(*children[15])[idx] = is_multimodal;
+		compat::WriteData<int64_t>(compat::Deref(children[0]))[idx] = static_cast<int64_t>(n);
+		compat::WriteData<int64_t>(compat::Deref(children[1]))[idx] = state.n_missing;
+		compat::WriteData<double>(compat::Deref(children[2]))[idx] = mean;
+		compat::WriteData<double>(compat::Deref(children[3]))[idx] = sd;
+		compat::WriteData<double>(compat::Deref(children[4]))[idx] = variance;
+		compat::WriteData<double>(compat::Deref(children[5]))[idx] = vmin;
+		compat::WriteData<double>(compat::Deref(children[6]))[idx] = q1;
+		compat::WriteData<double>(compat::Deref(children[7]))[idx] = median;
+		compat::WriteData<double>(compat::Deref(children[8]))[idx] = q3;
+		compat::WriteData<double>(compat::Deref(children[9]))[idx] = vmax;
+		compat::WriteData<double>(compat::Deref(children[10]))[idx] = iqr;
+		compat::WriteData<double>(compat::Deref(children[11]))[idx] = skewness;
+		compat::WriteData<double>(compat::Deref(children[12]))[idx] = kurtosis;
+		compat::WriteData<double>(compat::Deref(children[13]))[idx] = mode_out;
+		compat::WriteData<int64_t>(compat::Deref(children[14]))[idx] = mode_freq_out;
+		compat::WriteData<bool>(compat::Deref(children[15]))[idx] = is_multimodal;
 	}
 }
 
@@ -359,7 +359,11 @@ void RegisterSummaryStats(ExtensionLoader &loader) {
 	set.AddFunction(MakeSummaryStats({LogicalType::DOUBLE, LogicalType::BOOLEAN}, SummaryStatsBindBias));
 	set.AddFunction(MakeSummaryStats({LogicalType::DOUBLE, LogicalType::BOOLEAN, LogicalType::INTEGER},
 	                                  SummaryStatsBindBiasQuantile));
-	loader.RegisterFunction(set);
+	statsduck::RegisterDocumented(loader, std::move(set),
+	                              "Descriptive summary: n, missing, mean, sd, variance, quartiles, "
+	                              "skewness, kurtosis, mode.",
+	                              {"column", "bias_correction", "quantile_type"},
+	                              "SELECT summary_stats(age) FROM patients");
 }
 
 } // namespace duckdb

@@ -1,8 +1,9 @@
 #include "random_sampling_function.hpp"
+#include "register_documented.hpp"
 
 #include "distributions.hpp"
 
-#include "duckdb/common/types/vector.hpp"
+#include "duckdb_compat.hpp"
 #include "duckdb/function/function_set.hpp"
 #include "duckdb/function/scalar_function.hpp"
 #include "duckdb/main/extension/extension_loader.hpp"
@@ -12,6 +13,8 @@
 #include <random>
 
 namespace duckdb {
+
+namespace compat = statsduck::compat;
 
 namespace {
 
@@ -24,7 +27,7 @@ namespace {
 // NextUniform() and the per-row independence assumption holds. A future
 // iteration can add an explicit-seed override (e.g. a session-level
 // stats_duck_seed() helper) — today the RNG is non-reproducible by design,
-// matching the ergonomics of DuckDB's `random()`.
+// matching the behavior of DuckDB's `random()`.
 //===--------------------------------------------------------------------===//
 
 static std::mt19937_64 &TLSRng() {
@@ -91,8 +94,8 @@ template <typename Quantile>
 static inline void RunPerRow0(DataChunk &args, Vector &result, Quantile &&q) {
 	idx_t count = args.size();
 	result.SetVectorType(VectorType::FLAT_VECTOR);
-	auto out = FlatVector::GetData<double>(result);
-	auto &mask = FlatVector::Validity(result);
+	auto out = compat::WriteData<double>(result);
+	auto &mask = compat::WriteValidity(result);
 	for (idx_t i = 0; i < count; i++) {
 		out[i] = SafeSampleOne([&](double u) { return q(u); }, mask, i);
 	}
@@ -105,8 +108,8 @@ static inline void RunPerRow1(DataChunk &args, Vector &result, Quantile &&q) {
 	args.data[0].ToUnifiedFormat(count, a0);
 	auto v0 = UnifiedVectorFormat::GetData<double>(a0);
 	result.SetVectorType(VectorType::FLAT_VECTOR);
-	auto out = FlatVector::GetData<double>(result);
-	auto &mask = FlatVector::Validity(result);
+	auto out = compat::WriteData<double>(result);
+	auto &mask = compat::WriteValidity(result);
 	for (idx_t i = 0; i < count; i++) {
 		auto i0 = a0.sel->get_index(i);
 		if (!a0.validity.RowIsValid(i0)) {
@@ -129,8 +132,8 @@ static inline void RunPerRow2(DataChunk &args, Vector &result, Quantile &&q) {
 	auto v0 = UnifiedVectorFormat::GetData<double>(a0);
 	auto v1 = UnifiedVectorFormat::GetData<double>(a1);
 	result.SetVectorType(VectorType::FLAT_VECTOR);
-	auto out = FlatVector::GetData<double>(result);
-	auto &mask = FlatVector::Validity(result);
+	auto out = compat::WriteData<double>(result);
+	auto &mask = compat::WriteValidity(result);
 	for (idx_t i = 0; i < count; i++) {
 		auto i0 = a0.sel->get_index(i);
 		auto i1 = a1.sel->get_index(i);
@@ -157,8 +160,8 @@ static inline void RunPerRow3(DataChunk &args, Vector &result, Quantile &&q) {
 	auto v1 = UnifiedVectorFormat::GetData<double>(a1);
 	auto v2 = UnifiedVectorFormat::GetData<double>(a2);
 	result.SetVectorType(VectorType::FLAT_VECTOR);
-	auto out = FlatVector::GetData<double>(result);
-	auto &mask = FlatVector::Validity(result);
+	auto out = compat::WriteData<double>(result);
+	auto &mask = compat::WriteValidity(result);
 	for (idx_t i = 0; i < count; i++) {
 		auto i0 = a0.sel->get_index(i);
 		auto i1 = a1.sel->get_index(i);
@@ -323,8 +326,8 @@ static void RHyperExec(DataChunk &args, ExpressionState &, Vector &result) {
 
 static ScalarFunction MakeVolatile(string name, vector<LogicalType> args, LogicalType ret,
                                    scalar_function_t fn) {
-	ScalarFunction f(std::move(name), std::move(args), std::move(ret), fn);
-	f.stability = FunctionStability::VOLATILE;
+	ScalarFunction f(compat::Ident(name), std::move(args), std::move(ret), fn);
+	compat::SetVolatile(f);
 	return f;
 }
 
@@ -339,33 +342,47 @@ void RegisterRandomSampling(ExtensionLoader &loader) {
 		set.AddFunction(MakeVolatile("rnorm", {}, DBL, RNormStdExec));
 		set.AddFunction(MakeVolatile("rnorm", {DBL}, DBL, RNorm1Exec));
 		set.AddFunction(MakeVolatile("rnorm", {DBL, DBL}, DBL, RNorm2Exec));
-		loader.RegisterFunction(set);
+		statsduck::RegisterDocumented(loader, std::move(set),
+		                              "Random normal sample per row (volatile); defaults mean = 0, sd = 1.",
+		                              {"mean", "sd"}, "SELECT rnorm() FROM range(5)");
 	}
 
 	// ── rt / rchisq ─────────────────────────────────────────────────────────
-	loader.RegisterFunction(MakeVolatile("rt", {DBL}, DBL, RTExec));
-	loader.RegisterFunction(MakeVolatile("rchisq", {DBL}, DBL, RChiSqExec));
+	statsduck::RegisterDocumented(loader, MakeVolatile("rt", {DBL}, DBL, RTExec),
+	                              "Random Student's t sample per row (volatile).", {"df"},
+	                              "SELECT rt(10.0) FROM range(5)");
+	statsduck::RegisterDocumented(loader, MakeVolatile("rchisq", {DBL}, DBL, RChiSqExec),
+	                              "Random chi-square sample per row (volatile).", {"df"},
+	                              "SELECT rchisq(2.0) FROM range(5)");
 
 	// ── rf ──────────────────────────────────────────────────────────────────
-	loader.RegisterFunction(MakeVolatile("rf", {DBL, DBL}, DBL, RFExec));
+	statsduck::RegisterDocumented(loader, MakeVolatile("rf", {DBL, DBL}, DBL, RFExec),
+	                              "Random F-distribution sample per row (volatile).", {"df1", "df2"},
+	                              "SELECT rf(3.0, 12.0) FROM range(5)");
 
 	// ── rgamma ──────────────────────────────────────────────────────────────
 	{
 		ScalarFunctionSet set("rgamma");
 		set.AddFunction(MakeVolatile("rgamma", {DBL}, DBL, RGamma1Exec));
 		set.AddFunction(MakeVolatile("rgamma", {DBL, DBL}, DBL, RGamma2Exec));
-		loader.RegisterFunction(set);
+		statsduck::RegisterDocumented(loader, std::move(set),
+		                              "Random gamma sample per row (volatile); rate defaults to 1.",
+		                              {"shape", "rate"}, "SELECT rgamma(2.0) FROM range(5)");
 	}
 
 	// ── rbeta ───────────────────────────────────────────────────────────────
-	loader.RegisterFunction(MakeVolatile("rbeta", {DBL, DBL}, DBL, RBetaExec));
+	statsduck::RegisterDocumented(loader, MakeVolatile("rbeta", {DBL, DBL}, DBL, RBetaExec),
+	                              "Random beta sample per row (volatile).", {"alpha", "beta"},
+	                              "SELECT rbeta(2.0, 3.0) FROM range(5)");
 
 	// ── rexp ────────────────────────────────────────────────────────────────
 	{
 		ScalarFunctionSet set("rexp");
 		set.AddFunction(MakeVolatile("rexp", {}, DBL, RExpStdExec));
 		set.AddFunction(MakeVolatile("rexp", {DBL}, DBL, RExp1Exec));
-		loader.RegisterFunction(set);
+		statsduck::RegisterDocumented(loader, std::move(set),
+		                              "Random exponential sample per row (volatile); rate defaults to 1.",
+		                              {"rate"}, "SELECT rexp() FROM range(5)");
 	}
 
 	// ── rweibull ────────────────────────────────────────────────────────────
@@ -373,7 +390,9 @@ void RegisterRandomSampling(ExtensionLoader &loader) {
 		ScalarFunctionSet set("rweibull");
 		set.AddFunction(MakeVolatile("rweibull", {DBL}, DBL, RWeibull1Exec));
 		set.AddFunction(MakeVolatile("rweibull", {DBL, DBL}, DBL, RWeibull2Exec));
-		loader.RegisterFunction(set);
+		statsduck::RegisterDocumented(loader, std::move(set),
+		                              "Random Weibull sample per row (volatile); scale defaults to 1.",
+		                              {"shape", "scale"}, "SELECT rweibull(1.5) FROM range(5)");
 	}
 
 	// ── rlnorm ──────────────────────────────────────────────────────────────
@@ -382,17 +401,26 @@ void RegisterRandomSampling(ExtensionLoader &loader) {
 		set.AddFunction(MakeVolatile("rlnorm", {}, DBL, RLNormStdExec));
 		set.AddFunction(MakeVolatile("rlnorm", {DBL}, DBL, RLNorm1Exec));
 		set.AddFunction(MakeVolatile("rlnorm", {DBL, DBL}, DBL, RLNorm2Exec));
-		loader.RegisterFunction(set);
+		statsduck::RegisterDocumented(loader, std::move(set),
+		                              "Random log-normal sample per row (volatile); defaults meanlog = 0, "
+		                              "sdlog = 1.",
+		                              {"meanlog", "sdlog"}, "SELECT rlnorm() FROM range(5)");
 	}
 
 	// ── rpois ───────────────────────────────────────────────────────────────
-	loader.RegisterFunction(MakeVolatile("rpois", {DBL}, DBL, RPoisExec));
+	statsduck::RegisterDocumented(loader, MakeVolatile("rpois", {DBL}, DBL, RPoisExec),
+	                              "Random Poisson sample per row (volatile).", {"lambda"},
+	                              "SELECT rpois(2.5) FROM range(5)");
 
 	// ── rnbinom ─────────────────────────────────────────────────────────────
-	loader.RegisterFunction(MakeVolatile("rnbinom", {DBL, DBL}, DBL, RNBinomExec));
+	statsduck::RegisterDocumented(loader, MakeVolatile("rnbinom", {DBL, DBL}, DBL, RNBinomExec),
+	                              "Random negative-binomial sample per row (volatile).", {"size", "prob"},
+	                              "SELECT rnbinom(5.0, 0.5) FROM range(5)");
 
 	// ── rhyper ──────────────────────────────────────────────────────────────
-	loader.RegisterFunction(MakeVolatile("rhyper", {DBL, DBL, DBL}, DBL, RHyperExec));
+	statsduck::RegisterDocumented(loader, MakeVolatile("rhyper", {DBL, DBL, DBL}, DBL, RHyperExec),
+	                              "Random hypergeometric sample per row (volatile).", {"m", "n", "k"},
+	                              "SELECT rhyper(5.0, 10.0, 4.0) FROM range(5)");
 }
 
 } // namespace duckdb

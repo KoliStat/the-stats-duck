@@ -1,6 +1,7 @@
 #include "auto_bin_function.hpp"
+#include "register_documented.hpp"
 
-#include "duckdb/common/types/vector.hpp"
+#include "duckdb_compat.hpp"
 #include "duckdb/common/vector_operations/binary_executor.hpp"
 #include "duckdb/execution/expression_executor.hpp"
 #include "duckdb/function/aggregate_function.hpp"
@@ -17,6 +18,8 @@
 #include <vector>
 
 namespace duckdb {
+
+namespace compat = statsduck::compat;
 
 namespace {
 
@@ -64,15 +67,11 @@ struct BinEdgesBindData : public FunctionData {
 	}
 };
 
-static unique_ptr<FunctionData>
-BinEdgesBindNoArg(ClientContext &, AggregateFunction &,
-                  vector<unique_ptr<Expression>> &) {
+STATS_DUCK_AGGREGATE_BIND(BinEdgesBindNoArg) {
 	return make_uniq<BinEdgesBindData>();
 }
 
-static unique_ptr<FunctionData>
-BinEdgesBindMethod(ClientContext &context, AggregateFunction &function,
-                   vector<unique_ptr<Expression>> &arguments) {
+STATS_DUCK_AGGREGATE_BIND(BinEdgesBindMethod) {
 	if (!arguments[1]->IsFoldable()) {
 		throw BinderException("bin_edges: 'method' must be a constant string");
 	}
@@ -83,7 +82,7 @@ BinEdgesBindMethod(ClientContext &context, AggregateFunction &function,
 	auto bd = make_uniq<BinEdgesBindData>();
 	std::string method_str = StringUtil::Lower(method_val.GetValue<string>());
 	bd->method = ParseMethod(method_str);
-	Function::EraseArgument(function, arguments, 1);
+	compat::EraseArgument(function, arguments, 1);
 	return std::move(bd);
 }
 
@@ -95,7 +94,7 @@ struct BinEdgesState {
 	std::vector<double> *values;
 };
 
-static void BinEdgesInit(const AggregateFunction &, data_ptr_t state_p) {
+STATS_DUCK_AGGREGATE_INIT(BinEdgesInit) {
 	auto &state = *reinterpret_cast<BinEdgesState *>(state_p);
 	state.values = nullptr;
 }
@@ -235,11 +234,11 @@ static int ComputeBinCount(BinMethod method, const std::vector<double> &sorted) 
 // Finalize — emit LIST<DOUBLE> per state
 //===--------------------------------------------------------------------===//
 
-static void BinEdgesFinalize(Vector &state_vector, AggregateInputData &input_data, Vector &result,
+static void BinEdgesFinalize(Vector &state_vector, compat::FinalizeInput &input_data, Vector &result,
                               idx_t count, idx_t offset) {
 	auto &bd = input_data.bind_data->Cast<BinEdgesBindData>();
 	auto states = FlatVector::GetData<BinEdgesState *>(state_vector);
-	auto list_entries = FlatVector::GetData<list_entry_t>(result);
+	auto list_entries = compat::WriteData<list_entry_t>(result);
 
 	// First pass: compute edges per row + total child elements.
 	std::vector<std::vector<double>> per_row(count);
@@ -279,8 +278,8 @@ static void BinEdgesFinalize(Vector &state_vector, AggregateInputData &input_dat
 	// repeated Finalize calls into the same chunk compose safely).
 	idx_t child_anchor = ListVector::GetListSize(result);
 	ListVector::Reserve(result, child_anchor + total_new_elements);
-	auto &child = ListVector::GetEntry(result);
-	auto child_data = FlatVector::GetData<double>(child);
+	auto &child = compat::ListChild(result);
+	auto child_data = compat::WriteData<double>(child);
 	idx_t out_offset = child_anchor;
 	for (idx_t i = 0; i < count; i++) {
 		auto idx = i + offset;
@@ -323,13 +322,13 @@ static void BinLabelExec(DataChunk &args, ExpressionState &, Vector &result) {
 	auto x_data = UnifiedVectorFormat::GetData<double>(x_fmt);
 	auto edges_entries = UnifiedVectorFormat::GetData<list_entry_t>(edges_fmt);
 
-	auto &edges_child = ListVector::GetEntry(edges_input);
+	auto &edges_child = compat::ListChild(edges_input);
 	UnifiedVectorFormat child_fmt;
 	edges_child.ToUnifiedFormat(ListVector::GetListSize(edges_input), child_fmt);
 	auto child_data = UnifiedVectorFormat::GetData<double>(child_fmt);
 
-	auto result_data = FlatVector::GetData<string_t>(result);
-	auto &result_validity = FlatVector::Validity(result);
+	auto result_data = compat::WriteData<string_t>(result);
+	auto &result_validity = compat::WriteValidity(result);
 
 	for (idx_t i = 0; i < row_count; i++) {
 		auto x_idx = x_fmt.sel->get_index(i);
@@ -429,14 +428,20 @@ void RegisterBinEdges(ExtensionLoader &loader) {
 	AggregateFunctionSet set("bin_edges");
 	set.AddFunction(MakeBinEdges({LogicalType::DOUBLE}, BinEdgesBindNoArg));
 	set.AddFunction(MakeBinEdges({LogicalType::DOUBLE, LogicalType::VARCHAR}, BinEdgesBindMethod));
-	loader.RegisterFunction(set);
+	statsduck::RegisterDocumented(loader, std::move(set),
+	                              "Automatic histogram bin edges — sturges (default), fd, scott, sqrt, "
+	                              "rice, or auto.",
+	                              {"x", "method"}, "SELECT bin_edges(price) FROM sales");
 }
 
 void RegisterBinLabel(ExtensionLoader &loader) {
 	ScalarFunction fn("bin_label",
 	                  {LogicalType::DOUBLE, LogicalType::LIST(LogicalType::DOUBLE)},
 	                  LogicalType::VARCHAR, BinLabelExec);
-	loader.RegisterFunction(fn);
+	statsduck::RegisterDocumented(loader, std::move(fn),
+	                              "Label of the bin containing x, given an edge vector (typically from "
+	                              "bin_edges).",
+	                              {"x", "edges"}, "SELECT bin_label(7.5, [0.0, 5.0, 10.0])");
 }
 
 } // namespace duckdb

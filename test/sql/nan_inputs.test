@@ -1,0 +1,70 @@
+# name: test/sql/nan_inputs.test
+# description: NaN inputs are treated as missing, exactly like NULL (#52)
+# group: [stats_duck]
+
+require stats_duck
+
+# Two tables with the same layout. Where one has NaN the other has NULL.
+# Every aggregate below must return the same result for both.
+statement ok
+CREATE TABLE t_nan AS SELECT * FROM (VALUES
+    (1.0, 2.5), (2.0, 3.5), (3.0, 'NaN'::DOUBLE), (4.0, 6.0),
+    (5.0, 4.0), ('NaN'::DOUBLE, 8.0), (7.0, 9.0)
+) AS t(a, b);
+
+statement ok
+CREATE TABLE t_null AS SELECT * FROM (VALUES
+    (1.0, 2.5), (2.0, 3.5), (3.0, NULL), (4.0, 6.0),
+    (5.0, 4.0), (NULL, 8.0), (7.0, 9.0)
+) AS t(a, b);
+
+# ttest_1samp: six non-NaN values, so df = 5
+query T
+SELECT (ttest_1samp(a)).df FROM t_nan
+----
+5.0
+
+query T
+SELECT (SELECT ttest_1samp(a) FROM t_nan) = (SELECT ttest_1samp(a) FROM t_null)
+----
+true
+
+# ttest_paired: a pair with a NaN on either side is dropped
+query T
+SELECT (ttest_paired(a, b)).df FROM t_nan
+----
+4.0
+
+query T
+SELECT (SELECT ttest_paired(a, b) FROM t_nan) = (SELECT ttest_paired(a, b) FROM t_null)
+----
+true
+
+# ttest_2samp: each column drops its own NaN
+query T
+SELECT (SELECT ttest_2samp(a, b) FROM t_nan) = (SELECT ttest_2samp(a, b) FROM t_null)
+----
+true
+
+# mann_whitney_u: a NaN must never reach the rank sort
+query T
+SELECT (SELECT mann_whitney_u(a, b) FROM t_nan) = (SELECT mann_whitney_u(a, b) FROM t_null)
+----
+true
+
+# wilcoxon_signed_rank: a NaN difference is dropped, not ranked
+query T
+SELECT (SELECT wilcoxon_signed_rank(a, b) FROM t_nan) = (SELECT wilcoxon_signed_rank(a, b) FROM t_null)
+----
+true
+
+# A column that is all NaN behaves like an all-NULL column: too few rows, NULL result
+query T
+SELECT ttest_1samp(v) FROM (VALUES ('NaN'::DOUBLE), ('NaN'::DOUBLE), ('NaN'::DOUBLE)) AS t(v)
+----
+NULL
+
+query T
+SELECT mann_whitney_u(a, b) FROM (VALUES ('NaN'::DOUBLE, 1.0), ('NaN'::DOUBLE, 2.0), ('NaN'::DOUBLE, 3.0)) AS t(a, b)
+----
+NULL

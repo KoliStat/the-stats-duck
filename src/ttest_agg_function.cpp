@@ -1,9 +1,10 @@
 #include "ttest_agg_function.hpp"
+#include "register_documented.hpp"
 #include "distributions.hpp"
 
 #include "duckdb/function/aggregate_function.hpp"
 #include "duckdb/function/function_set.hpp"
-#include "duckdb/common/types/vector.hpp"
+#include "duckdb_compat.hpp"
 #include "duckdb/main/extension/extension_loader.hpp"
 #include "duckdb/execution/expression_executor.hpp"
 #include "duckdb/planner/expression.hpp"
@@ -12,6 +13,8 @@
 #include <limits>
 
 namespace duckdb {
+
+namespace compat = statsduck::compat;
 
 // ─── Bind Data ──────────────────────────────────────────────────────────────────
 
@@ -124,18 +127,18 @@ static void WelfordCombine(WelfordState &target, const WelfordState &source) {
 
 // ─── Finalize helper: write one STRUCT result ───────────────────────────────────
 
-static void WriteStructResult(vector<unique_ptr<Vector>> &children, idx_t idx, const string &test_type,
+static void WriteStructResult(compat::StructChildren &children, idx_t idx, const string &test_type,
                                double t_stat, double df, double p_value, const string &alternative,
                                double mean_diff, double ci_lower, double ci_upper, double cohens_d) {
-	FlatVector::GetData<string_t>(*children[0])[idx] = StringVector::AddString(*children[0], test_type);
-	FlatVector::GetData<double>(*children[1])[idx] = t_stat;
-	FlatVector::GetData<double>(*children[2])[idx] = df;
-	FlatVector::GetData<double>(*children[3])[idx] = p_value;
-	FlatVector::GetData<string_t>(*children[4])[idx] = StringVector::AddString(*children[4], alternative);
-	FlatVector::GetData<double>(*children[5])[idx] = mean_diff;
-	FlatVector::GetData<double>(*children[6])[idx] = ci_lower;
-	FlatVector::GetData<double>(*children[7])[idx] = ci_upper;
-	FlatVector::GetData<double>(*children[8])[idx] = cohens_d;
+	compat::WriteData<string_t>(compat::Deref(children[0]))[idx] = StringVector::AddString(compat::Deref(children[0]), test_type);
+	compat::WriteData<double>(compat::Deref(children[1]))[idx] = t_stat;
+	compat::WriteData<double>(compat::Deref(children[2]))[idx] = df;
+	compat::WriteData<double>(compat::Deref(children[3]))[idx] = p_value;
+	compat::WriteData<string_t>(compat::Deref(children[4]))[idx] = StringVector::AddString(compat::Deref(children[4]), alternative);
+	compat::WriteData<double>(compat::Deref(children[5]))[idx] = mean_diff;
+	compat::WriteData<double>(compat::Deref(children[6]))[idx] = ci_lower;
+	compat::WriteData<double>(compat::Deref(children[7]))[idx] = ci_upper;
+	compat::WriteData<double>(compat::Deref(children[8]))[idx] = cohens_d;
 }
 
 // ─── Bind helpers for extracting constant parameters ────────────────────────────
@@ -153,36 +156,36 @@ static void ValidateAlpha(double alpha) {
 }
 
 // Extract a constant double argument, erase it from arguments, return value
-static double ExtractConstantDouble(ClientContext &context, AggregateFunction &function,
+static double ExtractConstantDouble(ClientContext &context, compat::BindFunction &function,
                                      vector<unique_ptr<Expression>> &arguments, idx_t arg_idx) {
 	if (!arguments[arg_idx]->IsFoldable()) {
 		throw BinderException("Parameter must be a constant value");
 	}
 	Value val = ExpressionExecutor::EvaluateScalar(context, *arguments[arg_idx]);
 	double result = val.GetValue<double>();
-	Function::EraseArgument(function, arguments, arg_idx);
+	compat::EraseArgument(function, arguments, arg_idx);
 	return result;
 }
 
-static string ExtractConstantString(ClientContext &context, AggregateFunction &function,
+static string ExtractConstantString(ClientContext &context, compat::BindFunction &function,
                                      vector<unique_ptr<Expression>> &arguments, idx_t arg_idx) {
 	if (!arguments[arg_idx]->IsFoldable()) {
 		throw BinderException("Parameter must be a constant value");
 	}
 	Value val = ExpressionExecutor::EvaluateScalar(context, *arguments[arg_idx]);
 	string result = val.GetValue<string>();
-	Function::EraseArgument(function, arguments, arg_idx);
+	compat::EraseArgument(function, arguments, arg_idx);
 	return result;
 }
 
-static bool ExtractConstantBool(ClientContext &context, AggregateFunction &function,
+static bool ExtractConstantBool(ClientContext &context, compat::BindFunction &function,
                                  vector<unique_ptr<Expression>> &arguments, idx_t arg_idx) {
 	if (!arguments[arg_idx]->IsFoldable()) {
 		throw BinderException("Parameter must be a constant value");
 	}
 	Value val = ExpressionExecutor::EvaluateScalar(context, *arguments[arg_idx]);
 	bool result = val.GetValue<bool>();
-	Function::EraseArgument(function, arguments, arg_idx);
+	compat::EraseArgument(function, arguments, arg_idx);
 	return result;
 }
 
@@ -194,7 +197,7 @@ struct TTest1SampState {
 	WelfordState ws;
 };
 
-static void TTest1SampInit(const AggregateFunction &, data_ptr_t state_p) {
+STATS_DUCK_AGGREGATE_INIT(TTest1SampInit) {
 	auto &state = *reinterpret_cast<TTest1SampState *>(state_p);
 	WelfordInit(state.ws);
 }
@@ -212,6 +215,10 @@ static void TTest1SampUpdate(Vector inputs[], AggregateInputData &, idx_t, Vecto
 		if (!idata.validity.RowIsValid(idx)) {
 			continue;
 		}
+		// NaN is treated as missing, like NULL.
+		if (std::isnan(values[idx])) {
+			continue;
+		}
 		WelfordUpdate(states[i]->ws, values[idx]);
 	}
 }
@@ -224,7 +231,7 @@ static void TTest1SampCombine(Vector &source, Vector &target, AggregateInputData
 	}
 }
 
-static void TTest1SampFinalize(Vector &state_vector, AggregateInputData &aggr_input_data, Vector &result,
+static void TTest1SampFinalize(Vector &state_vector, compat::FinalizeInput &aggr_input_data, Vector &result,
                                 idx_t count, idx_t offset) {
 	auto states = FlatVector::GetData<TTest1SampState *>(state_vector);
 	auto &children = StructVector::GetEntries(result);
@@ -265,22 +272,19 @@ static void TTest1SampFinalize(Vector &state_vector, AggregateInputData &aggr_in
 }
 
 // Bind: ttest_1samp(col) — defaults
-static unique_ptr<FunctionData> TTest1SampBind1(ClientContext &, AggregateFunction &,
-                                                 vector<unique_ptr<Expression>> &) {
+STATS_DUCK_AGGREGATE_BIND(TTest1SampBind1) {
 	return make_uniq<TTestAggBindData>();
 }
 
 // Bind: ttest_1samp(col, mu)
-static unique_ptr<FunctionData> TTest1SampBind2(ClientContext &context, AggregateFunction &function,
-                                                 vector<unique_ptr<Expression>> &arguments) {
+STATS_DUCK_AGGREGATE_BIND(TTest1SampBind2) {
 	auto bd = make_uniq<TTestAggBindData>();
 	bd->mu = ExtractConstantDouble(context, function, arguments, 1);
 	return std::move(bd);
 }
 
 // Bind: ttest_1samp(col, mu, alpha)
-static unique_ptr<FunctionData> TTest1SampBind3(ClientContext &context, AggregateFunction &function,
-                                                 vector<unique_ptr<Expression>> &arguments) {
+STATS_DUCK_AGGREGATE_BIND(TTest1SampBind3) {
 	auto bd = make_uniq<TTestAggBindData>();
 	bd->alpha = ExtractConstantDouble(context, function, arguments, 2);
 	ValidateAlpha(bd->alpha);
@@ -289,8 +293,7 @@ static unique_ptr<FunctionData> TTest1SampBind3(ClientContext &context, Aggregat
 }
 
 // Bind: ttest_1samp(col, mu, alpha, alternative)
-static unique_ptr<FunctionData> TTest1SampBind4(ClientContext &context, AggregateFunction &function,
-                                                 vector<unique_ptr<Expression>> &arguments) {
+STATS_DUCK_AGGREGATE_BIND(TTest1SampBind4) {
 	auto bd = make_uniq<TTestAggBindData>();
 	bd->alternative = ExtractConstantString(context, function, arguments, 3);
 	ValidateAlternative(bd->alternative);
@@ -314,7 +317,11 @@ void RegisterTTest1SampAgg(ExtensionLoader &loader) {
 	    MakeTTest1SampAgg({LogicalType::DOUBLE, LogicalType::DOUBLE, LogicalType::DOUBLE}, TTest1SampBind3));
 	set.AddFunction(MakeTTest1SampAgg(
 	    {LogicalType::DOUBLE, LogicalType::DOUBLE, LogicalType::DOUBLE, LogicalType::VARCHAR}, TTest1SampBind4));
-	loader.RegisterFunction(set);
+	statsduck::RegisterDocumented(loader, std::move(set),
+	                              "One-sample t-test of the column mean against a hypothesized value "
+	                              "(default mu = 0).",
+	                              {"column", "mu", "alpha", "alternative"},
+	                              "SELECT ttest_1samp(reaction_ms, 250.0) FROM trials");
 }
 
 // =============================================================================
@@ -338,11 +345,15 @@ static void TTestPairedUpdate(Vector inputs[], AggregateInputData &, idx_t, Vect
 		if (!idata1.validity.RowIsValid(idx1) || !idata2.validity.RowIsValid(idx2)) {
 			continue;
 		}
+		// A NaN on either side drops the pair, like a NULL.
+		if (std::isnan(v1[idx1]) || std::isnan(v2[idx2])) {
+			continue;
+		}
 		WelfordUpdate(states[i]->ws, v1[idx1] - v2[idx2]);
 	}
 }
 
-static void TTestPairedFinalize(Vector &state_vector, AggregateInputData &aggr_input_data, Vector &result,
+static void TTestPairedFinalize(Vector &state_vector, compat::FinalizeInput &aggr_input_data, Vector &result,
                                  idx_t count, idx_t offset) {
 	auto states = FlatVector::GetData<TTest1SampState *>(state_vector);
 	auto &children = StructVector::GetEntries(result);
@@ -382,14 +393,12 @@ static void TTestPairedFinalize(Vector &state_vector, AggregateInputData &aggr_i
 }
 
 // Bind: ttest_paired(col1, col2) — defaults
-static unique_ptr<FunctionData> TTestPairedBind2(ClientContext &, AggregateFunction &,
-                                                  vector<unique_ptr<Expression>> &) {
+STATS_DUCK_AGGREGATE_BIND(TTestPairedBind2) {
 	return make_uniq<TTestAggBindData>();
 }
 
 // Bind: ttest_paired(col1, col2, alpha)
-static unique_ptr<FunctionData> TTestPairedBind3(ClientContext &context, AggregateFunction &function,
-                                                  vector<unique_ptr<Expression>> &arguments) {
+STATS_DUCK_AGGREGATE_BIND(TTestPairedBind3) {
 	auto bd = make_uniq<TTestAggBindData>();
 	bd->alpha = ExtractConstantDouble(context, function, arguments, 2);
 	ValidateAlpha(bd->alpha);
@@ -397,8 +406,7 @@ static unique_ptr<FunctionData> TTestPairedBind3(ClientContext &context, Aggrega
 }
 
 // Bind: ttest_paired(col1, col2, alpha, alternative)
-static unique_ptr<FunctionData> TTestPairedBind4(ClientContext &context, AggregateFunction &function,
-                                                  vector<unique_ptr<Expression>> &arguments) {
+STATS_DUCK_AGGREGATE_BIND(TTestPairedBind4) {
 	auto bd = make_uniq<TTestAggBindData>();
 	bd->alternative = ExtractConstantString(context, function, arguments, 3);
 	ValidateAlternative(bd->alternative);
@@ -421,7 +429,10 @@ void RegisterTTestPairedAgg(ExtensionLoader &loader) {
 	    MakeTTestPairedAgg({LogicalType::DOUBLE, LogicalType::DOUBLE, LogicalType::DOUBLE}, TTestPairedBind3));
 	set.AddFunction(MakeTTestPairedAgg(
 	    {LogicalType::DOUBLE, LogicalType::DOUBLE, LogicalType::DOUBLE, LogicalType::VARCHAR}, TTestPairedBind4));
-	loader.RegisterFunction(set);
+	statsduck::RegisterDocumented(loader, std::move(set),
+	                              "Paired t-test on per-row differences.",
+	                              {"column1", "column2", "alpha", "alternative"},
+	                              "SELECT ttest_paired(before, after) FROM measurements");
 }
 
 // =============================================================================
@@ -433,7 +444,7 @@ struct TTest2SampState {
 	WelfordState ws_b;
 };
 
-static void TTest2SampInit(const AggregateFunction &, data_ptr_t state_p) {
+STATS_DUCK_AGGREGATE_INIT(TTest2SampInit) {
 	auto &state = *reinterpret_cast<TTest2SampState *>(state_p);
 	WelfordInit(state.ws_a);
 	WelfordInit(state.ws_b);
@@ -451,13 +462,14 @@ static void TTest2SampUpdate(Vector inputs[], AggregateInputData &, idx_t, Vecto
 	for (idx_t i = 0; i < count; i++) {
 		auto &state = *states[i];
 
+		// Each column drops its own NULL and NaN values.
 		auto idx1 = idata1.sel->get_index(i);
-		if (idata1.validity.RowIsValid(idx1)) {
+		if (idata1.validity.RowIsValid(idx1) && !std::isnan(v1[idx1])) {
 			WelfordUpdate(state.ws_a, v1[idx1]);
 		}
 
 		auto idx2 = idata2.sel->get_index(i);
-		if (idata2.validity.RowIsValid(idx2)) {
+		if (idata2.validity.RowIsValid(idx2) && !std::isnan(v2[idx2])) {
 			WelfordUpdate(state.ws_b, v2[idx2]);
 		}
 	}
@@ -472,7 +484,7 @@ static void TTest2SampCombine(Vector &source, Vector &target, AggregateInputData
 	}
 }
 
-static void TTest2SampFinalize(Vector &state_vector, AggregateInputData &aggr_input_data, Vector &result,
+static void TTest2SampFinalize(Vector &state_vector, compat::FinalizeInput &aggr_input_data, Vector &result,
                                 idx_t count, idx_t offset) {
 	auto states = FlatVector::GetData<TTest2SampState *>(state_vector);
 	auto &children = StructVector::GetEntries(result);
@@ -534,22 +546,19 @@ static void TTest2SampFinalize(Vector &state_vector, AggregateInputData &aggr_in
 }
 
 // Bind: ttest_2samp(col1, col2) — defaults (Welch)
-static unique_ptr<FunctionData> TTest2SampBind2(ClientContext &, AggregateFunction &,
-                                                 vector<unique_ptr<Expression>> &) {
+STATS_DUCK_AGGREGATE_BIND(TTest2SampBind2) {
 	return make_uniq<TTestAggBindData>();
 }
 
 // Bind: ttest_2samp(col1, col2, equal_var)
-static unique_ptr<FunctionData> TTest2SampBind3(ClientContext &context, AggregateFunction &function,
-                                                 vector<unique_ptr<Expression>> &arguments) {
+STATS_DUCK_AGGREGATE_BIND(TTest2SampBind3) {
 	auto bd = make_uniq<TTestAggBindData>();
 	bd->equal_var = ExtractConstantBool(context, function, arguments, 2);
 	return std::move(bd);
 }
 
 // Bind: ttest_2samp(col1, col2, equal_var, alpha)
-static unique_ptr<FunctionData> TTest2SampBind4(ClientContext &context, AggregateFunction &function,
-                                                 vector<unique_ptr<Expression>> &arguments) {
+STATS_DUCK_AGGREGATE_BIND(TTest2SampBind4) {
 	auto bd = make_uniq<TTestAggBindData>();
 	bd->alpha = ExtractConstantDouble(context, function, arguments, 3);
 	ValidateAlpha(bd->alpha);
@@ -558,8 +567,7 @@ static unique_ptr<FunctionData> TTest2SampBind4(ClientContext &context, Aggregat
 }
 
 // Bind: ttest_2samp(col1, col2, equal_var, alpha, alternative)
-static unique_ptr<FunctionData> TTest2SampBind5(ClientContext &context, AggregateFunction &function,
-                                                 vector<unique_ptr<Expression>> &arguments) {
+STATS_DUCK_AGGREGATE_BIND(TTest2SampBind5) {
 	auto bd = make_uniq<TTestAggBindData>();
 	bd->alternative = ExtractConstantString(context, function, arguments, 4);
 	ValidateAlternative(bd->alternative);
@@ -587,7 +595,11 @@ void RegisterTTest2SampAgg(ExtensionLoader &loader) {
 	set.AddFunction(MakeTTest2SampAgg({LogicalType::DOUBLE, LogicalType::DOUBLE, LogicalType::BOOLEAN,
 	                                   LogicalType::DOUBLE, LogicalType::VARCHAR},
 	                                  TTest2SampBind5));
-	loader.RegisterFunction(set);
+	statsduck::RegisterDocumented(loader, std::move(set),
+	                              "Two-sample t-test — Welch's by default, Student's pooled with "
+	                              "equal_var := true.",
+	                              {"column1", "column2", "equal_var", "alpha", "alternative"},
+	                              "SELECT ttest_2samp(score_a, score_b) FROM results");
 }
 
 } // namespace duckdb

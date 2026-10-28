@@ -1,6 +1,7 @@
 #include "poibin_function.hpp"
+#include "register_documented.hpp"
 
-#include "duckdb/common/types/vector.hpp"
+#include "duckdb_compat.hpp"
 #include "duckdb/function/scalar_function.hpp"
 #include "duckdb/main/extension/extension_loader.hpp"
 
@@ -8,6 +9,8 @@
 #include <vector>
 
 namespace duckdb {
+
+namespace compat = statsduck::compat;
 
 // Poisson Binomial distribution CDF — the distribution of X = Σᵢ Bᵢ where
 // each Bᵢ ∼ Bernoulli(pᵢ) is independent but the pᵢ may differ.
@@ -93,13 +96,13 @@ static void PoibinCdfExec(DataChunk &args, ExpressionState &, Vector &result) {
 	auto list_entries = UnifiedVectorFormat::GetData<list_entry_t>(list_fmt);
 	auto k_data = UnifiedVectorFormat::GetData<int64_t>(k_fmt);
 
-	auto &input_child = ListVector::GetEntry(list_input);
+	auto &input_child = compat::ListChild(list_input);
 	UnifiedVectorFormat child_fmt;
 	input_child.ToUnifiedFormat(ListVector::GetListSize(list_input), child_fmt);
 	auto child_data = UnifiedVectorFormat::GetData<double>(child_fmt);
 
-	auto result_data = FlatVector::GetData<double>(result);
-	auto &result_validity = FlatVector::Validity(result);
+	auto result_data = compat::WriteData<double>(result);
+	auto &result_validity = compat::WriteValidity(result);
 
 	std::vector<double> probs_buf;
 	std::vector<bool> validity_buf;
@@ -145,7 +148,10 @@ void RegisterPoibinCdf(ExtensionLoader &loader) {
 	ScalarFunction fn("poibin_cdf",
 	                  {LogicalType::LIST(LogicalType::DOUBLE), LogicalType::BIGINT},
 	                  LogicalType::DOUBLE, PoibinCdfExec);
-	loader.RegisterFunction(fn);
+	statsduck::RegisterDocumented(loader, std::move(fn),
+	                              "Poisson-binomial CDF: P(X <= k) for a sum of independent Bernoulli "
+	                              "trials with the given success probabilities.",
+	                              {"probs", "k"}, "SELECT poibin_cdf([0.2, 0.5, 0.9], 2)");
 }
 
 } // namespace duckdb

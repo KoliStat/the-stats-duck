@@ -1,8 +1,9 @@
 #include "nonparametric_function.hpp"
+#include "register_documented.hpp"
 
 #include "duckdb/function/aggregate_function.hpp"
 #include "duckdb/function/function_set.hpp"
-#include "duckdb/common/types/vector.hpp"
+#include "duckdb_compat.hpp"
 #include "duckdb/main/extension/extension_loader.hpp"
 #include "duckdb/execution/expression_executor.hpp"
 #include "duckdb/planner/expression.hpp"
@@ -12,6 +13,8 @@
 #include <vector>
 
 namespace duckdb {
+
+namespace compat = statsduck::compat;
 
 // ─── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -68,14 +71,14 @@ static void ValidateAlternative(const string &alt) {
 	}
 }
 
-static string ExtractConstantString(ClientContext &context, AggregateFunction &function,
+static string ExtractConstantString(ClientContext &context, compat::BindFunction &function,
                                      vector<unique_ptr<Expression>> &arguments, idx_t arg_idx) {
 	if (!arguments[arg_idx]->IsFoldable()) {
 		throw BinderException("Parameter must be a constant value");
 	}
 	Value val = ExpressionExecutor::EvaluateScalar(context, *arguments[arg_idx]);
 	string result = val.GetValue<string>();
-	Function::EraseArgument(function, arguments, arg_idx);
+	compat::EraseArgument(function, arguments, arg_idx);
 	return result;
 }
 
@@ -103,13 +106,11 @@ struct NonParamBindData : public FunctionData {
 	}
 };
 
-static unique_ptr<FunctionData> NonParamBindDefault(ClientContext &, AggregateFunction &,
-                                                     vector<unique_ptr<Expression>> &) {
+STATS_DUCK_AGGREGATE_BIND(NonParamBindDefault) {
 	return make_uniq<NonParamBindData>();
 }
 
-static unique_ptr<FunctionData> NonParamBindAlt(ClientContext &context, AggregateFunction &function,
-                                                 vector<unique_ptr<Expression>> &arguments) {
+STATS_DUCK_AGGREGATE_BIND(NonParamBindAlt) {
 	auto bd = make_uniq<NonParamBindData>();
 	bd->alternative = ExtractConstantString(context, function, arguments, arguments.size() - 1);
 	ValidateAlternative(bd->alternative);
@@ -118,15 +119,14 @@ static unique_ptr<FunctionData> NonParamBindAlt(ClientContext &context, Aggregat
 
 // 4-arg binder used by mann_whitney_u(x, y, alternative, continuity).
 // The constant continuity flag is at index 3, alternative at index 2.
-static unique_ptr<FunctionData> NonParamBindAltCorrect(ClientContext &context, AggregateFunction &function,
-                                                       vector<unique_ptr<Expression>> &arguments) {
+STATS_DUCK_AGGREGATE_BIND(NonParamBindAltCorrect) {
 	auto bd = make_uniq<NonParamBindData>();
 	if (!arguments[3]->IsFoldable()) {
 		throw BinderException("continuity must be a constant boolean");
 	}
 	Value cval = ExpressionExecutor::EvaluateScalar(context, *arguments[3]);
 	bd->continuity = cval.GetValue<bool>();
-	Function::EraseArgument(function, arguments, 3);
+	compat::EraseArgument(function, arguments, 3);
 
 	bd->alternative = ExtractConstantString(context, function, arguments, 2);
 	ValidateAlternative(bd->alternative);
@@ -153,7 +153,7 @@ struct MannWhitneyState {
 	std::vector<double> *data_b;
 };
 
-static void MannWhitneyInit(const AggregateFunction &, data_ptr_t state_p) {
+STATS_DUCK_AGGREGATE_INIT(MannWhitneyInit) {
 	auto &state = *reinterpret_cast<MannWhitneyState *>(state_p);
 	state.data_a = nullptr;
 	state.data_b = nullptr;
@@ -171,8 +171,10 @@ static void MannWhitneyUpdate(Vector inputs[], AggregateInputData &, idx_t, Vect
 	for (idx_t i = 0; i < count; i++) {
 		auto &state = *states[i];
 
+		// Each column drops its own NULL and NaN values. A NaN must never reach
+		// the rank sort: std::sort with operator< is undefined on NaN.
 		auto idx1 = idata1.sel->get_index(i);
-		if (idata1.validity.RowIsValid(idx1)) {
+		if (idata1.validity.RowIsValid(idx1) && !std::isnan(v1[idx1])) {
 			if (!state.data_a) {
 				state.data_a = new std::vector<double>();
 			}
@@ -180,7 +182,7 @@ static void MannWhitneyUpdate(Vector inputs[], AggregateInputData &, idx_t, Vect
 		}
 
 		auto idx2 = idata2.sel->get_index(i);
-		if (idata2.validity.RowIsValid(idx2)) {
+		if (idata2.validity.RowIsValid(idx2) && !std::isnan(v2[idx2])) {
 			if (!state.data_b) {
 				state.data_b = new std::vector<double>();
 			}
@@ -218,7 +220,7 @@ static void MannWhitneyDestroy(Vector &state_vector, AggregateInputData &, idx_t
 	}
 }
 
-static void MannWhitneyFinalize(Vector &state_vector, AggregateInputData &aggr_input_data, Vector &result,
+static void MannWhitneyFinalize(Vector &state_vector, compat::FinalizeInput &aggr_input_data, Vector &result,
                                  idx_t count, idx_t offset) {
 	auto states = FlatVector::GetData<MannWhitneyState *>(state_vector);
 	auto &children = StructVector::GetEntries(result);
@@ -288,12 +290,12 @@ static void MannWhitneyFinalize(Vector &state_vector, AggregateInputData &aggr_i
 		double p_value = NormalPValue(z, alternative);
 		double rank_biserial = 1.0 - 2.0 * U1 / (dn1 * dn2);
 
-		FlatVector::GetData<string_t>(*children[0])[idx] = StringVector::AddString(*children[0], "Mann-Whitney U");
-		FlatVector::GetData<double>(*children[1])[idx] = U1;
-		FlatVector::GetData<double>(*children[2])[idx] = z;
-		FlatVector::GetData<double>(*children[3])[idx] = p_value;
-		FlatVector::GetData<string_t>(*children[4])[idx] = StringVector::AddString(*children[4], alternative);
-		FlatVector::GetData<double>(*children[5])[idx] = rank_biserial;
+		compat::WriteData<string_t>(compat::Deref(children[0]))[idx] = StringVector::AddString(compat::Deref(children[0]), "Mann-Whitney U");
+		compat::WriteData<double>(compat::Deref(children[1]))[idx] = U1;
+		compat::WriteData<double>(compat::Deref(children[2]))[idx] = z;
+		compat::WriteData<double>(compat::Deref(children[3]))[idx] = p_value;
+		compat::WriteData<string_t>(compat::Deref(children[4]))[idx] = StringVector::AddString(compat::Deref(children[4]), alternative);
+		compat::WriteData<double>(compat::Deref(children[5]))[idx] = rank_biserial;
 	}
 }
 
@@ -312,7 +314,10 @@ void RegisterMannWhitneyU(ExtensionLoader &loader) {
 	set.AddFunction(MakeMannWhitneyAgg(
 	    {LogicalType::DOUBLE, LogicalType::DOUBLE, LogicalType::VARCHAR, LogicalType::BOOLEAN},
 	    NonParamBindAltCorrect));
-	loader.RegisterFunction(set);
+	statsduck::RegisterDocumented(loader, std::move(set),
+	                              "Mann-Whitney U test (Wilcoxon rank-sum) for two independent samples.",
+	                              {"column1", "column2", "alternative", "continuity"},
+	                              "SELECT mann_whitney_u(treatment, control) FROM outcomes");
 }
 
 // =============================================================================
@@ -334,7 +339,7 @@ struct WilcoxonState {
 	std::vector<double> *diffs; // Non-zero differences
 };
 
-static void WilcoxonInit(const AggregateFunction &, data_ptr_t state_p) {
+STATS_DUCK_AGGREGATE_INIT(WilcoxonInit) {
 	auto &state = *reinterpret_cast<WilcoxonState *>(state_p);
 	state.diffs = nullptr;
 }
@@ -355,6 +360,9 @@ static void WilcoxonUpdate(Vector inputs[], AggregateInputData &, idx_t, Vector 
 			continue;
 		}
 		double diff = v1[idx1] - v2[idx2];
+		if (std::isnan(diff)) {
+			continue; // A NaN on either side drops the pair, like a NULL.
+		}
 		if (diff == 0.0) {
 			continue; // Zero differences are excluded
 		}
@@ -388,7 +396,7 @@ static void WilcoxonDestroy(Vector &state_vector, AggregateInputData &, idx_t co
 	}
 }
 
-static void WilcoxonFinalize(Vector &state_vector, AggregateInputData &aggr_input_data, Vector &result,
+static void WilcoxonFinalize(Vector &state_vector, compat::FinalizeInput &aggr_input_data, Vector &result,
                               idx_t count, idx_t offset) {
 	auto states = FlatVector::GetData<WilcoxonState *>(state_vector);
 	auto &children = StructVector::GetEntries(result);
@@ -450,13 +458,13 @@ static void WilcoxonFinalize(Vector &state_vector, AggregateInputData &aggr_inpu
 		double p_value = NormalPValue(z, alternative);
 		double effect_r = z / std::sqrt(dn);
 
-		FlatVector::GetData<string_t>(*children[0])[idx] =
-		    StringVector::AddString(*children[0], "Wilcoxon Signed-Rank");
-		FlatVector::GetData<double>(*children[1])[idx] = w_plus;
-		FlatVector::GetData<double>(*children[2])[idx] = z;
-		FlatVector::GetData<double>(*children[3])[idx] = p_value;
-		FlatVector::GetData<string_t>(*children[4])[idx] = StringVector::AddString(*children[4], alternative);
-		FlatVector::GetData<double>(*children[5])[idx] = effect_r;
+		compat::WriteData<string_t>(compat::Deref(children[0]))[idx] =
+		    StringVector::AddString(compat::Deref(children[0]), "Wilcoxon Signed-Rank");
+		compat::WriteData<double>(compat::Deref(children[1]))[idx] = w_plus;
+		compat::WriteData<double>(compat::Deref(children[2]))[idx] = z;
+		compat::WriteData<double>(compat::Deref(children[3]))[idx] = p_value;
+		compat::WriteData<string_t>(compat::Deref(children[4]))[idx] = StringVector::AddString(compat::Deref(children[4]), alternative);
+		compat::WriteData<double>(compat::Deref(children[5]))[idx] = effect_r;
 	}
 }
 
@@ -475,7 +483,10 @@ void RegisterWilcoxonSignedRank(ExtensionLoader &loader) {
 	set.AddFunction(MakeWilcoxonAgg(
 	    {LogicalType::DOUBLE, LogicalType::DOUBLE, LogicalType::VARCHAR, LogicalType::BOOLEAN},
 	    NonParamBindAltCorrect));
-	loader.RegisterFunction(set);
+	statsduck::RegisterDocumented(loader, std::move(set),
+	                              "Wilcoxon signed-rank test on paired differences.",
+	                              {"column1", "column2", "alternative", "continuity"},
+	                              "SELECT wilcoxon_signed_rank(before, after) FROM measurements");
 }
 
 } // namespace duckdb

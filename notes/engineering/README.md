@@ -11,7 +11,7 @@ that has been written down than to re-derive it.
 ## Inventory
 
 - [`2026-06-volatile-and-rng-bias.md`](2026-06-volatile-and-rng-bias.md) — two
-  RNG footguns hit while landing the `r*` random-sampling family: DuckDB's
+  RNG pitfalls hit while building the `r*` random-sampling family: DuckDB's
   `UnaryExecutor` caches the lambda result for constant-vector inputs (the
   `VOLATILE` flag does not disable this), and MSVC's
   `std::uniform_real_distribution<double>` clips the upper tail. Fixes and
@@ -36,6 +36,16 @@ that has been written down than to re-derive it.
   `LIST<STRUCT>` aggregate output, and why aggregates take positional constants
   (not `:=` named params) — which is what makes its coefficients by-position.
 
+- [`2026-10-lin-hyp-rank-tolerance-and-scale.md`](2026-10-lin-hyp-rank-tolerance-and-scale.md)
+  — `lin_hyp`'s joint test reported `df_num` 1 instead of 2, and an F of 9.47
+  instead of 132.53, when one predictor was rescaled by 1e3 and another by
+  1e-3. `linalg::pinv` decides the numerical rank against `1e-12 · σ_max`, and
+  the matrix it was given carries variances on its diagonal, so widely
+  different constraint scales read as redundant. Fix: equilibrate C by its
+  diagonal first, `C⁻ = D·(D·C·D)⁻·D`. The design spec had mandated the
+  unconditioned call. Applies to any kernel that inverts a covariance with
+  `pinv`, `emmeans` (#21) included.
+
 - [`2026-06-duckdb-version-must-match-duckdb-wasm.md`](2026-06-duckdb-version-must-match-duckdb-wasm.md)
   — `table_one()` crashed in `@duckdb/duckdb-wasm` with `r/t is not a function`.
   Overturned two hypotheses (the DuckDB version retarget and the `-sWASM_BIGINT`
@@ -44,3 +54,50 @@ that has been written down than to re-derive it.
   `std::unordered_map<std::string>` in anova/chisq and not exported by duckdb-wasm.
   Fixed by an in-extension string hash (`portable_string_hash.hpp`). Includes a
   reusable `@duckdb/duckdb-wasm` Node verification harness.
+
+- [`2026-10-studentized-range-quadrature.md`](2026-10-studentized-range-quadrature.md)
+  — the studentized range distribution (#21) passed all 224 scipy goldens, all
+  four identities and the k = 2 closed form to 1.2e-15, while carrying a 1.8e-9
+  error at k = 20. Why the closed-form case certifies nothing about the hard
+  one, why self-convergence against an over-resolved copy of the same rule is
+  the check that found it, why nodes beat panels for an entire integrand
+  (48 x 2 is 2.3e-15 and 10 x 10 is 1.8e-9 at the same cost), and the branch
+  point in `s^(df-1)` that leaves a non-integer df below 4 less accurate than
+  the band. Also: `GammaP` stops after 200 terms, and an offline measurement
+  against scipy's `chi2.ppf` puts the resulting drift in `ChiSquareQuantile`
+  above about df = 1e4. Nothing in the repository tests that second claim.
+
+- [`2026-10-statsmodels-hc-for-a-glm.md`](2026-10-statsmodels-hc-for-a-glm.md) —
+  `GLM(...).fit(cov_type="HC2")` in statsmodels 0.15.0 returns HC0's standard
+  errors and labels them HC2, and so do HC1 and HC3; an OLS fit distinguishes
+  all four. `statsmodels/base/covtype.py` dispatches on
+  `getattr(self, "cov_" + cov_type.upper(), None)`, `cov_HC0`–`cov_HC3` are
+  defined only on `OLSResults`, and a GLM falls through to one
+  `cov_white_simple` call. Measured against R on DS1, with the OLS control.
+  R is the only available oracle for a GLM's HC2 and HC3. A #22 comment had
+  told a later task to extend the fixture generator instead, which would have
+  committed HC0's numbers three more times under three other names.
+
+- [`2026-10-verifying-against-a-stale-binary.md`](2026-10-verifying-against-a-stale-binary.md)
+  — two incidents (#20/#21) of a real command against a real binary giving a
+  confident, wrong answer because the binary was not the one the diff
+  produced. Piping `cmake --build` through `tail`/`head` reports `tail`'s
+  exit status, not the build's, so a compile failure still "succeeds" — this
+  is how an earlier task shipped a wrong claim about DuckDB's `VALUES`
+  execution model. Separately, `build/release/Release/duckdb.exe` statically
+  links `stats_duck` via the `shell` CMake target, so `LOAD` of a freshly
+  built extension can be a silent no-op: the catalog already has the
+  function, by name, from the stale static copy. How to detect each, and
+  what to run instead.
+
+- [`2026-10-duckdb-v2-port.md`](2026-10-duckdb-v2-port.md) — one source
+  tree builds on DuckDB 1.4, 1.5 and 2.0 through `src/include/duckdb_compat.hpp`,
+  detected with `__has_include`. What 2.0 changed in shape (the aggregate bind
+  and Init signatures, the parser extension's parse callback) and what it
+  removed. The transformer's counts were wrong five times and the compiler
+  right. Then five things the compiler could not see and the suite did: a
+  keyword-only parameter without a default is required, the parse callback
+  must report consumed tokens from a view without byte offsets, a throwing
+  scalar function must be marked fallible, `row()` is a TUPLE, and the arrow
+  lambda is rejected. Also: 2.0 links an extension into `unittest` only on
+  request, and a suite with every file skipped still exits 0.

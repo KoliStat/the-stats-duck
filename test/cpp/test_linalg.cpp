@@ -173,6 +173,79 @@ static void test_matvec() {
 	CHECK(L::matvec(mat(2, 2, {1, 2, 3, 4}), {1, 2, 3}).empty());
 }
 
+static void test_independent_columns() {
+	std::printf("independent_columns\n");
+	// Full rank: every column kept, in order.
+	{
+		auto s = L::independent_columns(mat(3, 3, {1, 0, 0, 0, 1, 0, 0, 0, 1}));
+		CHECK(s.rank == 3);
+		CHECK(s.keep.size() == 3 && s.keep[0] == 0 && s.keep[1] == 1 && s.keep[2] == 2);
+	}
+	// Full rank, tall, not orthogonal ({1, x, x²} columns): agrees with the SVD rank.
+	{
+		const Mat V = mat(4, 3, {1, 1, 1, 1, 2, 4, 1, 3, 9, 1, 4, 16});
+		auto s = L::independent_columns(V);
+		CHECK(s.rank == 3);
+		CHECK(s.rank == L::rank(V));
+	}
+	// Exact duplicate (x2 == x1): the later column is the alias.
+	{
+		auto s = L::independent_columns(mat(3, 2, {1, 1, 2, 2, 3, 3}));
+		CHECK(s.rank == 1);
+		CHECK(s.keep.size() == 1 && s.keep[0] == 0);
+	}
+	// Scaled copy (x2 == 3·x1): dropped as well.
+	{
+		auto s = L::independent_columns(mat(3, 2, {1, 3, 2, 6, 3, 9}));
+		CHECK(s.rank == 1);
+		CHECK(s.keep.size() == 1 && s.keep[0] == 0);
+	}
+	// Order preference: for {a, b, a+b} the THIRD column is the alias.
+	{
+		auto s = L::independent_columns(mat(3, 3, {1, 0, 1, 0, 1, 1, 1, 1, 2}));
+		CHECK(s.rank == 2);
+		CHECK(s.keep.size() == 2 && s.keep[0] == 0 && s.keep[1] == 1);
+	}
+	// The dummy-variable trap: intercept + two exhaustive 0/1 dummies. R drops
+	// the last level; the left-to-right rule does the same.
+	{
+		auto s = L::independent_columns(mat(4, 3, {1, 1, 0, 1, 1, 0, 1, 0, 1, 1, 0, 1}));
+		CHECK(s.rank == 2);
+		CHECK(s.keep.size() == 2 && s.keep[0] == 0 && s.keep[1] == 1);
+	}
+	// Zero column: dropped, even as the first column.
+	{
+		auto s = L::independent_columns(mat(3, 2, {0, 1, 0, 2, 0, 3}));
+		CHECK(s.rank == 1);
+		CHECK(s.keep.size() == 1 && s.keep[0] == 1);
+	}
+	// Near-dependence: x2 = x1 + eps·(alternating sign). The residual norm over
+	// the original norm is about eps, so eps = 1e-9 sits inside the default
+	// tolerance of 1e-7 (dropped) and eps = 1e-4 sits outside it (kept). A
+	// looser tol = 1e-3 drops the eps = 1e-4 column again.
+	{
+		const double ei = 1e-9, eo = 1e-4;
+		auto in = L::independent_columns(mat(4, 2, {1, 1 + ei, 1, 1 - ei, 1, 1 + ei, 1, 1 - ei}));
+		CHECK(in.rank == 1 && in.keep.size() == 1 && in.keep[0] == 0);
+		const Mat Mo = mat(4, 2, {1, 1 + eo, 1, 1 - eo, 1, 1 + eo, 1, 1 - eo});
+		auto out = L::independent_columns(Mo);
+		CHECK(out.rank == 2);
+		auto loose = L::independent_columns(Mo, 1e-3);
+		CHECK(loose.rank == 1 && loose.keep.size() == 1 && loose.keep[0] == 0);
+	}
+	// Wide matrix (rows < cols): the rank cannot exceed the row count.
+	{
+		auto s = L::independent_columns(mat(2, 3, {1, 2, 3, 4, 5, 7}));
+		CHECK(s.rank == 2);
+		CHECK(s.keep.size() == 2 && s.keep[0] == 0 && s.keep[1] == 1);
+	}
+	// Empty input: nothing kept.
+	{
+		auto s = L::independent_columns(Mat());
+		CHECK(s.rank == 0 && s.keep.empty());
+	}
+}
+
 int main() {
 	test_cholesky_solve();
 	test_qr_solve();
@@ -182,6 +255,7 @@ int main() {
 	test_inv_spd();
 	test_sandwich();
 	test_matvec();
+	test_independent_columns();
 
 	std::printf("\n%d checks, %d failures\n", g_checks, g_fail);
 	if (g_fail == 0) {

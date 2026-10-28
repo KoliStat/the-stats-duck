@@ -8,6 +8,279 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 The extension installs and loads in DuckDB under the technical name `stats_duck` —
 that name is preserved across releases for backward compatibility.
 
+## [0.9.0-here-s-your-nine-pence] - 2026-10-28
+
+### Added
+
+- **`glm_fit(y, x [, family [, options]])` — a generalized linear model
+  aggregate, fit by iteratively reweighted least squares** (#22). The
+  iterative sibling of `lm_fit`: one model per `GROUP BY` group, over four
+  families and their links — gaussian (`identity`, `log`, `inverse`),
+  binomial (`logit`, `probit`, `cloglog`, `log`), poisson (`log`,
+  `identity`, `sqrt`), and gamma (`inverse`, `log`, `identity`). `family`
+  defaults to `'gaussian'`, which makes `glm_fit(y, [x1, x2])` the same fit
+  as `lm_fit(y, [x1, x2])`, pinned exactly in the tests. The binomial
+  response is a proportion in `[0, 1]`, with `weights` as the trial count,
+  so 7 of 10 is `y = 0.7`, `weights = 10`; a count passed as `y` fails the
+  domain check rather than being read as a proportion. Dispersion is fixed
+  at 1 for binomial and poisson and is the Pearson estimate for gaussian
+  and gamma. Options beyond `family` go in one trailing STRUCT, read by
+  field name — `link`, `vcov`, `intercept`, `weights`, `offset`, `cluster`
+  — since `weights` and `offset` are both per-row `DOUBLE` columns that no
+  position could disambiguate; an unrecognized field name is a bind error
+  listing the six valid ones, and `vcov` accepts exactly what `lm_fit`
+  accepts (`'const'`, `'HC0'`–`'HC3'`, `'CR0'`/`'CR1'`). `z_statistic` uses
+  a normal reference for all four families, including gaussian and gamma,
+  where R and statsmodels switch to a t reference once dispersion is
+  estimated; `df_residual` is reported for a caller who wants that
+  reference instead. The robust and cluster-robust covariance estimators
+  sandwich score residuals rather than response residuals, a different
+  formula from `lm_fit`'s in general, which reduces to `lm_fit`'s exactly
+  at gaussian with an identity link — asserted bit for bit in the tests.
+  `separation` is a heuristic flag for a binomial fit that did not
+  converge with a fitted value pinned near 0 or 1: it catches perfect
+  separation and can also fire on severe near-separation, which it cannot
+  tell apart from the perfect case, and it is never raised for a fit that
+  converged, so an uninformative but converged fit (every response value
+  the same) can still report `separation = false`. Validated against
+  statsmodels' `sm.GLM` for one fit per family — binomial/`logit`,
+  poisson/`log`, gamma/`log`, and gaussian/`identity`. The
+  heteroskedasticity-consistent standard errors are validated against
+  R 4.6.1, because statsmodels 0.15.0 cannot produce a GLM's `HC2` or
+  `HC3` at all: it defines `cov_HC0`–`cov_HC3` only for OLS, so a GLM
+  returns HC0's numbers under all four names
+  (`notes/engineering/2026-10-statsmodels-hc-for-a-glm.md`). Gamma with its
+  canonical `inverse` link, poisson with `sqrt`, and a weighted gaussian
+  fit's `loglik` and `aic` are validated against R 4.6.1 as well. `probit`
+  and `cloglog` are checked against an independent Nelder-Mead
+  minimization of the deviance, and every link additionally through its
+  round-trip identity. Gaussian with an identity link is additionally
+  checked against `lm_fit` itself: coefficients and the full covariance
+  under every estimator, and the log-likelihood to the last bit. The API
+  boundary is the DuckDB-free header
+  `src/include/glm_core.hpp`, with implementation split across
+  `src/glm_core.cpp` (families, links, closed-form statistics) and
+  `src/glm_fit_core.cpp` (the IRLS loop).
+- **`emmeans(L, beta, cov, df [, alpha [, adjust]])` — estimated marginal
+  means for a fit you already have** (#21). One row of `L` per marginal
+  mean, each as wide as `beta`. Returns every mean's estimate, standard
+  error, t, p and confidence limits, plus every pairwise difference among
+  them with the same, and a multiplicity adjustment for that family:
+  `'tukey'` (the default), `'bonferroni'`, `'holm'`, `'hochberg'`, `'BH'`
+  (or `'fdr'`), `'BY'`, or `'none'`. It is what SAS prints as LSMEANS with
+  the DIFF and CL options, and what R's `emmeans` package reports for a
+  reference grid followed by `pairs()`. A mean's own confidence limits are
+  never adjusted for multiplicity. Only `'tukey'` and `'bonferroni'` move a
+  difference's limits, because the other four methods have no matching
+  simultaneous interval. `'tukey'` is the Tukey-Kramer approximation
+  whenever the compared means do not share a standard error, which is any
+  unbalanced design, and is exact only when they do, matching SAS and R's
+  `emmeans`. A mean is reported NULL for that element when it puts weight
+  on a coefficient whose diagonal entry in `cov` is not finite (a
+  rank-deficient fit leaves exactly that behind, but a hand-built `cov`
+  can do the same with no such fit involved). It is also reported NULL
+  when a non-finite value reaches it from elsewhere, or when its own
+  variance is negative past a 1e-12 relative tolerance. A NULL inside the
+  matching row of `L` costs only that one mean; a NULL anywhere in
+  `beta`, or in an off-diagonal entry of `cov`, costs every mean at once
+  instead, because both feed every row's calculation. A pair is reported
+  NULL the same way, either by touching a mean that failed or by its own
+  variance failing the same check; the rest of the grid is unaffected
+  either way.
+  That tolerance decides whether a slightly negative variance is a
+  rounding artefact. It does not decide whether `cov` is a covariance in
+  general, the same limit `lin_hyp`'s own checks have. `k_compare`, the
+  number of estimable means, is echoed, and is exactly the family size
+  `'tukey'` uses, so its adjusted p-value can be reproduced from
+  `k_compare` and `df_den` directly. Validated against
+  statsmodels' `t_test` for the per-mean and per-pair numbers. The API
+  boundary is the DuckDB-free header `src/include/emmeans.hpp`, with
+  implementation in `src/emmeans.cpp`.
+- **`ptukey(q, k, df)` and `qtukey(p, k, df)` — the studentized range
+  distribution** (#21), CDF and quantile, for `k` means on `df` degrees of
+  freedom. This is the distribution behind Tukey's HSD and behind
+  `emmeans`'s `'tukey'` adjustment. Exposing it as its own pair of scalars
+  gives it independent SQL coverage, and lets a caller get a Tukey critical
+  value or an adjusted p-value without going through `emmeans`. Accurate to
+  about 1e-12 against `scipy.stats.studentized_range` for an integer `df`,
+  or for any real `df` at or above 4. Below that, a non-integer `df` is
+  accurate to about 1e-5 only, because the distribution's density has a
+  branch point that a fixed-node quadrature resolves slowly there. See
+  `notes/engineering/2026-10-studentized-range-quadrature.md` for the
+  detail. Both functions return NULL rather than raising for an
+  out-of-domain argument (`k < 2`, `df <= 0`). The mathematics is the
+  published two-integral form (Copenhaver and Holland, 1988). The obvious
+  reference implementation, R's own `ptukey`, is GPL-licensed, and no part
+  of it was read, ported or paraphrased, since this repository is Apache
+  2.0.
+- **`lin_hyp(L, beta, cov, sigma2, df)` — the general linear hypothesis
+  L·β = 0** (#20). One row of `L` per constraint, several rows for a joint
+  test. Returns the per-constraint estimates with their standard errors, t and
+  p, plus the joint test as a sum of squares, an F and a chi-square. It is
+  stateless — coefficients and covariance in, no data — so it works with any
+  fit, and it computes what SAS's CONTRAST and ESTIMATE compute, as well as
+  Type III sums of squares when the caller builds `L` to select a term's
+  columns. `df_num` is the rank of `L·cov·Lᵀ`, so redundant constraints count
+  once, matching statsmodels' `wald_test`. A hypothesis that touches a
+  rank-deficient fit's aliased coefficient is reported NULL, SAS's
+  "non-estimable", while one that avoids it is evaluated normally. Two checks
+  guard the supplied `cov`: a negative variance among the constraints, or a
+  Wald statistic that is not `>= 0`, gives NULL for that row rather than a
+  plausible-looking number. The rank decision is scale invariant: `L·cov·Lᵀ` is
+  scaled to unit diagonal before the pseudo-inverse, so a change of units does
+  not move `df_num` or the F
+  (see `notes/engineering/2026-10-lin-hyp-rank-tolerance-and-scale.md`).
+  Validated against statsmodels' `t_test` and `wald_test`; the API boundary is
+  the DuckDB-free header `src/include/lin_hyp.hpp`, with implementation in
+  `src/lin_hyp.cpp`. Type I and II sums of squares need nested refits and are
+  not part of this function.
+- Kernel: `linalg::independent_columns(A, tol = 1e-7)` selects a maximal
+  linearly independent column subset left to right (modified Gram–Schmidt
+  with a second pass; plain loops, no Eigen). The earlier column of a
+  dependent set wins, as in R's `dqrdc2`, so the later duplicate becomes
+  the alias; the default tolerance is R's `lm.fit` tolerance. This is the
+  primitive the rank-deficient `lm_fit` path (#36, below) and `CholFactor`
+  (#44) build on (#33). Tested standalone in `test/cpp/test_linalg.cpp`: full
+  rank, duplicate and scaled columns, the dummy-variable trap, zero
+  columns, near-dependence inside and outside the tolerance, and a wide
+  matrix.
+- Every SQL function now registers `FunctionDescription` metadata —
+  description, parameter names, and a runnable example — so
+  `duckdb_functions()` and the community-extensions docs page's
+  "Added Functions" table (previously all-NULL for `stats_duck`) render real
+  documentation (#47). One description covers every overload of a function;
+  coverage is enforced by the new `test/sql/function_docs.test`.
+- `docs/fitter_conventions.md`: the model-fitting API standard. Input
+  conventions, the return-STRUCT standard with the `lm_fit` field table as
+  the template, numeric and portability discipline, validation discipline,
+  and an audit of the existing function surface against the standard
+  (#17). The audit filed four follow-ups: NaN inputs reach the t-tests and
+  rank tests unfiltered (#52), pre-standard aggregates write NaN or Inf
+  where the standard wants NULL (#53), `anova_oneway` and `chisq_*` sum in
+  hash-table order (#54), and `src/ttest_function.cpp` is unregistered
+  dead code (#55). README now credits The Fat Duck as the inspiration for
+  the project name and links the three docs pages.
+- `lm_fit` returns three new STRUCT fields (#34, #35; lm_fit Increment A,
+  #37): `rank` (field 12, equals `k` until rank-deficient fits land, #36),
+  `loglik` (13, the Gaussian log-likelihood, R `logLik` / statsmodels
+  `.llf`, `+inf` for an exact fit), and `cov` (14, the full k×k coefficient
+  covariance for the chosen `vcov` as a flat row-major `LIST<DOUBLE>` in
+  coefficient order). `cov` is the input `lin_hyp` (#20) and `emmeans` (#21)
+  need. Goldens come from statsmodels `.llf` and `.cov_params()` for
+  classical, HC1, CR0, and CR1. Existing fields and positions are unchanged.
+
+### Changed
+
+- **`lm` and `lm_summary` now run on the shared `lm_core` kernel** instead of
+  their own Cholesky, so the table functions and the `lm_fit` aggregate cannot
+  drift apart and the duplicate solve is gone (#45). Output on a full-rank fit
+  is unchanged. Two deliberate consequences follow from the kernel's behavior:
+  a collinear design fits instead of raising `singular` (the dependent column
+  is dropped and reported with NULL estimate, standard error, t and p), and
+  `df_residual` and `df_model` count estimated parameters, so they read
+  `n − rank` and `rank − intercept`. Error messages now name the function that
+  was called rather than the kernel behind it, which also fixes `lm_summary`
+  reporting its runtime errors as `lm:`.
+- **A collinear design no longer returns NULL for the group: `lm_fit` now
+  fits it.** Dependent columns are dropped the way R drops them (selection
+  runs left to right, so the earlier column of a dependent set is kept and
+  the later one is aliased). The aliased term keeps its name but its
+  `estimate`, `std_error`, `t_statistic` and `p_value` are NULL, and so are
+  the `cov` entries in its row and column. `rank` reports the parameters
+  actually estimated, and every degrees-of-freedom formula now counts rank
+  rather than design columns: `df_residual = n − rank`, σ², adjusted R², the
+  HC1 factor `n/(n−rank)`, the CR1 factor `[G/(G−1)]·[(N−1)/(N−rank)]`, the
+  `t(n−rank)` reference, and the F numerator `rank − intercept`. A full-rank
+  fit has `rank == k`, so every existing result is unchanged — the test suite
+  keeps its goldens as the regression guard (#36, lm_fit Increment A #37).
+  A group is still NULL when nothing is estimable: no independent column at
+  all, no residual degrees of freedom (`n ≤ rank`), or fewer than two
+  clusters for CR0/CR1. Oracled by reduced-model equivalence against
+  statsmodels, which cannot validate the dropped fit directly because it
+  spreads the coefficient across the dependent set instead of aliasing one;
+  see the DS5 fixtures and `notes/engineering/`.
+- Reworded README, CITATION.cff, engineering notes, code comments, and the
+  `visualize_mark_v1_*` function descriptions to plain English. Removed
+  buzzwords and slang ("first-class", "seamlessly", "plumbing", "footgun");
+  statistical terms such as robust standard errors and leverage are unchanged.
+- **DuckDB compatibility checked against v1.5.6 part-way through this
+  cycle.** The SQL suite as it then stood (2044 assertions) and the
+  `VISUALIZE` suite (321 assertions) passed on a local v1.5.6 build, using
+  a git worktree of the `duckdb/` submodule at tag `v1.5.6` kept outside
+  the submodule checkout, with the extension's absolute test path, the way
+  `make test_release` does. That run predates `emmeans` and `glm_fit`, so it
+  does not cover them: the suite has since grown to 2639 assertions. Those
+  2639 and the 3269 C++ checks are verified on the v1.4.3 submodule pin that
+  this repository builds against locally. Read the v1.5.6 line as checked
+  for the release's earlier work, not re-checked for all of it.
+- **Verified against DuckDB v1.4.5, the LTS line, on the final release
+  tree.** Built from this commit against DuckDB at tag `v1.4.5`
+  (`f31be57c`, the pin the community registry's LTS channel uses) with
+  extension-ci-tools `v1.4-andium`, in a checkout kept outside this one.
+  Zero compile errors, and the full SQL suite passes: 2639 assertions in
+  67 test cases, `emmeans` and `glm_fit` included. No source change was
+  needed. Unlike the v1.5.6 line above, this one covers the whole
+  release.
+- CI: the distribution pipeline now builds against DuckDB v1.5.6 with
+  extension-ci-tools v1.5.6 (up from v1.4.3). That matches the DuckDB stable
+  the community registry builds against. The `windows_amd64` (MSVC) job is
+  back in the matrix: the v1.5.6 reusable workflow checks both the VS 18 and
+  the VS 2022 `vcvars` paths, which removes the mingw fallback that v1.4.3
+  hit on the current `windows-latest` image (duckdb/extension-ci-tools#371).
+  The `duckdb/` submodule stays on v1.4.3 for the browser builds in `docs/`,
+  because `@duckdb/duckdb-wasm` 1.32.0 and 1.33.0 both bundle v1.4.3.
+- **The binding layer builds on DuckDB 2.0, and still on 1.4 and 1.5, from
+  one tree** (#46). v2.0.0 went stable on 2026-10-21. Building this tree
+  against it first failed in 30 of the `*_function.cpp` binding files; the
+  numeric kernels compiled clean, which is what `docs/kernel_api.md`'s
+  DuckDB-free design was for. `src/include/duckdb_compat.hpp` now detects
+  v2 with `__has_include`, the way `src/ggsql.cpp` already detects the 1.5
+  parser change, and carries every shim; thirty binding files route
+  through it. What v2.0 changed in shape: the aggregate bind callback
+  takes one input object (44 binds, behind a macro), aggregate Init
+  initializes a batch (20 Inits, behind a macro), and the parser
+  extension's parse callback receives tokens and must report how many it
+  consumed. `Function::EraseArgument` and the `ExecuteWithNulls` executors
+  were removed and are re-provided. The `VISUALIZE` parser registration
+  survives unchanged, which #46 had not expected. Five more differences
+  showed only when the test suite ran against 2.0, and each is handled: a
+  keyword-only table-function parameter without a default is required
+  there, so the named parameters of `read_stat`, `table_one`, `lm` and
+  `corr_matrix` carry a NULL default; a scalar function that throws while
+  executing must be marked fallible, so `adjust_p`, `lin_hyp` and
+  `emmeans` are; `row(...)` builds a TUPLE rather than an unnamed STRUCT,
+  which `glm_fit`'s options check accepts before rejecting it for having
+  no names; the arrow lambda `x -> ...` is a binder error under 2.0's
+  default setting, so the tests and the README use `lambda x: ...`, which
+  1.4 accepts as well; and the parse callback's token view has no
+  positions, so on 2.0 the layer SQL that `VISUALIZE` reports carries
+  conventional spacing rather than the user's. `extension_config.cmake`
+  opts into static linking on 2.0 (`duckdb_extension_statically_link`,
+  behind `if(COMMAND ...)`): without it 2.0 builds the extension loadable
+  and unlinked, and the test suite reports a pass with all 67 files
+  skipped. Verified on one tree with each stage's exit code recorded to a
+  file: v2.0.0 compiles clean and passes 2639 assertions in 67 test cases,
+  the same count as before the port on 1.x; v1.4.3 and v1.4.5 each compile clean and pass
+  that same count after the port. CI builds against
+  v2.0.0 with extension-ci-tools v2.0-cyanoptera as a third job, with
+  `windows_arm64` and `osx_amd64` opted in, which is what the community
+  registry builds by default since 2026-10-20. Engineering note:
+  `notes/engineering/2026-10-duckdb-v2-port.md`.
+
+### Fixed
+
+- `ttest_1samp`, `ttest_paired`, `ttest_2samp`, `mann_whitney_u`, and
+  `wilcoxon_signed_rank` now skip NaN inputs the way they skip NULL (#52).
+  Before, a NaN entered the accumulator: the t-tests returned NaN for every
+  field, and the two rank tests handed the NaN to `std::sort`, whose
+  ordering is undefined for NaN. The other tests already dropped NaN.
+  `test/sql/nan_inputs.test` checks each function against a NULL twin of
+  the same data.
+- `RegisterDocumented` now sets `ALTER_ON_CONFLICT`, as the bare
+  `RegisterFunction` overloads do. The #47 helper had left the `CreateInfo`
+  default (`ERROR_ON_CONFLICT`) in place for all 95 registrations. Found
+  through the metadata audit in #50.
+
 ## [0.8.0-nothing] - 2026-08-06
 
 ### Added
@@ -34,7 +307,7 @@ that name is preserved across releases for backward compatibility.
 
 ### Changed
 
-- README: introduced the [KoliStat](https://kolistat.com/) ecosystem section
+- README: introduced the [KoliStat](https://kolistat.com/) section
   (product page + Bedevere Wise links) and genericized the zig/libc++ consumer
   notes; historical `sassy` references renamed to `kolilang` in build comments.
 - **DuckDB compatibility verified through v1.5.5.** The 0.7.0 `__has_include`
@@ -180,7 +453,7 @@ that name is preserved across releases for backward compatibility.
   variance (alias var), min, max}`. When `seed` is provided the RNG
   (std::mt19937_64) is seeded deterministically — mixed with the per-row
   index so multi-group `GROUP BY` bootstraps produce stable but distinct
-  streams. Empty input → NULL list. Composes naturally with `list_quantile`
+  streams. Empty input → NULL list. Composes with `list_quantile`
   for percentile CIs:
   ```
   WITH b AS (SELECT bootstrap(price, 'mean', 1000, 42) AS samples FROM t)
@@ -237,7 +510,7 @@ that name is preserved across releases for backward compatibility.
   optional channels (`color`, `opacity`, ...) propagate through the
   encoding. Composes with `FACET BY ... ROWS` (vega `row` channel) but
   conflicts with `FACET BY ... COLS` because both would request the
-  `column` channel. Pairs naturally with `boxplot` for distribution
+  `column` channel. Pairs with `boxplot` for distribution
   comparison overlays.
 
 ### Changed
@@ -295,7 +568,7 @@ that name is preserved across releases for backward compatibility.
   Methods that depend on robust scale (FD, Scott) silently fall back to
   Sturges when IQR/sd is zero. `bin_label(x, edges) → VARCHAR` formats the
   bin containing `x` as `'[lo, hi)'` (or `'[lo, hi]'` for the rightmost bin so
-  the maximum is never dropped). Pairs naturally with `table_one` — bin a
+  the maximum is never dropped). Pairs with `table_one` — bin a
   numeric column up front, then summarise the binned column categorically.
 
 - **Local DuckDB submodule patch (`duckdb/third_party/fmt/include/fmt/format.h`).**
@@ -376,7 +649,7 @@ that name is preserved across releases for backward compatibility.
   contingency tables). `density` is a KDE via Vega-Lite's `density` transform
   on the `x` aesthetic; groups by `color` if mapped (one curve per level).
   `regression` is a `line` mark via Vega-Lite's `regression` transform fitting
-  `y ~ x`; groups by `color` if mapped. Pairs naturally with `DRAW point
+  `y ~ x`; groups by `color` if mapped. Pairs with `DRAW point
   DRAW regression` for scatter-with-fit overlays.
 - VISUALIZE: `TITLE '<text>' [SUBTITLE '<text>']` clause appended after any
   `SCALE` clauses. Emitted as a Vega-Lite `TitleParams` object (always object
@@ -673,8 +946,14 @@ First public release.
 - `linux_amd64_musl` is excluded due to a known upstream issue in the v1.2.2 extension-ci-tools Alpine Dockerfile.
 - WASM binaries served via GitHub Pages at `https://caerbannogwhite.github.io/the-stats-duck`.
 
-[0.3.2-here-s-one]: https://github.com/caerbannogwhite/the-stats-duck/releases/tag/v0.3.2
-[0.3.1-customer]: https://github.com/caerbannogwhite/the-stats-duck/releases/tag/v0.3.1
-[0.3.0-customer]: https://github.com/caerbannogwhite/the-stats-duck/releases/tag/v0.3.0
-[0.2.0-bring-out-your-dead]: https://github.com/caerbannogwhite/the-stats-duck/releases/tag/v0.2.0
-[0.1.0-mortician]: https://github.com/caerbannogwhite/the-stats-duck/releases/tag/v0.1.0
+[0.9.0-here-s-your-nine-pence]: https://github.com/KoliStat/the-stats-duck/releases/tag/v0.9.0
+[0.8.0-nothing]: https://github.com/KoliStat/the-stats-duck/releases/tag/v0.8.0
+[0.7.0-what]: https://github.com/KoliStat/the-stats-duck/releases/tag/v0.7.0
+[0.6.0-i-m-not-dead]: https://github.com/KoliStat/the-stats-duck/releases/tag/v0.6.0
+[0.5.0-dead-person]: https://github.com/KoliStat/the-stats-duck/releases/tag/v0.5.0
+[0.4.0-nine-pence]: https://github.com/KoliStat/the-stats-duck/releases/tag/v0.4.0
+[0.3.2-here-s-one]: https://github.com/KoliStat/the-stats-duck/releases/tag/v0.3.2
+[0.3.1-customer]: https://github.com/KoliStat/the-stats-duck/releases/tag/v0.3.1
+[0.3.0-customer]: https://github.com/KoliStat/the-stats-duck/releases/tag/v0.3.0
+[0.2.0-bring-out-your-dead]: https://github.com/KoliStat/the-stats-duck/releases/tag/v0.2.0
+[0.1.0-mortician]: https://github.com/KoliStat/the-stats-duck/releases/tag/v0.1.0

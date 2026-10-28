@@ -31,7 +31,7 @@ node verify.cjs
 Expected tail:
 
 ```
-[summary] baseline-builtin=PASS  scalar-ext=PASS  struct-agg-direct=PASS  anova-direct=PASS  corr_matrix-tablefn=PASS  visualize=PASS  table_one-internalconn=PASS  lm_fit-hc1=PASS  lm_fit-cluster-cr1=PASS  lm_fit-cluster-unnest=PASS
+[summary] baseline-builtin=PASS  scalar-ext=PASS  struct-agg-direct=PASS  anova-direct=PASS  corr_matrix-tablefn=PASS  visualize=PASS  table_one-internalconn=PASS  lm_fit-hc1=PASS  lm_fit-cluster-cr1=PASS  lm_fit-cluster-unnest=PASS  glm_fit-binomial=PASS  glm_fit-gaussian=PASS  ptukey-qtukey=PASS  emmeans=PASS  lin_hyp=PASS  adjust_p-BY=PASS  lm_summary-tablefn=PASS
 PROBE_DONE
 ```
 

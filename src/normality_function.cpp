@@ -1,9 +1,10 @@
 #include "normality_function.hpp"
+#include "register_documented.hpp"
 #include "distributions.hpp"
 
 #include "duckdb/function/aggregate_function.hpp"
 #include "duckdb/function/function_set.hpp"
-#include "duckdb/common/types/vector.hpp"
+#include "duckdb_compat.hpp"
 #include "duckdb/main/extension/extension_loader.hpp"
 
 #include <algorithm>
@@ -12,6 +13,8 @@
 #include <vector>
 
 namespace duckdb {
+
+namespace compat = statsduck::compat;
 
 // Jarque-Bera normality test.
 //
@@ -53,7 +56,7 @@ struct JBState {
 	double m4; // sum((x - mean)^4)
 };
 
-static void JBInit(const AggregateFunction &, data_ptr_t state_p) {
+STATS_DUCK_AGGREGATE_INIT(JBInit) {
 	auto &s = *reinterpret_cast<JBState *>(state_p);
 	s.n = 0;
 	s.mean = 0.0;
@@ -138,7 +141,7 @@ static void JBCombine(Vector &source, Vector &target, AggregateInputData &, idx_
 	}
 }
 
-static void JBFinalize(Vector &state_vector, AggregateInputData &, Vector &result, idx_t count, idx_t offset) {
+static void JBFinalize(Vector &state_vector, compat::FinalizeInput &, Vector &result, idx_t count, idx_t offset) {
 	auto states = FlatVector::GetData<JBState *>(state_vector);
 	auto &children = StructVector::GetEntries(result);
 
@@ -166,14 +169,14 @@ static void JBFinalize(Vector &state_vector, AggregateInputData &, Vector &resul
 		double jb = (dn / 6.0) * (g1 * g1 + 0.25 * g2 * g2);
 		double p_value = 1.0 - stats_duck::ChiSquareCDF(jb, 2.0);
 
-		FlatVector::GetData<string_t>(*children[0])[idx] =
-		    StringVector::AddString(*children[0], "Jarque-Bera");
-		FlatVector::GetData<double>(*children[1])[idx] = jb;
-		FlatVector::GetData<double>(*children[2])[idx] = g1;
-		FlatVector::GetData<double>(*children[3])[idx] = g2;
-		FlatVector::GetData<double>(*children[4])[idx] = 2.0;
-		FlatVector::GetData<double>(*children[5])[idx] = p_value;
-		FlatVector::GetData<int64_t>(*children[6])[idx] = state.n;
+		compat::WriteData<string_t>(compat::Deref(children[0]))[idx] =
+		    StringVector::AddString(compat::Deref(children[0]), "Jarque-Bera");
+		compat::WriteData<double>(compat::Deref(children[1]))[idx] = jb;
+		compat::WriteData<double>(compat::Deref(children[2]))[idx] = g1;
+		compat::WriteData<double>(compat::Deref(children[3]))[idx] = g2;
+		compat::WriteData<double>(compat::Deref(children[4]))[idx] = 2.0;
+		compat::WriteData<double>(compat::Deref(children[5]))[idx] = p_value;
+		compat::WriteData<int64_t>(compat::Deref(children[6]))[idx] = state.n;
 	}
 }
 
@@ -216,7 +219,7 @@ struct ADState {
 	std::vector<double> *values;
 };
 
-static void ADInit(const AggregateFunction &, data_ptr_t state_p) {
+STATS_DUCK_AGGREGATE_INIT(ADInit) {
 	auto &state = *reinterpret_cast<ADState *>(state_p);
 	state.values = nullptr;
 }
@@ -284,7 +287,7 @@ static double ADPValue(double a2_adj) {
 	return std::exp(1.2937 - 5.709 * a2_adj + 0.0186 * a2_adj * a2_adj);
 }
 
-static void ADFinalize(Vector &state_vector, AggregateInputData &, Vector &result, idx_t count, idx_t offset) {
+static void ADFinalize(Vector &state_vector, compat::FinalizeInput &, Vector &result, idx_t count, idx_t offset) {
 	auto states = FlatVector::GetData<ADState *>(state_vector);
 	auto &children = StructVector::GetEntries(result);
 
@@ -352,12 +355,12 @@ static void ADFinalize(Vector &state_vector, AggregateInputData &, Vector &resul
 			p_value = 1.0;
 		}
 
-		FlatVector::GetData<string_t>(*children[0])[idx] =
-		    StringVector::AddString(*children[0], "Anderson-Darling");
-		FlatVector::GetData<double>(*children[1])[idx] = a2;
-		FlatVector::GetData<double>(*children[2])[idx] = a2_adj;
-		FlatVector::GetData<double>(*children[3])[idx] = p_value;
-		FlatVector::GetData<int64_t>(*children[4])[idx] = static_cast<int64_t>(n);
+		compat::WriteData<string_t>(compat::Deref(children[0]))[idx] =
+		    StringVector::AddString(compat::Deref(children[0]), "Anderson-Darling");
+		compat::WriteData<double>(compat::Deref(children[1]))[idx] = a2;
+		compat::WriteData<double>(compat::Deref(children[2]))[idx] = a2_adj;
+		compat::WriteData<double>(compat::Deref(children[3]))[idx] = p_value;
+		compat::WriteData<int64_t>(compat::Deref(children[4]))[idx] = static_cast<int64_t>(n);
 	}
 }
 
@@ -418,7 +421,7 @@ struct SWState {
 	std::vector<double> *values;
 };
 
-static void SWInit(const AggregateFunction &, data_ptr_t state_p) {
+STATS_DUCK_AGGREGATE_INIT(SWInit) {
 	auto &state = *reinterpret_cast<SWState *>(state_p);
 	state.values = nullptr;
 }
@@ -468,7 +471,7 @@ static void SWDestroy(Vector &state_vector, AggregateInputData &, idx_t count) {
 	}
 }
 
-static void SWFinalize(Vector &state_vector, AggregateInputData &, Vector &result, idx_t count, idx_t offset) {
+static void SWFinalize(Vector &state_vector, compat::FinalizeInput &, Vector &result, idx_t count, idx_t offset) {
 	auto states = FlatVector::GetData<SWState *>(state_vector);
 	auto &children = StructVector::GetEntries(result);
 
@@ -489,11 +492,11 @@ static void SWFinalize(Vector &state_vector, AggregateInputData &, Vector &resul
 
 		// All-equal input: degenerate sample, W = 1 / p = 1 (vacuously normal).
 		if (values.front() == values.back()) {
-			FlatVector::GetData<string_t>(*children[0])[idx] =
-			    StringVector::AddString(*children[0], "Shapiro-Wilk");
-			FlatVector::GetData<double>(*children[1])[idx] = 1.0;
-			FlatVector::GetData<double>(*children[2])[idx] = 1.0;
-			FlatVector::GetData<int64_t>(*children[3])[idx] = static_cast<int64_t>(n);
+			compat::WriteData<string_t>(compat::Deref(children[0]))[idx] =
+			    StringVector::AddString(compat::Deref(children[0]), "Shapiro-Wilk");
+			compat::WriteData<double>(compat::Deref(children[1]))[idx] = 1.0;
+			compat::WriteData<double>(compat::Deref(children[2]))[idx] = 1.0;
+			compat::WriteData<int64_t>(compat::Deref(children[3]))[idx] = static_cast<int64_t>(n);
 			continue;
 		}
 
@@ -605,11 +608,11 @@ static void SWFinalize(Vector &state_vector, AggregateInputData &, Vector &resul
 			}
 		}
 
-		FlatVector::GetData<string_t>(*children[0])[idx] =
-		    StringVector::AddString(*children[0], "Shapiro-Wilk");
-		FlatVector::GetData<double>(*children[1])[idx] = w;
-		FlatVector::GetData<double>(*children[2])[idx] = pw;
-		FlatVector::GetData<int64_t>(*children[3])[idx] = static_cast<int64_t>(n);
+		compat::WriteData<string_t>(compat::Deref(children[0]))[idx] =
+		    StringVector::AddString(compat::Deref(children[0]), "Shapiro-Wilk");
+		compat::WriteData<double>(compat::Deref(children[1]))[idx] = w;
+		compat::WriteData<double>(compat::Deref(children[2]))[idx] = pw;
+		compat::WriteData<int64_t>(compat::Deref(children[3]))[idx] = static_cast<int64_t>(n);
 	}
 }
 
@@ -619,21 +622,27 @@ void RegisterJarqueBera(ExtensionLoader &loader) {
 	AggregateFunction fn("jarque_bera", {LogicalType::DOUBLE}, JarqueBeraResultType(),
 	                     AggregateFunction::StateSize<JBState>, JBInit, JBUpdate, JBCombine, JBFinalize,
 	                     FunctionNullHandling::DEFAULT_NULL_HANDLING);
-	loader.RegisterFunction(fn);
+	statsduck::RegisterDocumented(loader, std::move(fn),
+	                              "Jarque-Bera normality test (skewness + kurtosis).",
+	                              {"column"}, "SELECT jarque_bera(returns) FROM prices");
 }
 
 void RegisterShapiroWilk(ExtensionLoader &loader) {
 	AggregateFunction fn("shapiro_wilk", {LogicalType::DOUBLE}, SWResultType(),
 	                     AggregateFunction::StateSize<SWState>, SWInit, SWUpdate, SWCombine, SWFinalize,
 	                     FunctionNullHandling::DEFAULT_NULL_HANDLING, nullptr, nullptr, SWDestroy);
-	loader.RegisterFunction(fn);
+	statsduck::RegisterDocumented(loader, std::move(fn),
+	                              "Shapiro-Wilk normality test (Royston AS R94; n in [3, 5000]).",
+	                              {"column"}, "SELECT shapiro_wilk(residual) FROM fits");
 }
 
 void RegisterAndersonDarling(ExtensionLoader &loader) {
 	AggregateFunction fn("anderson_darling", {LogicalType::DOUBLE}, ADResultType(),
 	                     AggregateFunction::StateSize<ADState>, ADInit, ADUpdate, ADCombine, ADFinalize,
 	                     FunctionNullHandling::DEFAULT_NULL_HANDLING, nullptr, nullptr, ADDestroy);
-	loader.RegisterFunction(fn);
+	statsduck::RegisterDocumented(loader, std::move(fn),
+	                              "Anderson-Darling normality test against the fitted normal (n >= 8).",
+	                              {"column"}, "SELECT anderson_darling(x) FROM samples");
 }
 
 } // namespace duckdb

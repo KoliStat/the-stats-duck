@@ -1,10 +1,11 @@
 #include "chisq_function.hpp"
+#include "register_documented.hpp"
 #include "distributions.hpp"
 #include "portable_string_hash.hpp"
 
 #include "duckdb/function/aggregate_function.hpp"
 #include "duckdb/function/function_set.hpp"
-#include "duckdb/common/types/vector.hpp"
+#include "duckdb_compat.hpp"
 #include "duckdb/execution/expression_executor.hpp"
 #include "duckdb/main/extension/extension_loader.hpp"
 #include "duckdb/planner/expression.hpp"
@@ -15,6 +16,8 @@
 #include <unordered_set>
 
 namespace duckdb {
+
+namespace compat = statsduck::compat;
 
 namespace {
 // std::string-keyed map with an in-extension hash (default std::hash<std::string>
@@ -80,7 +83,7 @@ struct ChiSqIndependenceState {
 	StrMap<StrMap<int64_t>> *table;
 };
 
-static void ChiSqIndInit(const AggregateFunction &, data_ptr_t state_p) {
+STATS_DUCK_AGGREGATE_INIT(ChiSqIndInit) {
 	auto &state = *reinterpret_cast<ChiSqIndependenceState *>(state_p);
 	state.table = nullptr;
 }
@@ -139,24 +142,22 @@ static void ChiSqIndDestroy(Vector &state_vector, AggregateInputData &, idx_t co
 	}
 }
 
-static unique_ptr<FunctionData> ChiSqIndBindNoArg(ClientContext &, AggregateFunction &,
-                                                  vector<unique_ptr<Expression>> &) {
+STATS_DUCK_AGGREGATE_BIND(ChiSqIndBindNoArg) {
 	return make_uniq<ChiSqIndBindData>();
 }
 
-static unique_ptr<FunctionData> ChiSqIndBindCorrect(ClientContext &context, AggregateFunction &function,
-                                                    vector<unique_ptr<Expression>> &arguments) {
+STATS_DUCK_AGGREGATE_BIND(ChiSqIndBindCorrect) {
 	if (!arguments[2]->IsFoldable()) {
 		throw BinderException("chisq_independence: continuity must be a constant boolean");
 	}
 	Value val = ExpressionExecutor::EvaluateScalar(context, *arguments[2]);
 	auto bd = make_uniq<ChiSqIndBindData>();
 	bd->continuity = val.GetValue<bool>();
-	Function::EraseArgument(function, arguments, 2);
+	compat::EraseArgument(function, arguments, 2);
 	return std::move(bd);
 }
 
-static void ChiSqIndFinalize(Vector &state_vector, AggregateInputData &aggr_input_data, Vector &result, idx_t count,
+static void ChiSqIndFinalize(Vector &state_vector, compat::FinalizeInput &aggr_input_data, Vector &result, idx_t count,
                              idx_t offset) {
 	auto states = FlatVector::GetData<ChiSqIndependenceState *>(state_vector);
 	auto &children = StructVector::GetEntries(result);
@@ -222,14 +223,14 @@ static void ChiSqIndFinalize(Vector &state_vector, AggregateInputData &aggr_inpu
 		double df = static_cast<double>((n_rows - 1) * (n_cols - 1));
 		double p_value = 1.0 - stats_duck::ChiSquareCDF(chi_square, df);
 
-		FlatVector::GetData<string_t>(*children[0])[idx] =
-		    StringVector::AddString(*children[0], "Chi-square Independence");
-		FlatVector::GetData<double>(*children[1])[idx] = chi_square;
-		FlatVector::GetData<double>(*children[2])[idx] = df;
-		FlatVector::GetData<double>(*children[3])[idx] = p_value;
-		FlatVector::GetData<int64_t>(*children[4])[idx] = n;
-		FlatVector::GetData<int64_t>(*children[5])[idx] = n_rows;
-		FlatVector::GetData<int64_t>(*children[6])[idx] = n_cols;
+		compat::WriteData<string_t>(compat::Deref(children[0]))[idx] =
+		    StringVector::AddString(compat::Deref(children[0]), "Chi-square Independence");
+		compat::WriteData<double>(compat::Deref(children[1]))[idx] = chi_square;
+		compat::WriteData<double>(compat::Deref(children[2]))[idx] = df;
+		compat::WriteData<double>(compat::Deref(children[3]))[idx] = p_value;
+		compat::WriteData<int64_t>(compat::Deref(children[4]))[idx] = n;
+		compat::WriteData<int64_t>(compat::Deref(children[5]))[idx] = n_rows;
+		compat::WriteData<int64_t>(compat::Deref(children[6]))[idx] = n_cols;
 	}
 }
 
@@ -250,7 +251,7 @@ struct ChiSqGoFState {
 	StrMap<int64_t> *counts;
 };
 
-static void ChiSqGoFInit(const AggregateFunction &, data_ptr_t state_p) {
+STATS_DUCK_AGGREGATE_INIT(ChiSqGoFInit) {
 	auto &state = *reinterpret_cast<ChiSqGoFState *>(state_p);
 	state.counts = nullptr;
 }
@@ -302,7 +303,7 @@ static void ChiSqGoFDestroy(Vector &state_vector, AggregateInputData &, idx_t co
 	}
 }
 
-static void ChiSqGoFFinalize(Vector &state_vector, AggregateInputData &, Vector &result, idx_t count, idx_t offset) {
+static void ChiSqGoFFinalize(Vector &state_vector, compat::FinalizeInput &, Vector &result, idx_t count, idx_t offset) {
 	auto states = FlatVector::GetData<ChiSqGoFState *>(state_vector);
 	auto &children = StructVector::GetEntries(result);
 
@@ -334,13 +335,13 @@ static void ChiSqGoFFinalize(Vector &state_vector, AggregateInputData &, Vector 
 		double df = static_cast<double>(k - 1);
 		double p_value = 1.0 - stats_duck::ChiSquareCDF(chi_square, df);
 
-		FlatVector::GetData<string_t>(*children[0])[idx] =
-		    StringVector::AddString(*children[0], "Chi-square Goodness-of-Fit (uniform)");
-		FlatVector::GetData<double>(*children[1])[idx] = chi_square;
-		FlatVector::GetData<double>(*children[2])[idx] = df;
-		FlatVector::GetData<double>(*children[3])[idx] = p_value;
-		FlatVector::GetData<int64_t>(*children[4])[idx] = n;
-		FlatVector::GetData<int64_t>(*children[5])[idx] = k;
+		compat::WriteData<string_t>(compat::Deref(children[0]))[idx] =
+		    StringVector::AddString(compat::Deref(children[0]), "Chi-square Goodness-of-Fit (uniform)");
+		compat::WriteData<double>(compat::Deref(children[1]))[idx] = chi_square;
+		compat::WriteData<double>(compat::Deref(children[2]))[idx] = df;
+		compat::WriteData<double>(compat::Deref(children[3]))[idx] = p_value;
+		compat::WriteData<int64_t>(compat::Deref(children[4]))[idx] = n;
+		compat::WriteData<int64_t>(compat::Deref(children[5]))[idx] = k;
 	}
 }
 
@@ -358,13 +359,19 @@ void RegisterChiSquareTests(ExtensionLoader &loader) {
 	ind_set.AddFunction(MakeChiSqInd({LogicalType::VARCHAR, LogicalType::VARCHAR}, ChiSqIndBindNoArg));
 	ind_set.AddFunction(
 	    MakeChiSqInd({LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::BOOLEAN}, ChiSqIndBindCorrect));
-	loader.RegisterFunction(ind_set);
+	statsduck::RegisterDocumented(loader, std::move(ind_set),
+	                              "Chi-square test of independence between two categorical columns.",
+	                              {"row_var", "col_var", "continuity"},
+	                              "SELECT chisq_independence(sex, outcome) FROM patients");
 
 	AggregateFunction gof_fn("chisq_goodness_of_fit", {LogicalType::VARCHAR}, ChiSqGoFResultType(),
 	                          AggregateFunction::StateSize<ChiSqGoFState>, ChiSqGoFInit, ChiSqGoFUpdate, ChiSqGoFCombine,
 	                          ChiSqGoFFinalize, FunctionNullHandling::SPECIAL_HANDLING, nullptr, nullptr,
 	                          ChiSqGoFDestroy);
-	loader.RegisterFunction(gof_fn);
+	statsduck::RegisterDocumented(loader, std::move(gof_fn),
+	                              "Chi-square goodness-of-fit against a uniform distribution over the "
+	                              "observed categories.",
+	                              {"category"}, "SELECT chisq_goodness_of_fit(die_face) FROM rolls");
 }
 
 } // namespace duckdb
