@@ -32,16 +32,17 @@ VISUALISE bill_len AS x, bill_dep AS y FROM big DRAW point
 ----
 {"$schema":"https://vega.github.io/schema/vega-lite/v5.json","data":{"name":"layer_0"},"mark":"point","encoding":{"x":{"field":"x","type":"quantitative"},"y":{"field":"y","type":"quantitative"}}}	{layer_0='WITH big AS (SELECT * FROM penguins WHERE bill_len > 39.2) SELECT bill_len AS x, bill_dep AS y FROM big'}
 
-# An error inside the statement comes from our parser, not from DuckDB's
-# syntax error at the first keyword.
+# An error inside the statement comes from the extension (here the mark
+# lookup at plan time), not from DuckDB's syntax error at the first keyword.
 statement error
 VISUALISE bill_len AS x, bill_dep AS y FROM penguins DRAW nope
 ----
 unknown mark 'nope'
 
-# The word inside a string literal does not make a statement ours
-# (upstream's own guard).
-query I
-SELECT 'I love VISUALISE' AS s
+# A WITH statement that is not ours, with the word inside a string literal,
+# keeps DuckDB's own error: the claim scan skips string literals. (A valid
+# SELECT never reaches the extension, so it cannot test this.)
+statement error
+WITH c AS (SELECT 'visualise' AS s) SELEC s FROM c
 ----
-I love VISUALISE
+SELEC

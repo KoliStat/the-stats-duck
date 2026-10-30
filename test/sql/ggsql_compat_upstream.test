@@ -1,19 +1,31 @@
 # name: test/sql/ggsql_compat_upstream.test
-# description: Upstream ggsql examples that run unchanged here (block 1a of the 0.10 plan, #58)
+# description: The example statements of the ggsql.org pages, run as upstream wrote them (block 1a of the 0.10 plan, #58)
 # group: [stats_duck]
 
 require stats_duck
 
-# Every statement in this file is copied from a page of ggsql.org (the qmd
-# sources under doc/ in posit-dev/ggsql, read 2026-10-30 at ggsql 0.5.2), with
-# one substitution: the bundled data sources `ggsql:penguins` and
-# `ggsql:airquality` are replaced by tables of the same name and columns,
-# created below. The syntax is otherwise verbatim.
+# Every statement in this file is copied from a page of ggsql.org. The sources
+# are the qmd files under doc/ in posit-dev/ggsql, read 2026-10-30 at ggsql
+# 0.5.2. One substitution is made: the bundled data sources `ggsql:penguins`
+# and `ggsql:airquality` become the tables of the same name and columns that
+# are created below. One blank line inside a heatmap statement is removed,
+# because the test format ends a statement at a blank line.
 #
-# Passing statements: 7. The statements that do not run yet are listed at the
-# end of the file with the #58 item each one waits for; they move up here as
-# the items land. The number of passing statements is the progress measure of
-# block 1a.
+# A statement counts as passing when it parses and produces a spec. It is then
+# a `statement ok` block. Whether the spec means what upstream's chart means
+# is the job of the feature tests, and of #39 for the channel types. A
+# statement that does not run yet is a `statement error` block, with the #58
+# item it waits for in the comment above it. This file therefore fails the
+# day a feature makes a pending statement pass, and the block is moved up.
+# Our own parser messages are pinned. DuckDB's syntax errors are pinned to the
+# error type only (`Parser Error`), because the token they name differs
+# between the 1.x and 2.0 parsers.
+#
+# Three statements are accepted today but lose their `colour` channel without
+# an error. They are listed as comments at the end and do not count.
+#
+# Passing: 7 of 55 statements. Count the `statement ok` blocks after the two
+# CREATE TABLE statements.
 
 statement ok
 CREATE TABLE penguins AS
@@ -25,6 +37,21 @@ SELECT * FROM (VALUES
     ('Chinstrap', 'Dream',     46.5, 17.9, 192, 3500, 'female', 2009),
     ('Chinstrap', 'Dream',     50.0, 19.5, 196, 3900, 'male',   2009)
 ) AS t(species, island, bill_len, bill_dep, flipper_len, body_mass, sex, year);
+
+statement ok
+CREATE TABLE airquality AS
+SELECT * FROM (VALUES
+    (41,   190, 7.4,  67, 5, 1, DATE '1973-05-01'),
+    (36,   118, 8.0,  72, 5, 2, DATE '1973-05-02'),
+    (NULL, 149, 12.6, 74, 5, 3, DATE '1973-05-03'),
+    (23,   299, 8.6,  65, 6, 1, DATE '1973-06-01'),
+    (45,   252, 14.9, 81, 6, 2, DATE '1973-06-02'),
+    (115,  223, 5.7,  79, 6, 3, DATE '1973-06-03')
+) AS t(Ozone, Solar_R, Wind, Temp, Month, Day, Date);
+
+# ===========================================================================
+# Passing
+# ===========================================================================
 
 # gallery/examples/boxplot.qmd, first example
 statement ok
@@ -61,40 +88,565 @@ statement ok
 VISUALISE bill_len AS x, species AS y FROM penguins
   DRAW violin
 
-# ---------------------------------------------------------------------------
-# Not running yet, by page, with the #58 item each statement waits for.
+# ===========================================================================
+# Not running yet
+# ===========================================================================
+
+# get_started/first_plot.qmd: waits for SCALE ... RENAMING (Tier 3) and LABEL (1b)
+statement error
+VISUALISE bill_len AS x, bill_dep AS y, species AS fill FROM penguins
+DRAW point
+SCALE x
+  RENAMING * => '{} mm'
+LABEL
+  title => 'Relationship between bill dimensions in 3 species of penguins',
+  x => 'Bill length',
+  y => 'Bill depth'
+----
+Unknown SCALE operator 'RENAMING'
+
+# get_started/anatomy.qmd: waits for per-layer MAPPING and SETTING (not
+# scheduled), the smooth alias (1a), SCALE BINNED with SETTING breaks (1a, partly)
+statement error
+VISUALISE bill_len AS x, bill_dep AS y, species AS stroke FROM penguins
+DRAW point
+  MAPPING body_mass AS size
+  SETTING fill => null
+DRAW smooth
+  SETTING method => 'ols'
+SCALE stroke TO dark2
+SCALE BINNED size TO (4, 15)
+  SETTING breaks => 4
+----
+Expected 'DRAW', got 'MAPPING'
+
+# get_started/the_rest.qmd: waits for PROJECT TO polar (Tier 3)
+statement error
+VISUALISE species AS fill FROM penguins
+DRAW bar
+PROJECT TO polar
+----
+Expected 'DRAW', got 'PROJECT'
+
+# get_started/the_rest.qmd: waits for the radius aesthetic (Tier 3, polar)
+statement error
+VISUALISE species AS radius, species AS fill FROM penguins
+DRAW bar
+----
+'bar' requires 'x' aesthetic
+
+# get_started/the_rest.qmd: waits for PROJECT TO polar with SETTING and the
+# angle aesthetic (Tier 3)
+statement error
+VISUALISE species AS angle, species AS fill FROM penguins
+DRAW bar
+PROJECT TO polar SETTING radar => false
+----
+Expected 'DRAW', got 'PROJECT'
+
+# get_started/the_rest.qmd: waits for PROJECT TO polar (Tier 3), FACET with
+# SETTING free (1b), SCALE panel FROM (not scheduled)
+statement error
+VISUALISE species AS fill FROM penguins
+DRAW bar
+PROJECT TO polar
+FACET island
+  SETTING free => 'angle'
+SCALE panel FROM ('Biscoe', 'Dream')
+----
+Expected 'DRAW', got 'PROJECT'
+
+# get_started/the_rest.qmd: as above, plus LABEL (1b)
+statement error
+VISUALISE species AS fill FROM penguins
+DRAW bar
+PROJECT TO polar
+FACET island
+  SETTING free => 'angle'
+SCALE panel FROM ('Biscoe', 'Dream')
+LABEL
+  title => 'Distribution of penguin species between islands',
+  subtitle => 'Compared across 344 penguins',
+  fill => 'Species'
+----
+Expected 'DRAW', got 'PROJECT'
+
+# syntax/coord/cartesian.qmd: waits for PROJECT ... TO cartesian (Tier 3)
+statement error
+VISUALISE bill_len AS p, bill_dep AS q FROM penguins
+DRAW point
+PROJECT p, q TO cartesian
+----
+Expected 'DRAW', got 'PROJECT'
+
+# syntax/coord/cartesian.qmd: waits for PROJECT ... TO cartesian (Tier 3)
+statement error
+VISUALISE bill_len AS x, bill_dep AS y FROM penguins
+DRAW point
+PROJECT y, x TO cartesian
+----
+Expected 'DRAW', got 'PROJECT'
+
+# gallery/examples/scatterplot.qmd: waits for LABEL (1b)
+statement error
+VISUALISE bill_len AS x, bill_dep AS y FROM penguins
+DRAW point
+LABEL
+  title => 'Penguin Bill Dimensions',
+  x => 'Bill Length (mm)',
+  y => 'Bill Depth (mm)'
+----
+Expected 'DRAW', got 'LABEL'
+
+# gallery/examples/scatterplot.qmd: waits for LABEL (1b)
+statement error
+VISUALISE bill_len AS x, bill_dep AS y, species AS color FROM penguins
+DRAW point
+LABEL
+  title => 'Penguin Bill Dimensions by Species',
+  x => 'Bill Length (mm)',
+  y => 'Bill Depth (mm)'
+----
+Expected 'DRAW', got 'LABEL'
+
+# gallery/examples/scatterplot.qmd: waits for SCALE color TO a list of colours
+# (not scheduled) and LABEL (1b)
+statement error
+VISUALISE bill_len AS x, bill_dep AS y, species AS color FROM penguins
+DRAW point
+SCALE color TO ('DeepSkyBlue', 'Fuchsia', 'Lime')
+LABEL
+    title => 'Penguin Bill Dimensions by Species',
+    x => 'Bill Length (mm)',
+    y => 'Bill Depth (mm)'
+----
+Unknown SCALE operator '=>'
+
+# gallery/examples/scatterplot.qmd: waits for LABEL (1b)
+statement error
+VISUALISE
+  bill_len AS x,
+  bill_dep AS y,
+  species AS color,
+  island AS shape
+FROM penguins
+DRAW point
+LABEL
+    title => 'Penguin Bill Dimensions by Species',
+    x => 'Bill Length (mm)',
+    y => 'Bill Depth (mm)'
+----
+Expected 'DRAW', got 'LABEL'
+
+# gallery/examples/scatterplot.qmd: waits for per-layer MAPPING (not
+# scheduled), FILTER (1b) and SETTING color (1b)
+statement error
+VISUALISE
+  bill_len AS x,
+  bill_dep AS y
+FROM penguins
+DRAW point
+  MAPPING species AS color
+  FILTER island == 'Biscoe'
+DRAW point
+  SETTING color => 'grey'
+  FILTER island != 'Biscoe'
+----
+Expected 'DRAW', got 'MAPPING'
+
+# gallery/examples/bar-chart.qmd: waits for the trailing SELECT form (1a) and
+# LABEL (1b). DuckDB's own syntax error.
+statement error
+SELECT species, COUNT(*) as count FROM penguins
+GROUP BY species
+VISUALISE species AS x, count AS y, species AS fill
+DRAW bar
+LABEL
+  title => 'Penguin Count by Species',
+  x => 'Species',
+  y => 'Count'
+----
+Parser Error
+
+# gallery/examples/bar-chart.qmd: waits for the trailing SELECT form (1a),
+# PROJECT ... TO cartesian (Tier 3) and LABEL (1b). DuckDB's own syntax error.
+statement error
+SELECT species, COUNT(*) as count FROM penguins
+GROUP BY species
+VISUALISE species AS x, count AS y, species AS fill
+DRAW bar
+PROJECT y, x TO cartesian
+LABEL
+  title => 'Penguin Count by Species',
+  x => 'Species',
+  y => 'Count'
+----
+Parser Error
+
+# gallery/examples/bar-chart.qmd: waits for the trailing SELECT form (1a), bar
+# auto-count (1b) and LABEL (1b). DuckDB's own syntax error.
+statement error
+SELECT species FROM penguins
+VISUALISE species AS x
+DRAW bar
+LABEL
+  title => 'Penguin Distribution',
+  x => 'Species',
+  y => 'Count'
+----
+Parser Error
+
+# gallery/examples/histogram.qmd: waits for the trailing SELECT form (1a) and
+# LABEL (1b). DuckDB's own syntax error.
+statement error
+SELECT Temp FROM airquality
+VISUALISE Temp AS x
+DRAW histogram
+LABEL
+  title => 'Temperature Distribution',
+  x => 'Temperature (F)',
+  y => 'Count'
+----
+Parser Error
+
+# gallery/examples/histogram.qmd: as above, plus SETTING bins (1b).
+# DuckDB's own syntax error.
+statement error
+SELECT Temp FROM airquality
+VISUALISE Temp AS x
+DRAW histogram
+  SETTING bins => 15
+LABEL
+  title => 'Temperature Distribution (15 bins)',
+  x => 'Temperature (F)',
+  y => 'Count'
+----
+Parser Error
+
+# gallery/examples/histogram.qmd: as above, plus SETTING binwidth (1b).
+# DuckDB's own syntax error.
+statement error
+SELECT Temp FROM airquality
+VISUALISE Temp AS x
+DRAW histogram
+  SETTING binwidth => 5
+LABEL
+  title => 'Temperature Distribution (5 degree bins)',
+  x => 'Temperature (F)',
+  y => 'Count'
+----
+Parser Error
+
+# gallery/examples/histogram.qmd: as above, plus REMAPPING (Tier 3).
+# DuckDB's own syntax error.
+statement error
+SELECT Temp FROM airquality
+VISUALISE Temp AS x
+DRAW histogram
+  REMAPPING density AS y
+LABEL
+  title => 'Temperature Density',
+  x => 'Temperature (F)',
+  y => 'Density'
+----
+Parser Error
+
+# gallery/examples/boxplot.qmd: waits for SETTING position (1b)
+statement error
+VISUALISE species AS x, bill_len AS y, species AS fill FROM penguins
+  DRAW boxplot SETTING position => 'identity'
+----
+Expected 'DRAW', got 'SETTING'
+
+# gallery/examples/boxplot.qmd: waits for SETTING position => 'jitter' (1b)
+# and SETTING outliers (not scheduled)
+statement error
+VISUALISE species AS x, bill_len AS y FROM penguins
+  DRAW point SETTING position => 'jitter'
+  DRAW boxplot SETTING outliers => false
+----
+Expected 'DRAW', got 'SETTING'
+
+# gallery/examples/line-chart.qmd: waits for the trailing SELECT form (1a),
+# SCALE x VIA date (type scales, not scheduled) and LABEL (1b). DuckDB's own
+# syntax error.
+statement error
+SELECT Date, Temp FROM airquality
+VISUALISE Date AS x, Temp AS y
+DRAW line
+SCALE x VIA date
+LABEL
+  title => 'Daily Temperature',
+  x => 'Date',
+  y => 'Temperature (F)'
+----
+Parser Error
+
+# gallery/examples/line-chart.qmd: waits for the trailing SELECT form (1a),
+# SCALE ORDINAL color (type scales, not scheduled) and LABEL (1b). DuckDB's
+# own syntax error.
+statement error
+SELECT Day, Temp, Month FROM airquality
+VISUALISE Day AS x, Temp AS y, Month AS color
+DRAW line
+SCALE ORDINAL color
+LABEL
+  title => 'Daily Temperature by Month',
+  x => 'Date',
+  y => 'Temperature (F)'
+----
+Parser Error
+
+# gallery/examples/density.qmd: waits for the colour alias (1a) and
+# REMAPPING (Tier 3)
+statement error
+VISUALISE bill_len AS x, species AS colour FROM penguins
+  DRAW density REMAPPING intensity AS y
+----
+Expected 'DRAW', got 'REMAPPING'
+
+# gallery/examples/density.qmd: waits for the colour alias (1a), REMAPPING
+# (Tier 3) and SETTING position (1b)
+statement error
+VISUALISE bill_len AS x, species AS colour FROM penguins
+  DRAW density
+    REMAPPING intensity AS y
+    SETTING position => 'stack'
+----
+Expected 'DRAW', got 'REMAPPING'
+
+# gallery/examples/density.qmd: waits for the colour alias (1a), SETTING
+# opacity (1b) and a layer with MAPPING FROM its own source (not scheduled)
+statement error
+WITH mean_data AS (
+  SELECT
+    AVG(bill_len) AS bill_len,
+    species
+  FROM penguins
+  GROUP BY species
+)
+VISUALISE bill_len AS x, species AS colour FROM penguins
+  DRAW density SETTING opacity => 0.3
+  DRAW rule MAPPING FROM mean_data
+----
+Expected 'DRAW', got 'SETTING'
+
+# gallery/examples/density.qmd: waits for the colour alias (1a), upstream's
+# FACET <column> form (ours is FACET BY) and SETTING ncol (1b)
+statement error
+VISUALISE bill_len AS x, species AS colour FROM penguins
+  DRAW density
+  FACET species SETTING ncol => 1
+----
+Expected 'BY', got 'species'
+
+# gallery/examples/density.qmd: waits for the colour alias (1a) and the violin
+# SETTING side and width (not scheduled)
+statement error
+VISUALISE bill_len AS x, species AS y, species AS colour FROM penguins
+  DRAW violin SETTING side => 'top', width => 2
+----
+Expected 'DRAW', got 'SETTING'
+
+# gallery/examples/violin.qmd: waits for the colour alias (1a) and SETTING
+# position (1b)
+statement error
+VISUALISE species AS x, bill_len AS y, species AS colour FROM penguins
+  DRAW violin SETTING position => 'identity'
+----
+Expected 'DRAW', got 'SETTING'
+
+# gallery/examples/violin.qmd: waits for SETTING side (not scheduled)
+statement error
+VISUALISE bill_len AS x, species AS y FROM penguins
+  DRAW violin SETTING side => 'top'
+----
+Expected 'DRAW', got 'SETTING'
+
+# gallery/examples/violin.qmd: waits for the colour alias (1a), SETTING side
+# (not scheduled) and FILTER (1b)
+statement error
+VISUALISE bill_len AS x, species AS y, sex AS colour FROM penguins
+  DRAW violin
+    SETTING side => 'top'
+    FILTER sex == 'female'
+  DRAW violin
+    SETTING side => 'bottom'
+    FILTER sex == 'male'
+----
+Expected 'DRAW', got 'SETTING'
+
+# gallery/examples/violin.qmd: waits for SETTING position => 'jitter' and
+# SETTING opacity (1b)
+statement error
+VISUALISE species AS x, bill_len AS y FROM penguins
+  DRAW point SETTING position => 'jitter'
+  DRAW violin SETTING opacity => 0.3
+----
+Expected 'DRAW', got 'SETTING'
+
+# gallery/examples/violin.qmd: as above, plus SETTING distribution (not
+# scheduled)
+statement error
+VISUALISE species AS x, bill_len AS y FROM penguins
+  DRAW point SETTING position => 'jitter', distribution => 'density'
+  DRAW violin SETTING opacity => 0.3
+----
+Expected 'DRAW', got 'SETTING'
+
+# gallery/examples/heatmap.qmd: waits for the tile alias (1a)
+statement error
+VISUALISE Day AS x, Month AS y, Temp AS fill FROM airquality
+  DRAW tile
+----
+unknown mark 'tile'
+
+# gallery/examples/heatmap.qmd: waits for the tile alias (1a) and SETTING
+# stroke and opacity (1b)
+statement error
+VISUALISE Month AS y, Day AS x, Temp AS fill FROM airquality
+  DRAW tile
+    SETTING stroke => null, opacity => 1
+----
+Expected 'DRAW', got 'SETTING'
+
+# gallery/examples/heatmap.qmd: waits for the tile alias (1a) and SCALE ...
+# SETTING reverse (1a, as SCALE ... REVERSE)
+statement error
+VISUALISE Month AS y, Day AS x, Temp AS fill FROM airquality
+  DRAW tile
+  SCALE fill TO magma
+    SETTING reverse => true
+----
+Unknown SCALE operator 'SETTING'
+
+# gallery/examples/heatmap.qmd: waits for the trailing SELECT form (1a), the
+# tile alias (1a) and SCALE ... FROM (lo, hi) TO (partly ours). DuckDB's own
+# syntax error. Upstream has a blank line before VISUALISE; removed here.
+statement error
+SELECT *,
+  Temp * 1.0 - AVG(Temp) OVER (PARTITION BY Month) AS centered
+FROM airquality
+VISUALISE Month AS y, Day AS x, centered AS fill
+  DRAW tile
+  SCALE fill FROM (-20, 20) TO vik
+----
+Parser Error
+
+# gallery/examples/faceted.qmd: waits for the trailing SELECT form (1a),
+# upstream's FACET <column> form and LABEL (1b). DuckDB's own syntax error.
+statement error
+SELECT bill_len, bill_dep, species FROM penguins
+VISUALISE bill_len AS x, bill_dep AS y
+DRAW point
+FACET species
+LABEL
+  title => 'Bill Dimensions by Species',
+  x => 'Bill Length (mm)',
+  y => 'Bill Depth (mm)'
+----
+Parser Error
+
+# gallery/examples/faceted.qmd: as above, with FACET a BY b (upstream's BY
+# means a grid; ours introduces the facet list). DuckDB's own syntax error.
+statement error
+SELECT bill_len, bill_dep, species, island FROM penguins
+VISUALISE bill_len AS x, bill_dep AS y
+DRAW point
+FACET species BY island
+LABEL
+  title => 'Bill Dimensions by Species and Island',
+  x => 'Bill Length (mm)',
+  y => 'Bill Depth (mm)'
+----
+Parser Error
+
+# gallery/examples/faceted.qmd: as above, plus FACET ... SETTING free (1b).
+# DuckDB's own syntax error.
+statement error
+SELECT bill_len, bill_dep, species FROM penguins
+VISUALISE bill_len AS x, bill_dep AS y
+DRAW point
+FACET species SETTING free => 'y'
+LABEL
+  title => 'Bill Dimensions (Free Y Scale)',
+  x => 'Bill Length (mm)',
+  y => 'Bill Depth (mm)'
+----
+Parser Error
+
+# gallery/examples/multi-layer.qmd: waits for the trailing SELECT form (1a),
+# SETTING color and size (1b), SCALE x VIA date (not scheduled) and LABEL
+# (1b). DuckDB's own syntax error.
+statement error
+SELECT Date, Temp FROM airquality
+VISUALISE Date AS x, Temp AS y
+DRAW line
+  SETTING color => 'steelblue'
+DRAW point
+  SETTING size => 4, color => 'darkblue'
+SCALE x VIA date
+LABEL
+  title => 'Temperature with Line and Points',
+  x => 'Date',
+  y => 'Temperature (F)'
+----
+Parser Error
+
+# gallery/examples/multi-layer.qmd: waits for the trailing SELECT form (1a),
+# per-layer MAPPING (not scheduled), SCALE x VIA date (not scheduled) and
+# LABEL (1b). DuckDB's own syntax error.
+statement error
+SELECT Date, Temp, Ozone FROM airquality
+VISUALISE Date AS x
+DRAW line
+  MAPPING Temp AS y, 'Temperature' AS color
+DRAW line
+  MAPPING Ozone AS y, 'Ozone' AS color
+SCALE x VIA date
+LABEL
+  title => 'Temperature and Ozone Over Time',
+  x => 'Date',
+  y => 'Value'
+----
+Parser Error
+
+# gallery/examples/multi-layer.qmd: waits for VISUALISE without a mapping of
+# its own and per-layer MAPPING ... FROM (not scheduled), SETTING size (1b),
+# SCALE x VIA date (not scheduled) and LABEL (1b)
+statement error
+WITH temps AS (
+  SELECT Date, Temp as value FROM airquality
+),
+ozone AS (
+  SELECT Date, Ozone as value FROM airquality WHERE Ozone IS NOT NULL
+)
+VISUALISE
+DRAW line
+  MAPPING Date AS x, value AS y, 'Temperature' AS color FROM temps
+DRAW point
+  MAPPING Date AS x, value AS y, 'Ozone' AS color FROM ozone
+  SETTING size => 3
+SCALE x VIA date
+LABEL
+  title => 'Temperature vs Ozone',
+  x => 'Date',
+  y => 'Value'
+----
+Expected expression after
+
+# ===========================================================================
+# Accepted today, but wrong: the `colour` channel is dropped without an error
+# (the spec has no color encoding). These wait for the colour alias (1a) and
+# do not count as passing. They become `statement ok` blocks with a feature
+# test of the channel when the alias lands.
 #
-# get_started/the_rest.qmd: PROJECT TO polar (Tier 3) on every example; the
-#   last two also need FACET ... SETTING free (1b), SCALE panel FROM and LABEL.
-# syntax/coord/cartesian.qmd: PROJECT ... TO cartesian (Tier 3).
-# gallery/examples/density.qmd: the colour spelling (1a), then REMAPPING
-#   (Tier 3), SETTING position and opacity (1b), DRAW rule MAPPING FROM (per-
-#   layer MAPPING and FROM, not scheduled), FACET ... SETTING ncol (1b),
-#   violin SETTING side and width (not scheduled).
-# gallery/examples/violin.qmd: the colour spelling (1a) for three examples;
-#   SETTING position, side, opacity, jitter and distribution (1b and not
-#   scheduled); FILTER (1b).
-# gallery/examples/heatmap.qmd: the tile mark alias (1a), then SETTING stroke
-#   and opacity (1b), SCALE fill TO with SETTING reverse (1a, partly), the
-#   trailing SELECT form (1a) and SCALE fill FROM ... TO.
-# gallery/examples/faceted.qmd: the trailing SELECT form (1a), LABEL (1b),
-#   FACET a BY b (upstream's BY means something else than ours), FACET ...
-#   SETTING free (1b).
-# gallery/examples/multi-layer.qmd: the trailing SELECT form (1a), SETTING
-#   color and size (1b), per-layer MAPPING and FROM (not scheduled), SCALE x
-#   VIA date (type scales, not scheduled), LABEL (1b), VISUALISE with no
-#   mapping of its own.
-# get_started/first_plot.qmd: SCALE x RENAMING (Tier 3), LABEL (1b).
-# get_started/anatomy.qmd: per-layer MAPPING and SETTING (not scheduled, 1b),
-#   DRAW smooth SETTING method (1b), SCALE stroke TO (Tier 1 scale items do
-#   not cover TO), SCALE BINNED ... TO with SETTING breaks (1a, partly).
-# gallery/examples/scatterplot.qmd: LABEL (1b) on every example; the last one
-#   also needs per-layer MAPPING, FILTER (1b) and SETTING color (1b).
-# gallery/examples/bar-chart.qmd: the trailing SELECT ... VISUALISE form (1a),
-#   LABEL (1b), bar auto-count (1b), PROJECT y, x TO cartesian (Tier 3).
-# gallery/examples/histogram.qmd: the trailing SELECT form (1a), LABEL (1b),
-#   SETTING bins and binwidth (1b), REMAPPING density AS y (Tier 3).
-# gallery/examples/boxplot.qmd: SETTING position => 'identity', SETTING
-#   outliers => false and DRAW point SETTING position => 'jitter' (1b).
-# gallery/examples/line-chart.qmd: the trailing SELECT form (1a), SCALE x VIA
-#   date and SCALE ORDINAL color (type scales, not scheduled), LABEL (1b).
+# gallery/examples/density.qmd
+#   VISUALISE bill_len AS x, species AS colour FROM penguins
+#     DRAW density
+# gallery/examples/violin.qmd
+#   VISUALISE species AS x, bill_len AS y, island AS colour FROM penguins
+#     DRAW violin
+# gallery/examples/violin.qmd
+#   VISUALISE species AS x, bill_len AS y, species AS colour FROM penguins
+#     DRAW violin

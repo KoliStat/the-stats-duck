@@ -14,10 +14,13 @@ that name is preserved across releases for backward compatibility.
 
 - **`VISUALISE` is accepted as a spelling of `VISUALIZE`** (#84), as upstream
   ggsql accepts both. This is the first item of the 0.10 VISUALIZE block,
-  which closes the gap with ggsql tracked in #58. The new
-  `test/sql/ggsql_compat_upstream.test` runs upstream's documented examples
-  unchanged, apart from the bundled `ggsql:` data sources, and is the
-  progress measure of that block: 7 statements pass today.
+  which converges on ggsql's syntax (#58). The new
+  `test/sql/ggsql_compat_upstream.test` holds the example statements of the
+  ggsql.org pages, with the bundled `ggsql:` data sources replaced by tables.
+  A statement counts as passing when it parses and produces a spec. The
+  pending statements are kept as expected errors, so the file fails the day
+  a feature makes one of them pass and the count has to be updated. The
+  error messages of the parser now name the spelling the user wrote.
 
 ## [0.9.0-here-s-your-nine-pence] - 2026-10-28
 
