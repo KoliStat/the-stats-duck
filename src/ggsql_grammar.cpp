@@ -172,6 +172,11 @@ string JsonEscape(const string &s) {
 	return out;
 }
 
+// The statement keyword, in both spellings that upstream ggsql accepts (#84).
+static bool IsVisualizeKeyword(const string &token) {
+	return IEqual(token, "VISUALIZE") || IEqual(token, "VISUALISE");
+}
+
 ParseResult ParseGgsql(const string &query) {
 	ParseResult result;
 	auto tokenized = Tokenize(query);
@@ -205,7 +210,7 @@ ParseResult ParseGgsql(const string &query) {
 	// same as `WITH t AS (…), u AS (…)`.
 	if (!at_end() && IEqual(peek(), "WITH")) {
 		string with_text;
-		while (!at_end() && !IEqual(peek(), "VISUALIZE")) {
+		while (!at_end() && !IsVisualizeKeyword(peek())) {
 			if (!with_text.empty()) {
 				with_text += " ";
 			}
@@ -218,9 +223,11 @@ ParseResult ParseGgsql(const string &query) {
 		result.stmt.with_clause = std::move(with_text);
 	}
 
-	if (!consume("VISUALIZE")) {
+	if (at_end() || !IsVisualizeKeyword(tokens[i])) {
+		result.error = string("Expected 'VISUALIZE', got ") + (at_end() ? "end of input" : "'" + tokens[i] + "'");
 		return result;
 	}
+	i++;
 
 	// mapping_list := <expr> AS <ident> (',' <expr> AS <ident>)*
 	//

@@ -8,6 +8,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 The extension installs and loads in DuckDB under the technical name `stats_duck` —
 that name is preserved across releases for backward compatibility.
 
+## [Unreleased]
+
+### Added
+
+- **`VISUALISE` is accepted as a spelling of `VISUALIZE`** (#84), as upstream
+  ggsql accepts both. This is the first item of the 0.10 VISUALIZE block,
+  which closes the gap with ggsql tracked in #58. The new
+  `test/sql/ggsql_compat_upstream.test` runs upstream's documented examples
+  unchanged, apart from the bundled `ggsql:` data sources, and is the
+  progress measure of that block: 7 statements pass today.
+
 ## [0.9.0-here-s-your-nine-pence] - 2026-10-28
 
 ### Added

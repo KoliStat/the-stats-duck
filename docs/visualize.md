@@ -18,6 +18,9 @@ rows to `vega-embed`.
 VISUALIZE <expr> AS <aesthetic> [, …] FROM <table> DRAW <mark> [clauses…]
 ```
 
+The keyword is also accepted as `VISUALISE`, the spelling upstream ggsql
+documents; both spellings produce the same result.
+
 Every `VISUALIZE` returns **one row, two columns**:
 
 | column | type | what it is |
@@ -28,8 +31,8 @@ Every `VISUALIZE` returns **one row, two columns**:
 The client renders it by running each layer's SQL and passing the results to
 vega-embed through its `datasets` API (the spec references them by name).
 
-> A statement that doesn't start with `VISUALIZE` (or `WITH … VISUALIZE`) is
-> handled by DuckDB's normal SQL parser, untouched.
+> A statement that doesn't start with `VISUALIZE` or `VISUALISE` (or `WITH …`
+> followed by one of them) is handled by DuckDB's normal SQL parser, untouched.
 
 ---
 

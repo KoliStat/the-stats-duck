@@ -1,0 +1,100 @@
+# name: test/sql/ggsql_compat_upstream.test
+# description: Upstream ggsql examples that run unchanged here (block 1a of the 0.10 plan, #58)
+# group: [stats_duck]
+
+require stats_duck
+
+# Every statement in this file is copied from a page of ggsql.org (the qmd
+# sources under doc/ in posit-dev/ggsql, read 2026-10-30 at ggsql 0.5.2), with
+# one substitution: the bundled data sources `ggsql:penguins` and
+# `ggsql:airquality` are replaced by tables of the same name and columns,
+# created below. The syntax is otherwise verbatim.
+#
+# Passing statements: 7. The statements that do not run yet are listed at the
+# end of the file with the #58 item each one waits for; they move up here as
+# the items land. The number of passing statements is the progress measure of
+# block 1a.
+
+statement ok
+CREATE TABLE penguins AS
+SELECT * FROM (VALUES
+    ('Adelie',    'Torgersen', 39.1, 18.7, 181, 3750, 'male',   2007),
+    ('Adelie',    'Biscoe',    39.5, 17.4, 186, 3800, 'female', 2007),
+    ('Gentoo',    'Biscoe',    46.1, 13.2, 211, 4500, 'female', 2008),
+    ('Gentoo',    'Biscoe',    50.0, 16.3, 230, 5700, 'male',   2008),
+    ('Chinstrap', 'Dream',     46.5, 17.9, 192, 3500, 'female', 2009),
+    ('Chinstrap', 'Dream',     50.0, 19.5, 196, 3900, 'male',   2009)
+) AS t(species, island, bill_len, bill_dep, flipper_len, body_mass, sex, year);
+
+# gallery/examples/boxplot.qmd, first example
+statement ok
+VISUALISE species AS x, bill_len AS y FROM penguins
+  DRAW boxplot
+
+# gallery/examples/boxplot.qmd, fill by a second column
+statement ok
+VISUALISE species AS x, bill_len AS y, island AS fill FROM penguins
+  DRAW boxplot
+
+# gallery/examples/boxplot.qmd, fill by the x column
+statement ok
+VISUALISE species AS x, bill_len AS y, species AS fill FROM penguins
+  DRAW boxplot
+
+# gallery/examples/boxplot.qmd, horizontal
+statement ok
+VISUALISE bill_len AS x, species AS y, island AS fill FROM penguins
+  DRAW boxplot
+
+# get_started/anatomy.qmd, the histogram
+statement ok
+VISUALISE body_mass AS x FROM penguins
+DRAW histogram
+
+# gallery/examples/violin.qmd, first example
+statement ok
+VISUALISE species AS x, bill_len AS y FROM penguins
+  DRAW violin
+
+# gallery/examples/violin.qmd, horizontal
+statement ok
+VISUALISE bill_len AS x, species AS y FROM penguins
+  DRAW violin
+
+# ---------------------------------------------------------------------------
+# Not running yet, by page, with the #58 item each statement waits for.
+#
+# get_started/the_rest.qmd: PROJECT TO polar (Tier 3) on every example; the
+#   last two also need FACET ... SETTING free (1b), SCALE panel FROM and LABEL.
+# syntax/coord/cartesian.qmd: PROJECT ... TO cartesian (Tier 3).
+# gallery/examples/density.qmd: the colour spelling (1a), then REMAPPING
+#   (Tier 3), SETTING position and opacity (1b), DRAW rule MAPPING FROM (per-
+#   layer MAPPING and FROM, not scheduled), FACET ... SETTING ncol (1b),
+#   violin SETTING side and width (not scheduled).
+# gallery/examples/violin.qmd: the colour spelling (1a) for three examples;
+#   SETTING position, side, opacity, jitter and distribution (1b and not
+#   scheduled); FILTER (1b).
+# gallery/examples/heatmap.qmd: the tile mark alias (1a), then SETTING stroke
+#   and opacity (1b), SCALE fill TO with SETTING reverse (1a, partly), the
+#   trailing SELECT form (1a) and SCALE fill FROM ... TO.
+# gallery/examples/faceted.qmd: the trailing SELECT form (1a), LABEL (1b),
+#   FACET a BY b (upstream's BY means something else than ours), FACET ...
+#   SETTING free (1b).
+# gallery/examples/multi-layer.qmd: the trailing SELECT form (1a), SETTING
+#   color and size (1b), per-layer MAPPING and FROM (not scheduled), SCALE x
+#   VIA date (type scales, not scheduled), LABEL (1b), VISUALISE with no
+#   mapping of its own.
+# get_started/first_plot.qmd: SCALE x RENAMING (Tier 3), LABEL (1b).
+# get_started/anatomy.qmd: per-layer MAPPING and SETTING (not scheduled, 1b),
+#   DRAW smooth SETTING method (1b), SCALE stroke TO (Tier 1 scale items do
+#   not cover TO), SCALE BINNED ... TO with SETTING breaks (1a, partly).
+# gallery/examples/scatterplot.qmd: LABEL (1b) on every example; the last one
+#   also needs per-layer MAPPING, FILTER (1b) and SETTING color (1b).
+# gallery/examples/bar-chart.qmd: the trailing SELECT ... VISUALISE form (1a),
+#   LABEL (1b), bar auto-count (1b), PROJECT y, x TO cartesian (Tier 3).
+# gallery/examples/histogram.qmd: the trailing SELECT form (1a), LABEL (1b),
+#   SETTING bins and binwidth (1b), REMAPPING density AS y (Tier 3).
+# gallery/examples/boxplot.qmd: SETTING position => 'identity', SETTING
+#   outliers => false and DRAW point SETTING position => 'jitter' (1b).
+# gallery/examples/line-chart.qmd: the trailing SELECT form (1a), SCALE x VIA
+#   date and SCALE ORDINAL color (type scales, not scheduled), LABEL (1b).
