@@ -463,12 +463,12 @@ static ParserExtensionParseResult GgsqlParseString(ParserExtensionInfo *, const 
 	SkipLeadingCommentsAndWhitespace(trimmed);
 	StringUtil::Trim(trimmed); // trailing whitespace too
 	auto lower = StringUtil::Lower(trimmed);
-	if (StartsWithIdentifier(lower, "visualize")) {
-		// Direct path — bare VISUALIZE statement.
+	if (StartsWithIdentifier(lower, "visualize") || StartsWithIdentifier(lower, "visualise")) {
+		// Direct path — bare VISUALIZE statement, in either spelling (#84).
 	} else if (StartsWithIdentifier(lower, "with")) {
 		// Could be ours (WITH … VISUALIZE …) or DuckDB's (WITH … SELECT …).
-		// Only claim it if a top-level VISUALIZE keyword exists in the
-		// input — case-insensitive, whole-word match, ignoring strings /
+		// Only claim it if a top-level VISUALIZE or VISUALISE keyword exists in
+		// the input — case-insensitive, whole-word match, ignoring strings /
 		// quoted identifiers / parenthesised expressions. The cheap
 		// approach is a manual scan rather than a full tokenize: keep
 		// track of paren depth and skip over string/quoted-ident content,
@@ -508,6 +508,7 @@ static ParserExtensionParseResult GgsqlParseString(ParserExtensionInfo *, const 
 				continue;
 			}
 			// At depth 0: try to match the whole-word "visualize" case-insensitively.
+			// The two spellings differ at index 7 only ('z' or 's').
 			if ((c == 'v' || c == 'V') && i + 9 <= trimmed.size()) {
 				static const char kKeyword[] = "visualize";
 				bool match = true;
@@ -515,6 +516,9 @@ static ParserExtensionParseResult GgsqlParseString(ParserExtensionInfo *, const 
 					char a = trimmed[i + k];
 					char b = kKeyword[k];
 					char a_lower = (a >= 'A' && a <= 'Z') ? (a - 'A' + 'a') : a;
+					if (k == 7 && a_lower == 's') {
+						continue;
+					}
 					if (a_lower != b) {
 						match = false;
 						break;
@@ -615,7 +619,7 @@ static bool IsClauseKeyword(const string &text) {
 	    "SELECT",    "VALUES",   "EXISTS", "JOIN",   "THEN",   "ELSE",      "WHEN",  "OVER",      "BETWEEN",
 	    "LIKE",      "ILIKE",    "IS",     "WITH",   "HAVING", "LIMIT",     "OFFSET", "UNION",    "EXCEPT",
 	    "INTERSECT", "ALL",      "DISTINCT", "CASE", "END",    "USING",     "ANY",   "SOME",      "INTO",
-	    "GROUP",     "ORDER",    "RETURNING", "SET", "VISUALIZE", "DRAW",   "FACET", "SCALE",     "TITLE",
+	    "GROUP",     "ORDER",    "RETURNING", "SET", "VISUALIZE", "VISUALISE", "DRAW", "FACET", "SCALE", "TITLE",
 	    "SUBTITLE",  "DOMAIN",   "LABEL",  "TO",     "ROWS",   "COLUMNS",   "ZERO",  "RETURN"};
 	auto upper = StringUtil::Upper(text);
 	for (auto word : kWords) {

@@ -172,6 +172,11 @@ string JsonEscape(const string &s) {
 	return out;
 }
 
+// The statement keyword, in both spellings that upstream ggsql accepts (#84).
+static bool IsVisualizeKeyword(const string &token) {
+	return IEqual(token, "VISUALIZE") || IEqual(token, "VISUALISE");
+}
+
 ParseResult ParseGgsql(const string &query) {
 	ParseResult result;
 	auto tokenized = Tokenize(query);
@@ -187,10 +192,13 @@ ParseResult ParseGgsql(const string &query) {
 		static const string empty;
 		return at_end() ? empty : tokens[i];
 	};
+	// The error for a missing keyword: what was expected and what was found.
+	auto fail_expected = [&](const char *shown) {
+		result.error = string("Expected '") + shown + "', got " + (at_end() ? "end of input" : "'" + tokens[i] + "'");
+	};
 	auto consume = [&](const char *kw) -> bool {
 		if (at_end() || !IEqual(tokens[i], kw)) {
-			result.error = string("Expected '") + kw + "', got " +
-			               (at_end() ? "end of input" : "'" + tokens[i] + "'");
+			fail_expected(kw);
 			return false;
 		}
 		i++;
@@ -205,22 +213,27 @@ ParseResult ParseGgsql(const string &query) {
 	// same as `WITH t AS (…), u AS (…)`.
 	if (!at_end() && IEqual(peek(), "WITH")) {
 		string with_text;
-		while (!at_end() && !IEqual(peek(), "VISUALIZE")) {
+		while (!at_end() && !IsVisualizeKeyword(peek())) {
 			if (!with_text.empty()) {
 				with_text += " ";
 			}
 			with_text += tokens[i++];
 		}
 		if (at_end()) {
-			result.error = "WITH clause is not followed by VISUALIZE";
+			result.error = "WITH clause is not followed by VISUALIZE or VISUALISE";
 			return result;
 		}
 		result.stmt.with_clause = std::move(with_text);
 	}
 
-	if (!consume("VISUALIZE")) {
+	// The statement keyword, in either spelling. The spelling the user wrote
+	// is kept for the error messages below.
+	if (at_end() || !IsVisualizeKeyword(tokens[i])) {
+		fail_expected("VISUALIZE");
 		return result;
 	}
+	const string keyword = StringUtil::Upper(tokens[i]);
+	i++;
 
 	// mapping_list := <expr> AS <ident> (',' <expr> AS <ident>)*
 	//
@@ -247,7 +260,7 @@ ParseResult ParseGgsql(const string &query) {
 		}
 
 		if (boundary == i) {
-			result.error = "Expected expression after VISUALIZE (or ',')";
+			result.error = "Expected expression after " + keyword + " (or ',')";
 			return result;
 		}
 
@@ -542,7 +555,7 @@ ParseResult ParseGgsql(const string &query) {
 	}
 
 	if (!at_end()) {
-		result.error = "Unexpected token '" + tokens[i] + "' after VISUALIZE clause";
+		result.error = "Unexpected token '" + tokens[i] + "' after " + keyword + " clause";
 		return result;
 	}
 
