@@ -1002,11 +1002,11 @@ example of every mark and clause.
 
 **See also:** [posit-dev/ggsql-duckdb](https://github.com/posit-dev/ggsql-duckdb)
 — the dedicated grammar-of-graphics DuckDB extension from the ggplot2 team that
-inspired this syntax. `stats_duck`'s
-`VISUALIZE` is **not** a reimplementation of ggsql and doesn't track its syntax — it's
-a deliberately minimal, WebAssembly-friendly built-in supporting only a fixed set of
-marks and clauses, for plotting stats output inline. For the full grammar of graphics,
-use ggsql.
+inspired this syntax. `stats_duck`'s `VISUALIZE` is not a reimplementation of
+ggsql. It is a WebAssembly-friendly built-in with a fixed set of marks and
+clauses, for plotting stats output inline. Since 0.10 its syntax converges on
+ggsql's where the two overlap; the remaining gap is tracked in issue #58. For
+the full grammar of graphics, use ggsql.
 
 ```
 [WITH [RECURSIVE] <cte> AS (...) [, <cte> AS (...)]*]
@@ -1018,6 +1018,9 @@ DRAW <mark> [STAT <identity|smooth|summary>] (DRAW <mark> [STAT ...])*
 [TITLE '<text>' [SUBTITLE '<text>']]
 ```
 
+The keyword is also accepted as `VISUALISE`, the spelling upstream ggsql
+documents; both spellings produce the same result.
+
 Multiple `SCALE` options may be **stacked** on one channel
 (`SCALE x LABEL 'Bill Depth' ZERO false`) or split across repeated `SCALE x`
 clauses — they merge into one scale/axis block either way. SQL comments
@@ -1028,8 +1031,8 @@ inside a string literal).
 A leading `WITH` clause is supported; CTEs are scoped to each layer's
 projected SQL so they compose with wrapping marks (`line`, `bar`, `area`,
 `errorband`, `regression`) without extra work. `WITH … SELECT …` statements
-without a top-level `VISUALIZE` keyword fall through to DuckDB's normal SQL
-parser unchanged.
+without a top-level `VISUALIZE` or `VISUALISE` keyword fall through to DuckDB's
+normal SQL parser unchanged.
 
 **Marks:** `point`, `line`, `bar`, `histogram`, `text`, `area`, `rule`, `tick`,
 `errorbar`, `errorband`, `boxplot`, `violin`, `heatmap`, `density`, `regression`. Custom
