@@ -1038,10 +1038,12 @@ normal SQL parser unchanged.
 `errorbar`, `errorband`, `boxplot`, `violin`, `heatmap`, `density`, `regression`. Custom
 marks register as `visualize_mark_v1_<name>` scalar functions and are discovered
 via DuckDB's catalog, so other extensions can ship their own marks without
-modifying stats_duck.
+modifying stats_duck. Upstream ggsql's mark names are accepted as aliases:
+`range` for `errorbar`, `ribbon` for `errorband`, `tile` for `heatmap`, and
+`smooth` for `line STAT smooth`.
 
-`heatmap` is a `rect` mark with ordinal x/y and quantitative color (correlation
-matrices, contingency tables). `density` runs Vega-Lite's KDE on the `x`
+`heatmap` is a `rect` mark with ordinal x/y and a quantitative value on `color`
+or `fill` (correlation matrices, contingency tables). `density` runs Vega-Lite's KDE on the `x`
 aesthetic, grouped by `color` if mapped (one curve per category). `violin`
 renders one horizontal density per category of `x`, laid out via vega-lite's
 `column` facet (composes with `FACET BY ... ROWS` but conflicts with
@@ -1051,6 +1053,9 @@ via Vega-Lite's regression transform, also grouped by `color`. Use
 
 **Aesthetic channels:** `x`, `y`, `color`, `fill`, `stroke`, `shape`, `size`,
 `opacity`, `tooltip`, `text`, `x2`, `y2`. Unknown channels are silently dropped.
+Upstream ggsql's channel names are accepted as aliases: `colour` for `color`,
+`label` for `text`, `xmin`/`xmax` for `x`/`x2`, `ymin`/`ymax` for `y`/`y2`,
+`xend`/`yend` for `x2`/`y2`. The layer SQL and the spec carry our name.
 
 **Type overrides:** append `:quantitative`, `:ordinal`, `:nominal`, or
 `:temporal` to an aesthetic to force its Vega-Lite type

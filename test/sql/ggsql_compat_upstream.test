@@ -21,9 +21,6 @@ require stats_duck
 # error type only (`Parser Error`), because the token they name differs
 # between the 1.x and 2.0 parsers.
 #
-# Three statements are accepted today but lose their `colour` channel without
-# an error. They are listed as comments at the end and do not count.
-#
 # The progress number is the count of `statement ok` blocks after the two
 # CREATE TABLE statements, out of the 55 upstream statements. It is not
 # written here, so it cannot go stale: count the blocks when reporting.
@@ -89,6 +86,26 @@ statement ok
 VISUALISE bill_len AS x, species AS y FROM penguins
   DRAW violin
 
+# gallery/examples/density.qmd, colour by species (the colour alias, #88)
+statement ok
+VISUALISE bill_len AS x, species AS colour FROM penguins
+  DRAW density
+
+# gallery/examples/violin.qmd, colour by a second column (the colour alias, #88)
+statement ok
+VISUALISE species AS x, bill_len AS y, island AS colour FROM penguins
+  DRAW violin
+
+# gallery/examples/violin.qmd, colour by the x column (the colour alias, #88)
+statement ok
+VISUALISE species AS x, bill_len AS y, species AS colour FROM penguins
+  DRAW violin
+
+# gallery/examples/heatmap.qmd, first example (the tile alias and fill, #88)
+statement ok
+VISUALISE Day AS x, Month AS y, Temp AS fill FROM airquality
+  DRAW tile
+
 # ===========================================================================
 # Not running yet
 # ===========================================================================
@@ -107,7 +124,7 @@ LABEL
 Unknown SCALE operator 'RENAMING'
 
 # get_started/anatomy.qmd: waits for per-layer MAPPING and SETTING (not
-# scheduled), the smooth alias (1a), SCALE BINNED with SETTING breaks (1a, partly)
+# scheduled) and SCALE BINNED with SETTING breaks (1a, partly)
 statement error
 VISUALISE bill_len AS x, bill_dep AS y, species AS stroke FROM penguins
 DRAW point
@@ -398,16 +415,15 @@ LABEL
 ----
 Parser Error
 
-# gallery/examples/density.qmd: waits for the colour alias (1a) and
-# REMAPPING (Tier 3)
+# gallery/examples/density.qmd: waits for REMAPPING (Tier 3)
 statement error
 VISUALISE bill_len AS x, species AS colour FROM penguins
   DRAW density REMAPPING intensity AS y
 ----
 Expected 'DRAW', got 'REMAPPING'
 
-# gallery/examples/density.qmd: waits for the colour alias (1a), REMAPPING
-# (Tier 3) and SETTING position (1b)
+# gallery/examples/density.qmd: waits for REMAPPING (Tier 3) and SETTING
+# position (1b)
 statement error
 VISUALISE bill_len AS x, species AS colour FROM penguins
   DRAW density
@@ -416,8 +432,8 @@ VISUALISE bill_len AS x, species AS colour FROM penguins
 ----
 Expected 'DRAW', got 'REMAPPING'
 
-# gallery/examples/density.qmd: waits for the colour alias (1a), SETTING
-# opacity (1b) and a layer with MAPPING FROM its own source (not scheduled)
+# gallery/examples/density.qmd: waits for SETTING opacity (1b) and a layer
+# with MAPPING FROM its own source (not scheduled)
 statement error
 WITH mean_data AS (
   SELECT
@@ -432,8 +448,8 @@ VISUALISE bill_len AS x, species AS colour FROM penguins
 ----
 Expected 'DRAW', got 'SETTING'
 
-# gallery/examples/density.qmd: waits for the colour alias (1a), upstream's
-# FACET <column> form (ours is FACET BY) and SETTING ncol (1b)
+# gallery/examples/density.qmd: waits for upstream's FACET <column> form (ours
+# is FACET BY) and SETTING ncol (1b)
 statement error
 VISUALISE bill_len AS x, species AS colour FROM penguins
   DRAW density
@@ -441,16 +457,15 @@ VISUALISE bill_len AS x, species AS colour FROM penguins
 ----
 Expected 'BY', got 'species'
 
-# gallery/examples/density.qmd: waits for the colour alias (1a) and the violin
-# SETTING side and width (not scheduled)
+# gallery/examples/density.qmd: waits for the violin SETTING side and width
+# (not scheduled)
 statement error
 VISUALISE bill_len AS x, species AS y, species AS colour FROM penguins
   DRAW violin SETTING side => 'top', width => 2
 ----
 Expected 'DRAW', got 'SETTING'
 
-# gallery/examples/violin.qmd: waits for the colour alias (1a) and SETTING
-# position (1b)
+# gallery/examples/violin.qmd: waits for SETTING position (1b)
 statement error
 VISUALISE species AS x, bill_len AS y, species AS colour FROM penguins
   DRAW violin SETTING position => 'identity'
@@ -464,8 +479,8 @@ VISUALISE bill_len AS x, species AS y FROM penguins
 ----
 Expected 'DRAW', got 'SETTING'
 
-# gallery/examples/violin.qmd: waits for the colour alias (1a), SETTING side
-# (not scheduled) and FILTER (1b)
+# gallery/examples/violin.qmd: waits for SETTING side (not scheduled) and
+# FILTER (1b)
 statement error
 VISUALISE bill_len AS x, species AS y, sex AS colour FROM penguins
   DRAW violin
@@ -495,15 +510,7 @@ VISUALISE species AS x, bill_len AS y FROM penguins
 ----
 Expected 'DRAW', got 'SETTING'
 
-# gallery/examples/heatmap.qmd: waits for the tile alias (1a)
-statement error
-VISUALISE Day AS x, Month AS y, Temp AS fill FROM airquality
-  DRAW tile
-----
-unknown mark 'tile'
-
-# gallery/examples/heatmap.qmd: waits for the tile alias (1a) and SETTING
-# stroke and opacity (1b)
+# gallery/examples/heatmap.qmd: waits for SETTING stroke and opacity (1b)
 statement error
 VISUALISE Month AS y, Day AS x, Temp AS fill FROM airquality
   DRAW tile
@@ -511,8 +518,8 @@ VISUALISE Month AS y, Day AS x, Temp AS fill FROM airquality
 ----
 Expected 'DRAW', got 'SETTING'
 
-# gallery/examples/heatmap.qmd: waits for the tile alias (1a) and SCALE ...
-# SETTING reverse (1a, as SCALE ... REVERSE)
+# gallery/examples/heatmap.qmd: waits for SCALE ... SETTING reverse (1a, as
+# SCALE ... REVERSE)
 statement error
 VISUALISE Month AS y, Day AS x, Temp AS fill FROM airquality
   DRAW tile
@@ -521,9 +528,9 @@ VISUALISE Month AS y, Day AS x, Temp AS fill FROM airquality
 ----
 Unknown SCALE operator 'SETTING'
 
-# gallery/examples/heatmap.qmd: waits for the trailing SELECT form (1a), the
-# tile alias (1a) and SCALE ... FROM (lo, hi) TO (partly ours). DuckDB's own
-# syntax error. Upstream has a blank line before VISUALISE; removed here.
+# gallery/examples/heatmap.qmd: waits for the trailing SELECT form (1a) and
+# SCALE ... FROM (lo, hi) TO (partly ours). DuckDB's own syntax error.
+# Upstream has a blank line before VISUALISE; removed here.
 statement error
 SELECT *,
   Temp * 1.0 - AVG(Temp) OVER (PARTITION BY Month) AS centered
@@ -635,19 +642,3 @@ LABEL
   y => 'Value'
 ----
 Expected expression after
-
-# ===========================================================================
-# Accepted today, but wrong: the `colour` channel is dropped without an error
-# (the spec has no color encoding). These wait for the colour alias (1a) and
-# do not count as passing. They become `statement ok` blocks with a feature
-# test of the channel when the alias lands.
-#
-# gallery/examples/density.qmd
-#   VISUALISE bill_len AS x, species AS colour FROM penguins
-#     DRAW density
-# gallery/examples/violin.qmd
-#   VISUALISE species AS x, bill_len AS y, island AS colour FROM penguins
-#     DRAW violin
-# gallery/examples/violin.qmd
-#   VISUALISE species AS x, bill_len AS y, species AS colour FROM penguins
-#     DRAW violin

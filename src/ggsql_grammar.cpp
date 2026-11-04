@@ -113,6 +113,38 @@ bool IEqual(const string &tok, const char *kw) {
 	return StringUtil::CIEquals(tok, kw);
 }
 
+// Upstream ggsql's names for our channels and marks (#88, Tier 1 of #58). An
+// alias is resolved where it is read, so the statement, the layer SQL and the
+// spec only ever carry the canonical name. The `smooth` mark is not here: it
+// stands for `line STAT smooth`, which the DRAW clause handles itself.
+struct Alias {
+	const char *written;
+	const char *canonical;
+};
+
+const Alias kChannelAliases[] = {{"colour", "color"}, {"label", "text"}, {"xmin", "x"},  {"xmax", "x2"},
+                                 {"ymin", "y"},       {"ymax", "y2"},    {"xend", "x2"}, {"yend", "y2"}};
+
+const Alias kMarkAliases[] = {{"range", "errorbar"}, {"ribbon", "errorband"}, {"tile", "heatmap"}};
+
+template <size_t N>
+string Canonical(const string &name, const Alias (&aliases)[N]) {
+	for (const auto &alias : aliases) {
+		if (IEqual(name, alias.written)) {
+			return alias.canonical;
+		}
+	}
+	return name;
+}
+
+string CanonicalChannel(const string &name) {
+	return Canonical(name, kChannelAliases);
+}
+
+string CanonicalMark(const string &name) {
+	return Canonical(name, kMarkAliases);
+}
+
 } // namespace
 
 string UnquoteSqlString(const string &raw) {
@@ -439,6 +471,10 @@ ParseResult ParseGgsql(const string &query) {
 			}
 		}
 
+		// Upstream's channel names become ours here, so the type override and
+		// the layer SQL see the canonical name.
+		aesth_token = CanonicalChannel(aesth_token);
+
 		AestheticMapping mapping;
 		mapping.expression = std::move(expr);
 		mapping.aesthetic = aesth_token;
@@ -477,11 +513,22 @@ ParseResult ParseGgsql(const string &query) {
 			return result;
 		}
 		DrawLayer layer;
-		layer.mark = tokens[i++];
+		const string &written = tokens[i++];
+		if (IEqual(written, "smooth")) {
+			// Upstream's smooth layer is our loess line (#88).
+			layer.mark = "line";
+			layer.stat = "smooth";
+		} else {
+			layer.mark = CanonicalMark(written);
+		}
 		// Optional `STAT <name>` modifier — applies a per-layer transform.
 		// Recognized: identity (no-op), smooth (loess on y ~ x), summary
 		// (aggregate AVG(y) by x). Unknown stat names are a parse error.
 		if (!at_end() && IEqual(peek(), "STAT")) {
+			if (!layer.stat.empty()) {
+				result.error = "DRAW smooth already applies STAT smooth and does not take a STAT clause";
+				return result;
+			}
 			i++;
 			if (at_end()) {
 				result.error = "Expected stat name after 'STAT'";
@@ -587,7 +634,7 @@ ParseResult ParseGgsql(const string &query) {
 			result.error = "Expected aesthetic name after 'SCALE'";
 			return result;
 		}
-		string aesthetic = tokens[i++];
+		string aesthetic = CanonicalChannel(tokens[i++]);
 		// Consume one or more options for this channel until the next clause
 		// (SCALE / FACET / TITLE / SUBTITLE / end).
 		bool any_op = false;

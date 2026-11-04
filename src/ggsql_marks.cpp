@@ -204,14 +204,20 @@ MarkResult RenderBoxplot(const MarkContext &ctx) {
 }
 
 MarkResult RenderHeatmap(const MarkContext &ctx) {
-	// Rect mark with categorical-by-default x/y and quantitative color. Both
+	// Rect mark with categorical-by-default x/y and a quantitative value. Both
 	// axes override to ordinal because the typical heatmap (correlation matrix,
 	// contingency table, factor-by-factor counts) uses discrete bins; users
 	// who want a continuous-binned heatmap can type-override the channel back.
+	// The value is `color`, or `fill` as upstream ggsql's tile maps it (#88).
+	// One of the two is required; the registry entry asks for x and y only.
+	if (!HasAesthetic(ctx, "color") && !HasAesthetic(ctx, "fill")) {
+		throw InvalidInputException("visualize: 'heatmap' requires 'color' or 'fill' aesthetic");
+	}
 	MarkResult r;
-	r.layer_body = "\"mark\":\"rect\",\"encoding\":" +
-	               BuildEncoding(ctx, kStandardChannels,
-	                             {{"x", "ordinal"}, {"y", "ordinal"}, {"color", "quantitative"}});
+	r.layer_body =
+	    "\"mark\":\"rect\",\"encoding\":" +
+	    BuildEncoding(ctx, kStandardChannels,
+	                  {{"x", "ordinal"}, {"y", "ordinal"}, {"color", "quantitative"}, {"fill", "quantitative"}});
 	r.data_sql = ctx.projected_sql;
 	return r;
 }
@@ -386,7 +392,7 @@ void RegisterBuiltinMarks(ExtensionLoader &loader) {
 	// (linear-fit line). Density and regression rely on Vega-Lite transforms,
 	// so they ignore the underlying row order — safe to emit projected_sql
 	// directly. Color is the grouping aesthetic for both transforms.
-	RegisterMark(loader, "heatmap", {"x", "y", "color"}, RenderHeatmap);
+	RegisterMark(loader, "heatmap", {"x", "y"}, RenderHeatmap); // and color or fill, checked by the renderer
 	RegisterMark(loader, "density", {"x"}, RenderDensity);
 	RegisterMark(loader, "violin", {"x", "y"}, RenderViolin);
 	RegisterMark(loader, "regression", {"x", "y"}, RenderRegression);

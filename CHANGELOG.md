@@ -21,6 +21,17 @@ that name is preserved across releases for backward compatibility.
   pending statements are kept as expected errors. The file therefore fails
   the day a feature makes one of them pass, and that statement is then
   moved up. The grammar's error messages name the spelling the user wrote.
+- **Upstream ggsql's channel and mark names are accepted as aliases** (#88,
+  Tier 1 of #58). Channels: `colour` for `color`, `label` for `text`, `xmin`
+  and `xmax` for `x` and `x2`, `ymin` and `ymax` for `y` and `y2`, `xend` and
+  `yend` for `x2` and `y2`. Marks: `range` for `errorbar`, `ribbon` for
+  `errorband`, `tile` for `heatmap`, `smooth` for `line STAT smooth`. An alias
+  is resolved when the statement is parsed, so the layer SQL and the spec
+  carry our name. A `:type` suffix or a `SCALE` clause on the alias applies
+  to our channel. The heatmap mark takes `fill` as its value channel next to
+  `color`, because upstream's `tile` maps the value to `fill`. Before this
+  change `colour` was dropped without an error. Four more statements of
+  `test/sql/ggsql_compat_upstream.test` pass: 11 of 55.
 
 ### Fixed
 
