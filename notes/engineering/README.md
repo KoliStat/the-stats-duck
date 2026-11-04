@@ -101,3 +101,12 @@ that has been written down than to re-derive it.
   scalar function must be marked fallible, `row()` is a TUPLE, and the arrow
   lambda is rejected. Also: 2.0 links an extension into `unittest` only on
   request, and a suite with every file skipped still exits 0.
+
+- [`2026-11-statement-claim-on-tokens.md`](2026-11-statement-claim-on-tokens.md) —
+  the parser extension decided which statements were ours with a private byte
+  scan while the grammar tokenized the same text its own way, and the two
+  disagreed on comments, string literals and a CTE named `visualize` (#86).
+  Fix: one claim function in the grammar, on the grammar's tokens, that walks
+  the `WITH` block by its structure. Why a tokenizer error does not decide
+  ownership, what the DuckDB 2.0 token adapter cannot know (spacing), and why
+  negative tests pin `Parser Error` only.

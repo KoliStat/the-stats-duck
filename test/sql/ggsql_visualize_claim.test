@@ -1,0 +1,117 @@
+# name: test/sql/ggsql_visualize_claim.test
+# description: Which statements are ours is decided on the grammar's tokens, not by a byte scan (#86)
+# group: [stats_duck]
+
+require stats_duck
+
+statement ok
+CREATE TABLE t AS SELECT * FROM (VALUES (1, 2), (3, 4)) AS v(n, m);
+
+# A statement that is not ours has to be invalid SQL to reach the parser
+# extension at all: DuckDB consults it only after its own parser failed. The
+# message DuckDB gives for such a statement differs between the 1.x and 2.0
+# parsers, so those cases pin the error type only (`Parser Error`).
+
+# --- 1. SQL comments between the WITH block and the keyword ------------------
+
+# A line comment with an apostrophe. The byte scan read the apostrophe as the
+# start of a string literal and handed the statement to DuckDB.
+query TT
+WITH c AS (SELECT n, m FROM t) -- it's filtered
+VISUALISE n AS x, m AS y FROM c DRAW point
+----
+{"$schema":"https://vega.github.io/schema/vega-lite/v5.json","data":{"name":"layer_0"},"mark":"point","encoding":{"x":{"field":"x","type":"quantitative"},"y":{"field":"y","type":"quantitative"}}}	{layer_0='WITH c AS (SELECT n, m FROM t) SELECT n AS x, m AS y FROM c'}
+
+# A block comment with a parenthesis.
+query TT
+WITH c AS (SELECT n, m FROM t) /* note ( */
+VISUALIZE n AS x, m AS y FROM c DRAW point
+----
+{"$schema":"https://vega.github.io/schema/vega-lite/v5.json","data":{"name":"layer_0"},"mark":"point","encoding":{"x":{"field":"x","type":"quantitative"},"y":{"field":"y","type":"quantitative"}}}	{layer_0='WITH c AS (SELECT n, m FROM t) SELECT n AS x, m AS y FROM c'}
+
+# The keyword inside a comment does not make a statement ours.
+statement error
+WITH c AS (SELECT n FROM t) -- visualize this later
+SELEC n FROM c
+----
+Parser Error
+
+# --- 2. The direct form splits where the tokenizer splits --------------------
+
+# A comment glued to the keyword.
+query TT
+VISUALISE--chart
+n AS x, m AS y FROM t DRAW point
+----
+{"$schema":"https://vega.github.io/schema/vega-lite/v5.json","data":{"name":"layer_0"},"mark":"point","encoding":{"x":{"field":"x","type":"quantitative"},"y":{"field":"y","type":"quantitative"}}}	{layer_0='SELECT n AS x, m AS y FROM t'}
+
+# --- 3. `VISUALIZE(` without a space ------------------------------------------
+
+# The tokenizer glues a depth-0 `(` to the word before it. The statement is
+# ours on both DuckDB lines. On 1.x the error names the missing space. On
+# 2.0 the token adapter writes the conventional space, so the grammar sees
+# `(n AS x)` as the first mapping and names that instead.
+statement error
+VISUALISE(n AS x) FROM t DRAW point
+----
+Parser Error
+
+statement error
+WITH c AS (SELECT n, m FROM t) VISUALISE(n AS x) FROM c DRAW point
+----
+Parser Error
+
+# With the space, both lines give the same mapping error.
+statement error
+VISUALISE (n AS x) FROM t DRAW point
+----
+Expected 'AS' before aesthetic '(n AS x)'
+
+# --- 4. A CTE named like the keyword -------------------------------------------
+
+# The name position of a CTE takes any word. The WITH clause stays whole.
+query TT
+WITH visualise AS (SELECT n, m FROM t) VISUALIZE n AS x, m AS y FROM visualise DRAW point
+----
+{"$schema":"https://vega.github.io/schema/vega-lite/v5.json","data":{"name":"layer_0"},"mark":"point","encoding":{"x":{"field":"x","type":"quantitative"},"y":{"field":"y","type":"quantitative"}}}	{layer_0='WITH visualise AS (SELECT n, m FROM t) SELECT n AS x, m AS y FROM visualise'}
+
+# The same CTE name in a statement that is not ours.
+statement error
+WITH visualize AS (SELECT n FROM t) SELEC n FROM visualize
+----
+Parser Error
+
+# --- 5. The shapes of a WITH block the walk understands -----------------------
+
+# RECURSIVE and a column list glued to the name.
+query TT
+WITH RECURSIVE r(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM r WHERE n < 3) VISUALIZE n AS x, n AS y FROM r DRAW point
+----
+{"$schema":"https://vega.github.io/schema/vega-lite/v5.json","data":{"name":"layer_0"},"mark":"point","encoding":{"x":{"field":"x","type":"quantitative"},"y":{"field":"y","type":"quantitative"}}}	{layer_0='WITH RECURSIVE r(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM r WHERE n < 3) SELECT n AS x, n AS y FROM r'}
+
+# Two CTEs, MATERIALIZED, a column list on the second.
+query TT
+WITH a AS MATERIALIZED (SELECT n, m FROM t), b(n, m) AS (SELECT * FROM a) VISUALIZE n AS x, m AS y FROM b DRAW point
+----
+{"$schema":"https://vega.github.io/schema/vega-lite/v5.json","data":{"name":"layer_0"},"mark":"point","encoding":{"x":{"field":"x","type":"quantitative"},"y":{"field":"y","type":"quantitative"}}}	{layer_0='WITH a AS MATERIALIZED (SELECT n, m FROM t) , b(n, m) AS (SELECT * FROM a) SELECT n AS x, m AS y FROM b'}
+
+# A WITH clause without AS, followed by the keyword: ours, with an error that
+# names the WITH clause instead of DuckDB's error at the first keyword.
+statement error
+WITH c (SELECT n, m FROM t) VISUALIZE n AS x, m AS y FROM c DRAW point
+----
+Malformed WITH clause before VISUALIZE
+
+# An unterminated quote inside a CTE body swallows the rest of the statement,
+# so the keyword never appears as a token and DuckDB's message about the
+# quote stands.
+statement error
+WITH c AS (SELECT 'oops FROM t) VISUALIZE n AS x FROM c DRAW point
+----
+Parser Error
+
+# A plain WITH ... SELECT is still DuckDB's, and runs.
+query I
+WITH c AS (SELECT n FROM t) SELECT max(n) FROM c
+----
+3

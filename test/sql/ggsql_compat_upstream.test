@@ -24,8 +24,9 @@ require stats_duck
 # Three statements are accepted today but lose their `colour` channel without
 # an error. They are listed as comments at the end and do not count.
 #
-# Passing: 7 of 55 statements. Count the `statement ok` blocks after the two
-# CREATE TABLE statements.
+# The progress number is the count of `statement ok` blocks after the two
+# CREATE TABLE statements, out of the 55 upstream statements. It is not
+# written here, so it cannot go stale: count the blocks when reporting.
 
 statement ok
 CREATE TABLE penguins AS

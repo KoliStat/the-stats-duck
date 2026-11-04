@@ -61,5 +61,17 @@ struct ParseResult {
 
 ParseResult ParseGgsql(const string &query);
 
+// The statement keyword, in both spellings that upstream ggsql accepts (#84).
+// Defined once here; the parser extension and the DuckDB 2.0 token adapter in
+// ggsql.cpp use it as well.
+bool IsVisualizeKeyword(const string &token);
+
+// Whether a statement is ours: the keyword in either spelling, after an
+// optional leading WITH block. Decided on the grammar's own tokens, so the
+// claim and ParseGgsql agree about comments, string literals and parentheses
+// (#86). A statement that is not ours stays with DuckDB's parser and keeps
+// DuckDB's own error message.
+bool IsVisualizeStatement(const string &query);
+
 } // namespace ggsql
 } // namespace duckdb

@@ -40,9 +40,11 @@ VISUALISE bill_len AS x, bill_dep AS y FROM penguins DRAW nope
 unknown mark 'nope'
 
 # A WITH statement that is not ours, with the word inside a string literal,
-# keeps DuckDB's own error: the claim scan skips string literals. (A valid
-# SELECT never reaches the extension, so it cannot test this.)
+# keeps DuckDB's own error: the literal is one token to the claim (#86). A
+# valid SELECT never reaches the extension, so an invalid one is needed. The
+# token DuckDB names differs between the 1.x and 2.0 parsers, so only the
+# error type is pinned.
 statement error
 WITH c AS (SELECT 'visualise' AS s) SELEC s FROM c
 ----
-SELEC
+Parser Error
