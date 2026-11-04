@@ -1,0 +1,173 @@
+# name: test/sql/ggsql_visualize_aliases.test
+# description: Upstream ggsql's channel and mark names are accepted as aliases of ours (#88, Tier 1 of #58)
+# group: [stats_duck]
+
+require stats_duck
+
+statement ok
+CREATE TABLE penguins AS
+SELECT * FROM (VALUES
+    ('Adelie',    39.1, 18.7, 'male',   2007),
+    ('Gentoo',    46.1, 13.2, 'female', 2008),
+    ('Chinstrap', 50.0, 19.5, 'male',   2009)
+) AS t(species, bill_len, bill_dep, sex, year);
+
+statement ok
+CREATE TABLE intervals AS
+SELECT * FROM (VALUES (1, 1.0, 2.0, 0.5, 1.5), (2, 2.0, 3.0, 1.5, 2.5)) AS t(k, lo, hi, x0, x1);
+
+statement ok
+CREATE TABLE airquality AS
+SELECT * FROM (VALUES (1, 5, 67), (2, 5, 72), (1, 6, 65)) AS t(Day, Month, Temp);
+
+# ===========================================================================
+# Channel aliases. The alias is resolved when the mapping is read, so the
+# layer SQL and the spec carry our name.
+# ===========================================================================
+
+# colour is color. Before #88 the channel was dropped without an error.
+query TT
+VISUALISE bill_len AS x, bill_dep AS y, species AS colour FROM penguins DRAW point
+----
+{"$schema":"https://vega.github.io/schema/vega-lite/v5.json","data":{"name":"layer_0"},"mark":"point","encoding":{"x":{"field":"x","type":"quantitative"},"y":{"field":"y","type":"quantitative"},"color":{"field":"color","type":"nominal"}}}	{layer_0='SELECT bill_len AS x, bill_dep AS y, species AS color FROM penguins'}
+
+# The alias is matched without regard to case, like the keywords.
+query TT
+VISUALIZE bill_len AS x, bill_dep AS y, species AS Colour FROM penguins DRAW point
+----
+{"$schema":"https://vega.github.io/schema/vega-lite/v5.json","data":{"name":"layer_0"},"mark":"point","encoding":{"x":{"field":"x","type":"quantitative"},"y":{"field":"y","type":"quantitative"},"color":{"field":"color","type":"nominal"}}}	{layer_0='SELECT bill_len AS x, bill_dep AS y, species AS color FROM penguins'}
+
+# A type suffix on the alias lands on the canonical channel.
+query TT
+VISUALIZE bill_len AS x, bill_dep AS y, year AS colour:ordinal FROM penguins DRAW point
+----
+{"$schema":"https://vega.github.io/schema/vega-lite/v5.json","data":{"name":"layer_0"},"mark":"point","encoding":{"x":{"field":"x","type":"quantitative"},"y":{"field":"y","type":"quantitative"},"color":{"field":"color","type":"ordinal"}}}	{layer_0='SELECT bill_len AS x, bill_dep AS y, year AS color FROM penguins'}
+
+# A SCALE clause written with the alias applies to the canonical channel.
+query TT
+VISUALIZE bill_len AS x, bill_dep AS y, species AS colour FROM penguins DRAW point SCALE colour TO viridis
+----
+{"$schema":"https://vega.github.io/schema/vega-lite/v5.json","data":{"name":"layer_0"},"mark":"point","encoding":{"x":{"field":"x","type":"quantitative"},"y":{"field":"y","type":"quantitative"},"color":{"field":"color","type":"nominal","scale":{"scheme":"viridis"}}}}	{layer_0='SELECT bill_len AS x, bill_dep AS y, species AS color FROM penguins'}
+
+# label is text, the channel the text mark requires.
+query TT
+VISUALIZE bill_len AS x, bill_dep AS y, species AS label FROM penguins DRAW text
+----
+{"$schema":"https://vega.github.io/schema/vega-lite/v5.json","data":{"name":"layer_0"},"mark":"text","encoding":{"x":{"field":"x","type":"quantitative"},"y":{"field":"y","type":"quantitative"},"text":{"field":"text","type":"nominal"}}}	{layer_0='SELECT bill_len AS x, bill_dep AS y, species AS text FROM penguins'}
+
+# ymin and ymax are the interval bounds y and y2.
+query TT
+VISUALIZE k AS x, lo AS ymin, hi AS ymax FROM intervals DRAW errorbar
+----
+{"$schema":"https://vega.github.io/schema/vega-lite/v5.json","data":{"name":"layer_0"},"mark":"errorbar","encoding":{"x":{"field":"x","type":"quantitative"},"y":{"field":"y","type":"quantitative"},"y2":{"field":"y2","type":"quantitative"}}}	{layer_0='SELECT k AS x, lo AS y, hi AS y2 FROM intervals'}
+
+# SCALE on an alias of an axis channel reaches that axis.
+query TT
+VISUALIZE k AS x, lo AS ymin, hi AS ymax FROM intervals DRAW errorbar SCALE ymin LABEL 'low'
+----
+{"$schema":"https://vega.github.io/schema/vega-lite/v5.json","data":{"name":"layer_0"},"mark":"errorbar","encoding":{"x":{"field":"x","type":"quantitative"},"y":{"field":"y","type":"quantitative","axis":{"title":"low"}},"y2":{"field":"y2","type":"quantitative"}}}	{layer_0='SELECT k AS x, lo AS y, hi AS y2 FROM intervals'}
+
+# xmin and xmax are x and x2: a horizontal interval on a rule.
+query TT
+VISUALIZE x0 AS xmin, x1 AS xmax, k AS y FROM intervals DRAW rule
+----
+{"$schema":"https://vega.github.io/schema/vega-lite/v5.json","data":{"name":"layer_0"},"mark":"rule","encoding":{"x":{"field":"x","type":"quantitative"},"y":{"field":"y","type":"quantitative"},"x2":{"field":"x2","type":"quantitative"}}}	{layer_0='SELECT x0 AS x, x1 AS x2, k AS y FROM intervals'}
+
+# xend and yend are x2 and y2: a segment on a rule.
+query TT
+VISUALIZE x0 AS x, lo AS y, x1 AS xend, hi AS yend FROM intervals DRAW rule
+----
+{"$schema":"https://vega.github.io/schema/vega-lite/v5.json","data":{"name":"layer_0"},"mark":"rule","encoding":{"x":{"field":"x","type":"quantitative"},"y":{"field":"y","type":"quantitative"},"x2":{"field":"x2","type":"quantitative"},"y2":{"field":"y2","type":"quantitative"}}}	{layer_0='SELECT x0 AS x, lo AS y, x1 AS x2, hi AS y2 FROM intervals'}
+
+# ===========================================================================
+# Mark aliases. The alias is resolved when the DRAW clause is read, so the
+# spec carries our mark and the registry is not involved.
+# ===========================================================================
+
+# range is errorbar.
+query TT
+VISUALIZE k AS x, lo AS ymin, hi AS ymax FROM intervals DRAW range
+----
+{"$schema":"https://vega.github.io/schema/vega-lite/v5.json","data":{"name":"layer_0"},"mark":"errorbar","encoding":{"x":{"field":"x","type":"quantitative"},"y":{"field":"y","type":"quantitative"},"y2":{"field":"y2","type":"quantitative"}}}	{layer_0='SELECT k AS x, lo AS y, hi AS y2 FROM intervals'}
+
+# Mark aliases are matched without regard to case as well.
+query TT
+VISUALIZE k AS x, lo AS ymin, hi AS ymax FROM intervals DRAW RANGE
+----
+{"$schema":"https://vega.github.io/schema/vega-lite/v5.json","data":{"name":"layer_0"},"mark":"errorbar","encoding":{"x":{"field":"x","type":"quantitative"},"y":{"field":"y","type":"quantitative"},"y2":{"field":"y2","type":"quantitative"}}}	{layer_0='SELECT k AS x, lo AS y, hi AS y2 FROM intervals'}
+
+# ribbon is errorband, with errorband's ORDER BY x.
+query TT
+VISUALIZE k AS x, lo AS ymin, hi AS ymax FROM intervals DRAW ribbon
+----
+{"$schema":"https://vega.github.io/schema/vega-lite/v5.json","data":{"name":"layer_0"},"mark":"errorband","encoding":{"x":{"field":"x","type":"quantitative"},"y":{"field":"y","type":"quantitative"},"y2":{"field":"y2","type":"quantitative"}}}	{layer_0='SELECT * FROM (SELECT k AS x, lo AS y, hi AS y2 FROM intervals) ORDER BY x'}
+
+# tile is heatmap. Upstream maps the value to fill, as geom_tile does, so the
+# heatmap takes fill as its value channel: quantitative, like color.
+query TT
+VISUALISE Day AS x, Month AS y, Temp AS fill FROM airquality DRAW tile
+----
+{"$schema":"https://vega.github.io/schema/vega-lite/v5.json","data":{"name":"layer_0"},"mark":"rect","encoding":{"x":{"field":"x","type":"ordinal"},"y":{"field":"y","type":"ordinal"},"fill":{"field":"fill","type":"quantitative"}}}	{layer_0='SELECT Day AS x, Month AS y, Temp AS fill FROM airquality'}
+
+# The canonical mark takes fill the same way.
+query TT
+VISUALIZE Day AS x, Month AS y, Temp AS fill FROM airquality DRAW heatmap
+----
+{"$schema":"https://vega.github.io/schema/vega-lite/v5.json","data":{"name":"layer_0"},"mark":"rect","encoding":{"x":{"field":"x","type":"ordinal"},"y":{"field":"y","type":"ordinal"},"fill":{"field":"fill","type":"quantitative"}}}	{layer_0='SELECT Day AS x, Month AS y, Temp AS fill FROM airquality'}
+
+# tile with color is the heatmap of before.
+query TT
+VISUALIZE Day AS x, Month AS y, Temp AS color FROM airquality DRAW tile
+----
+{"$schema":"https://vega.github.io/schema/vega-lite/v5.json","data":{"name":"layer_0"},"mark":"rect","encoding":{"x":{"field":"x","type":"ordinal"},"y":{"field":"y","type":"ordinal"},"color":{"field":"color","type":"quantitative"}}}	{layer_0='SELECT Day AS x, Month AS y, Temp AS color FROM airquality'}
+
+# One of color and fill is required. The error names the canonical mark.
+statement error
+VISUALIZE Day AS x, Month AS y FROM airquality DRAW tile
+----
+'heatmap' requires 'color' or 'fill' aesthetic
+
+# smooth is line STAT smooth: the loess transform on a line, ordered by x.
+query TT
+VISUALIZE bill_len AS x, bill_dep AS y FROM penguins DRAW smooth
+----
+{"$schema":"https://vega.github.io/schema/vega-lite/v5.json","data":{"name":"layer_0"},"transform":[{"loess":"y","on":"x"}],"mark":"line","encoding":{"x":{"field":"x","type":"quantitative"},"y":{"field":"y","type":"quantitative"}}}	{layer_0='SELECT * FROM (SELECT bill_len AS x, bill_dep AS y FROM penguins) ORDER BY x'}
+
+# smooth groups by color when it is mapped, here through the colour alias.
+query TT
+VISUALIZE bill_len AS x, bill_dep AS y, species AS colour FROM penguins DRAW smooth
+----
+{"$schema":"https://vega.github.io/schema/vega-lite/v5.json","data":{"name":"layer_0"},"transform":[{"loess":"y","on":"x","groupby":["color"]}],"mark":"line","encoding":{"x":{"field":"x","type":"quantitative"},"y":{"field":"y","type":"quantitative"},"color":{"field":"color","type":"nominal"}}}	{layer_0='SELECT * FROM (SELECT bill_len AS x, bill_dep AS y, species AS color FROM penguins) ORDER BY x'}
+
+# Upstream's scatter with a trend: DRAW point DRAW smooth.
+query TT
+VISUALIZE bill_len AS x, bill_dep AS y FROM penguins DRAW point DRAW smooth
+----
+{"$schema":"https://vega.github.io/schema/vega-lite/v5.json","layer":[{"data":{"name":"layer_0"},"mark":"point","encoding":{"x":{"field":"x","type":"quantitative"},"y":{"field":"y","type":"quantitative"}}},{"data":{"name":"layer_1"},"transform":[{"loess":"y","on":"x"}],"mark":"line","encoding":{"x":{"field":"x","type":"quantitative"},"y":{"field":"y","type":"quantitative"}}}]}	{layer_0='SELECT bill_len AS x, bill_dep AS y FROM penguins', layer_1='SELECT * FROM (SELECT bill_len AS x, bill_dep AS y FROM penguins) ORDER BY x'}
+
+# The alias carries its stat, so a STAT clause after it is an error.
+statement error
+VISUALIZE bill_len AS x, bill_dep AS y FROM penguins DRAW smooth STAT summary
+----
+DRAW smooth already applies STAT smooth and does not take a STAT clause
+
+# A missing required aesthetic is reported for the canonical mark, which also
+# tells the user what the alias stands for.
+statement error
+VISUALIZE lo AS ymin, hi AS ymax FROM intervals DRAW range
+----
+'errorbar' requires 'x' aesthetic
+
+# A name that is neither a mark nor an alias is still an unknown mark, named
+# as written.
+statement error
+VISUALIZE k AS x, lo AS y FROM intervals DRAW tiles
+----
+unknown mark 'tiles'
+
+# The aliases are names in the grammar, not entries in the mark registry.
+query I
+SELECT count(*) FROM duckdb_functions()
+WHERE function_name IN ('visualize_mark_v1_range', 'visualize_mark_v1_ribbon', 'visualize_mark_v1_tile', 'visualize_mark_v1_smooth')
+----
+0

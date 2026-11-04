@@ -27,11 +27,11 @@ VISUALIZE bill_len AS x, bill_dep AS y, bill_len AS color FROM penguins DRAW hea
 ----
 {"$schema":"https://vega.github.io/schema/vega-lite/v5.json","data":{"name":"layer_0"},"mark":"rect","encoding":{"x":{"field":"x","type":"ordinal"},"y":{"field":"y","type":"ordinal"},"color":{"field":"color","type":"quantitative","scale":{"scheme":"viridis"}}}}	{layer_0='SELECT bill_len AS x, bill_dep AS y, bill_len AS color FROM penguins'}
 
-# Heatmap requires color — clean missing-aesthetic error.
+# Heatmap requires a value channel, color or fill (#88) — clean missing-aesthetic error.
 statement error
 VISUALIZE bill_len AS x, bill_dep AS y FROM penguins DRAW heatmap
 ----
-'heatmap' requires 'color' aesthetic
+'heatmap' requires 'color' or 'fill' aesthetic
 
 # Per-channel type override still works on a heatmap (force x back to quantitative
 # for a binned heatmap of a continuous variable).

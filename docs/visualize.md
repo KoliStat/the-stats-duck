@@ -80,6 +80,12 @@ VISUALIZE bill_len AS x, bill_dep AS y, species AS color FROM penguins DRAW poin
 The full channel set: `x`, `y`, `color`, `fill`, `stroke`, `shape`, `size`,
 `opacity`, `tooltip`, `text`, `x2`, `y2`. Unknown channels are silently dropped.
 
+Upstream ggsql's channel names are accepted as aliases: `colour` for `color`,
+`label` for `text`, `xmin` and `xmax` for `x` and `x2`, `ymin` and `ymax` for
+`y` and `y2`, `xend` and `yend` for `x2` and `y2`. The alias is resolved when
+the statement is parsed. The layer SQL and the spec carry our name, and a
+`:type` suffix or a `SCALE` clause on the alias applies to our channel.
+
 ### Type overrides
 
 VISUALIZE infers each channel's Vega-Lite type (quantitative / nominal / temporal).
@@ -114,8 +120,13 @@ require:
 | `density` | x | smooth KDE curve |
 | `errorbar` | x, y, y2 | interval whiskers (y…y2) |
 | `errorband` | x, y, y2 | shaded interval band |
-| `heatmap` | x, y, color | matrix of a value over two categories |
+| `heatmap` | x, y, color or fill | matrix of a value over two categories |
 | `regression` | x, y | server-side linear fit |
+
+Upstream ggsql's mark names are accepted as aliases: `range` for `errorbar`,
+`ribbon` for `errorband`, `tile` for `heatmap`, and `smooth` for
+`line STAT smooth`. `DRAW smooth` takes no `STAT` clause of its own. Error
+messages name our mark, so `DRAW range` without `x` reports `errorbar`.
 
 ### Points, lines, areas
 
@@ -179,11 +190,12 @@ VISUALIZE bill_len AS x, bill_dep AS y, species AS text FROM penguins DRAW text;
 
 ### Heatmap
 
-A `rect` mark with categorical `x`/`y` and quantitative `color` — contingency
-tables, correlation matrices:
+A `rect` mark with categorical `x`/`y` and a quantitative value on `color` or
+`fill`. Use it for contingency tables and correlation matrices:
 
 ```sql
 VISUALIZE species AS x, sex AS y, body_mass AS color FROM penguins DRAW heatmap;
+VISUALISE species AS x, sex AS y, body_mass AS fill FROM penguins DRAW tile;
 ```
 
 ### Regression
@@ -356,8 +368,10 @@ DRAW <mark> [STAT <identity|smooth|summary>] (DRAW <mark> [STAT ...])*
 ```
 
 - **Channels:** `x`, `y`, `color`, `fill`, `stroke`, `shape`, `size`, `opacity`,
-  `tooltip`, `text`, `x2`, `y2`.
+  `tooltip`, `text`, `x2`, `y2`. Aliases: `colour`, `label`, `xmin`, `xmax`,
+  `ymin`, `ymax`, `xend`, `yend`.
 - **Types:** `:quantitative`, `:ordinal`, `:nominal`, `:temporal`.
 - **Marks:** `point`, `line`, `bar`, `histogram`, `text`, `area`, `rule`, `tick`,
   `errorbar`, `errorband`, `boxplot`, `violin`, `heatmap`, `density`, `regression`.
+  Aliases: `range`, `ribbon`, `tile`, `smooth`.
 - **Comments:** `--` and `/* … */` anywhere outside string literals.
