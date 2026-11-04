@@ -82,18 +82,17 @@ WITH cte AS (SELECT 42 AS n) SELECT n FROM cte
 ----
 42
 
-# Quoted-identifier or string literal containing "visualize" must NOT be
-# misidentified — depth/quote tracking in the keyword scanner protects this.
+# A string literal containing "visualize" is one token to the grammar's
+# tokenizer, so it does not make the statement ours (#86).
 query T
 WITH cte AS (SELECT 'visualize me later' AS msg) SELECT msg FROM cte
 ----
 visualize me later
 
-# ─── Error: WITH not followed by VISUALIZE inside a ggsql-claimed statement ─
+# ─── Error: WITH not followed by VISUALIZE ─────────────────────────────────
 
-# Only fires when our heuristic does claim the statement; otherwise this would
-# fall through to DuckDB. Constructing the trigger requires a top-level
-# VISUALIZE keyword somewhere — e.g. as a column alias in the CTE body —
-# but those are protected by paren-depth tracking. Hence we can't easily
-# craft a deterministic error case here; the parse-time guard exists in
-# ParseGgsql for defensive purposes only.
+# The claim and the parser walk the same tokens (#86), so a WITH block that is
+# not followed by the keyword is never claimed. The guard in ParseGgsql stays
+# for direct callers. The edge cases of the claim (comments, a CTE named
+# visualize, VISUALIZE( without a space, a malformed WITH) are in
+# ggsql_visualize_claim.test.

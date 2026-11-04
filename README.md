@@ -1005,7 +1005,7 @@ example of every mark and clause.
 inspired this syntax. `stats_duck`'s `VISUALIZE` is not a reimplementation of
 ggsql. It is a WebAssembly-friendly built-in with a fixed set of marks and
 clauses, for plotting stats output inline. Since 0.10 its syntax converges on
-ggsql's where the two overlap; the remaining gap is tracked in issue #58. For
+ggsql's where the two overlap. The remaining gap is tracked in issue #58. For
 the full grammar of graphics, use ggsql.
 
 ```

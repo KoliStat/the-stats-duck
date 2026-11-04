@@ -12,15 +12,37 @@ that name is preserved across releases for backward compatibility.
 
 ### Added
 
-- **`VISUALISE` is accepted as a spelling of `VISUALIZE`** (#84), as upstream
-  ggsql accepts both. This is the first item of the 0.10 VISUALIZE block,
-  which converges on ggsql's syntax (#58). The new
+- **`VISUALISE` is accepted as a spelling of `VISUALIZE`** (#84). Upstream
+  ggsql accepts both spellings. This is the first item of the 0.10 VISUALIZE
+  block. That block converges on ggsql's syntax (#58). The new
   `test/sql/ggsql_compat_upstream.test` holds the example statements of the
-  ggsql.org pages, with the bundled `ggsql:` data sources replaced by tables.
+  ggsql.org pages. The bundled `ggsql:` data sources are replaced by tables.
   A statement counts as passing when it parses and produces a spec. The
-  pending statements are kept as expected errors, so the file fails the day
-  a feature makes one of them pass and the count has to be updated. The
-  error messages of the parser now name the spelling the user wrote.
+  pending statements are kept as expected errors. The file therefore fails
+  the day a feature makes one of them pass, and that statement is then
+  moved up. The grammar's error messages name the spelling the user wrote.
+
+### Fixed
+
+- **Which statements are ours is decided by the grammar's tokenizer** (#86).
+  The parser extension used a private byte scan to decide whether a
+  statement was a `VISUALIZE` statement. The scan and the grammar's
+  tokenizer disagreed at the edges. A SQL comment with an apostrophe or a
+  parenthesis between the CTEs and the keyword made the scan hand the
+  statement to DuckDB. A `WITH` statement that was not ours, but had the
+  word `visualise` at depth 0 in a column alias or a comment, got an
+  extension error instead of DuckDB's own. The claim now tokenizes the
+  statement, walks a leading `WITH` block by its structure (`<name> AS
+  (<query>)`, repeated after commas, with `RECURSIVE`, column lists and
+  `MATERIALIZED`), and asks for the keyword after it. A CTE named
+  `visualize` or `visualise` is a CTE. `VISUALIZE--comment` on one line
+  parses. `VISUALIZE(` without a space is ours and gets a parse error of
+  ours. A `WITH` clause without `AS (...)` before the keyword gets an error
+  that names the `WITH` clause. The keyword pair is defined once, in
+  `ggsql_grammar.hpp`, and the DuckDB 2.0 token adapter uses it too. The
+  adapter also writes a space between `MATERIALIZED` and its parenthesis,
+  so the layer SQL of a `WITH ... AS MATERIALIZED (...)` statement reads
+  the same on both DuckDB lines.
 
 ## [0.9.0-here-s-your-nine-pence] - 2026-10-28
 

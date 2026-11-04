@@ -408,141 +408,16 @@ void GgsqlResultFunc(ClientContext &, TableFunctionInput &data_p, DataChunk &out
 	state.emitted = true;
 }
 
-bool StartsWithIdentifier(const string &lower, const string &keyword) {
-	if (lower.size() < keyword.size()) {
-		return false;
-	}
-	if (lower.compare(0, keyword.size(), keyword) != 0) {
-		return false;
-	}
-	if (lower.size() == keyword.size()) {
-		return true;
-	}
-	auto next = lower[keyword.size()];
-	return next == ' ' || next == '\t' || next == '\n' || next == '\r' || next == ';';
-}
-
-// Strip leading whitespace and SQL comments (`-- to end of line`, `/* ... */`)
-// from the front of `s`. DuckDB hands the parser extension the raw statement
-// text including any comments, so we need to skip past them before deciding
-// whether the statement is ours.
-static void SkipLeadingCommentsAndWhitespace(string &s) {
-	size_t i = 0;
-	while (i < s.size()) {
-		char c = s[i];
-		if (c == ' ' || c == '\t' || c == '\n' || c == '\r') {
-			i++;
-			continue;
-		}
-		if (c == '-' && i + 1 < s.size() && s[i + 1] == '-') {
-			i += 2;
-			while (i < s.size() && s[i] != '\n') {
-				i++;
-			}
-			continue;
-		}
-		if (c == '/' && i + 1 < s.size() && s[i + 1] == '*') {
-			i += 2;
-			while (i + 1 < s.size() && !(s[i] == '*' && s[i + 1] == '/')) {
-				i++;
-			}
-			if (i + 1 < s.size()) {
-				i += 2; // past `*/`
-			}
-			continue;
-		}
-		break;
-	}
-	if (i > 0) {
-		s.erase(0, i);
-	}
-}
-
 static ParserExtensionParseResult GgsqlParseString(ParserExtensionInfo *, const string &query) {
-	string trimmed = query;
-	SkipLeadingCommentsAndWhitespace(trimmed);
-	StringUtil::Trim(trimmed); // trailing whitespace too
-	auto lower = StringUtil::Lower(trimmed);
-	if (StartsWithIdentifier(lower, "visualize") || StartsWithIdentifier(lower, "visualise")) {
-		// Direct path — bare VISUALIZE statement, in either spelling (#84).
-	} else if (StartsWithIdentifier(lower, "with")) {
-		// Could be ours (WITH … VISUALIZE …) or DuckDB's (WITH … SELECT …).
-		// Only claim it if a top-level VISUALIZE or VISUALISE keyword exists in
-		// the input — case-insensitive, whole-word match, ignoring strings /
-		// quoted identifiers / parenthesised expressions. The cheap
-		// approach is a manual scan rather than a full tokenize: keep
-		// track of paren depth and skip over string/quoted-ident content,
-		// then look for `visualize` as a standalone token at depth 0.
-		bool has_visualize = false;
-		int depth = 0;
-		char quote = 0;
-		auto is_ident_part = [](char c) {
-			return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
-			       (c >= '0' && c <= '9') || c == '_';
-		};
-		for (size_t i = 0; i < trimmed.size(); i++) {
-			char c = trimmed[i];
-			if (quote != 0) {
-				if (c == quote) {
-					if (i + 1 < trimmed.size() && trimmed[i + 1] == quote) {
-						i++; // SQL '' / "" escape
-					} else {
-						quote = 0;
-					}
-				}
-				continue;
-			}
-			if (c == '\'' || c == '"') {
-				quote = c;
-				continue;
-			}
-			if (c == '(') {
-				depth++;
-				continue;
-			}
-			if (c == ')') {
-				depth--;
-				continue;
-			}
-			if (depth > 0) {
-				continue;
-			}
-			// At depth 0: try to match the whole-word "visualize" case-insensitively.
-			// The two spellings differ at index 7 only ('z' or 's').
-			if ((c == 'v' || c == 'V') && i + 9 <= trimmed.size()) {
-				static const char kKeyword[] = "visualize";
-				bool match = true;
-				for (size_t k = 0; k < 9; k++) {
-					char a = trimmed[i + k];
-					char b = kKeyword[k];
-					char a_lower = (a >= 'A' && a <= 'Z') ? (a - 'A' + 'a') : a;
-					if (k == 7 && a_lower == 's') {
-						continue;
-					}
-					if (a_lower != b) {
-						match = false;
-						break;
-					}
-				}
-				if (match) {
-					// Must be a standalone token — surrounded by non-identifier chars.
-					bool left_ok = (i == 0) || !is_ident_part(trimmed[i - 1]);
-					bool right_ok = (i + 9 == trimmed.size()) ||
-					                !is_ident_part(trimmed[i + 9]);
-					if (left_ok && right_ok) {
-						has_visualize = true;
-						break;
-					}
-				}
-			}
-		}
-		if (!has_visualize) {
-			return ParserExtensionParseResult(); // hand off to DuckDB
-		}
-	} else {
+	// Ownership is decided on the grammar's own tokens, so the claim and the
+	// parser agree about comments, string literals and parentheses (#86). A
+	// statement that is not ours is handed back, and DuckDB's own error for
+	// it stands. The tokenizer skips leading comments and whitespace and
+	// drops the trailing semicolon, so the text goes in as DuckDB passed it.
+	if (!IsVisualizeStatement(query)) {
 		return ParserExtensionParseResult();
 	}
-	auto parsed = ParseGgsql(trimmed);
+	auto parsed = ParseGgsql(query);
 	if (!parsed.success) {
 		return ParserExtensionParseResult(parsed.error);
 	}
@@ -614,12 +489,15 @@ static bool IsWordToken(const string &text) {
 // unary. The list covers SQL and the VISUALIZE grammar; a word not in it
 // is read as an identifier or a function name.
 static bool IsClauseKeyword(const string &text) {
+	if (IsVisualizeKeyword(text)) {
+		return true; // both spellings, defined once in ggsql_grammar.hpp (#86)
+	}
 	static const char *const kWords[] = {
 	    "AS",        "IN",       "FROM",   "WHERE",  "AND",    "OR",        "NOT",   "ON",        "BY",
 	    "SELECT",    "VALUES",   "EXISTS", "JOIN",   "THEN",   "ELSE",      "WHEN",  "OVER",      "BETWEEN",
 	    "LIKE",      "ILIKE",    "IS",     "WITH",   "HAVING", "LIMIT",     "OFFSET", "UNION",    "EXCEPT",
 	    "INTERSECT", "ALL",      "DISTINCT", "CASE", "END",    "USING",     "ANY",   "SOME",      "INTO",
-	    "GROUP",     "ORDER",    "RETURNING", "SET", "VISUALIZE", "VISUALISE", "DRAW", "FACET", "SCALE", "TITLE",
+	    "GROUP",     "ORDER",    "RETURNING", "SET", "DRAW",   "FACET",     "SCALE", "TITLE", "MATERIALIZED",
 	    "SUBTITLE",  "DOMAIN",   "LABEL",  "TO",     "ROWS",   "COLUMNS",   "ZERO",  "RETURN"};
 	auto upper = StringUtil::Upper(text);
 	for (auto word : kWords) {

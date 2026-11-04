@@ -173,8 +173,121 @@ string JsonEscape(const string &s) {
 }
 
 // The statement keyword, in both spellings that upstream ggsql accepts (#84).
-static bool IsVisualizeKeyword(const string &token) {
+bool IsVisualizeKeyword(const string &token) {
 	return IEqual(token, "VISUALIZE") || IEqual(token, "VISUALISE");
+}
+
+namespace {
+
+// `VISUALIZE(` written without a space. The tokenizer glues a depth-0 `(` to
+// the word before it, so the keyword and the parenthesis arrive as one token.
+// The claim treats the token as ours and the parser names the problem (#86).
+bool IsKeywordGluedToParen(const string &token) {
+	return token.size() > 9 && token[9] == '(' && IsVisualizeKeyword(token.substr(0, 9));
+}
+
+// The spelling the user wrote, upper-cased, from a keyword token or a glued one.
+string KeywordSpelling(const string &token) {
+	return StringUtil::Upper(token.substr(0, 9));
+}
+
+// Walks a leading WITH block by its structure and returns the index of the
+// token after it. The block is `WITH [RECURSIVE] <name> ... AS ... (<body>)`,
+// repeated after each `,`. Anything may stand between the name and AS (a
+// column list, USING KEY) and between AS and the body (MATERIALIZED, NOT
+// MATERIALIZED). The body is the first token after AS that holds a `(`; on
+// DuckDB 2.0 the token adapter can glue a word to the parenthesis. The name
+// position takes any token, so a CTE called `visualize` is a CTE and not the
+// statement keyword. Returns tokens.size() when the block runs to the end of
+// the input or does not have this shape. tokens[0] must be WITH.
+size_t WithBlockEnd(const vector<string> &tokens) {
+	const size_t none = tokens.size();
+	size_t i = 1;
+	if (i < tokens.size() && IEqual(tokens[i], "RECURSIVE")) {
+		i++;
+	}
+	while (true) {
+		if (i >= tokens.size()) {
+			return none;
+		}
+		i++; // the CTE name, whatever it is
+		while (i < tokens.size() && !IEqual(tokens[i], "AS")) {
+			i++;
+		}
+		if (i >= tokens.size()) {
+			return none;
+		}
+		i++; // AS
+		while (i < tokens.size() && tokens[i].find('(') == string::npos) {
+			i++;
+		}
+		if (i >= tokens.size()) {
+			return none;
+		}
+		i++; // the parenthesised body, one token
+		if (i < tokens.size() && tokens[i] == ",") {
+			i++;
+			continue;
+		}
+		return i;
+	}
+}
+
+// Where the statement keyword is, when the token stream is ours.
+struct Claim {
+	bool ours = false;
+	size_t keyword = 0;          // index of the keyword token, or of the glued `VISUALIZE(` token
+	bool malformed_with = false; // ours, but the WITH block before the keyword is not <name> AS (...)
+};
+
+// Decides ownership on the tokens. The first token is the keyword, or it is
+// WITH and the keyword follows the CTE list. A WITH statement whose CTE list
+// is followed by anything else (SELECT, a misspelt SELECT, ...) is DuckDB's,
+// whatever words appear later at depth 0: a column alias `visualise` or a
+// comment does not make a statement ours. When the WITH block does not have
+// the <name> AS (...) shape but a keyword token follows it anyway, the
+// statement is ours with an error that names the WITH clause (#86).
+Claim ClaimTokens(const vector<string> &tokens) {
+	Claim claim;
+	if (tokens.empty()) {
+		return claim;
+	}
+	auto is_keyword = [&](size_t k) { return IsVisualizeKeyword(tokens[k]) || IsKeywordGluedToParen(tokens[k]); };
+	if (is_keyword(0)) {
+		claim.ours = true;
+		return claim;
+	}
+	if (!IEqual(tokens[0], "WITH")) {
+		return claim;
+	}
+	size_t end = WithBlockEnd(tokens);
+	if (end < tokens.size()) {
+		if (is_keyword(end)) {
+			claim.ours = true;
+			claim.keyword = end;
+		}
+		return claim;
+	}
+	for (size_t k = 1; k < tokens.size(); k++) {
+		if (is_keyword(k)) {
+			claim.ours = true;
+			claim.keyword = k;
+			claim.malformed_with = true;
+			return claim;
+		}
+	}
+	return claim;
+}
+
+} // namespace
+
+// A tokenizer error does not decide ownership by itself: the tokens read so
+// far do. A direct statement with an unterminated quote later on is ours, and
+// ParseGgsql reports the quote. A WITH statement with the quote inside a CTE
+// body never shows the keyword as a token, so it stays with DuckDB, whose own
+// message names the quote.
+bool IsVisualizeStatement(const string &query) {
+	return ClaimTokens(Tokenize(query).tokens).ours;
 }
 
 ParseResult ParseGgsql(const string &query) {
@@ -205,34 +318,44 @@ ParseResult ParseGgsql(const string &query) {
 		return true;
 	};
 
-	// Optional leading `WITH … VISUALIZE`. Capture every top-level token from
-	// the WITH up to (but not including) VISUALIZE — the tokenizer already
-	// flattens parenthesised CTE bodies into single tokens, so we don't need
-	// to track depth here. Reconstruct the SQL by joining with single spaces;
-	// SQL is whitespace-tolerant, so `WITH t AS (…) , u AS (…)` parses the
-	// same as `WITH t AS (…), u AS (…)`.
-	if (!at_end() && IEqual(peek(), "WITH")) {
+	// The same claim the parser extension made before calling us. A leading
+	// WITH block ends where the claim found the keyword. Its tokens, joined
+	// with single spaces, are the SQL prepended to every layer; SQL is
+	// whitespace-tolerant, so `WITH t AS (…) , u AS (…)` parses the same as
+	// `WITH t AS (…), u AS (…)`.
+	auto claim = ClaimTokens(tokens);
+	if (!claim.ours) {
+		if (!at_end() && IEqual(peek(), "WITH")) {
+			result.error = "WITH clause is not followed by VISUALIZE or VISUALISE";
+		} else {
+			fail_expected("VISUALIZE");
+		}
+		return result;
+	}
+	if (claim.malformed_with) {
+		result.error = "Malformed WITH clause before " + KeywordSpelling(tokens[claim.keyword]) +
+		               ": expected <name> AS (<query>), with commas between CTEs";
+		return result;
+	}
+	if (claim.keyword > 0) {
 		string with_text;
-		while (!at_end() && !IsVisualizeKeyword(peek())) {
+		for (size_t k = 0; k < claim.keyword; k++) {
 			if (!with_text.empty()) {
 				with_text += " ";
 			}
-			with_text += tokens[i++];
-		}
-		if (at_end()) {
-			result.error = "WITH clause is not followed by VISUALIZE or VISUALISE";
-			return result;
+			with_text += tokens[k];
 		}
 		result.stmt.with_clause = std::move(with_text);
+		i = claim.keyword;
 	}
 
 	// The statement keyword, in either spelling. The spelling the user wrote
 	// is kept for the error messages below.
-	if (at_end() || !IsVisualizeKeyword(tokens[i])) {
-		fail_expected("VISUALIZE");
+	if (IsKeywordGluedToParen(tokens[i])) {
+		result.error = KeywordSpelling(tokens[i]) + " must be followed by a space, not by '('";
 		return result;
 	}
-	const string keyword = StringUtil::Upper(tokens[i]);
+	const string keyword = KeywordSpelling(tokens[i]);
 	i++;
 
 	// mapping_list := <expr> AS <ident> (',' <expr> AS <ident>)*
