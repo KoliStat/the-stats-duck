@@ -1034,13 +1034,19 @@ projected SQL so they compose with wrapping marks (`line`, `bar`, `area`,
 without a top-level `VISUALIZE` or `VISUALISE` keyword fall through to DuckDB's
 normal SQL parser unchanged.
 
-**Marks:** `point`, `line`, `bar`, `histogram`, `text`, `area`, `rule`, `tick`,
-`errorbar`, `errorband`, `boxplot`, `violin`, `heatmap`, `density`, `regression`. Custom
-marks register as `visualize_mark_v1_<name>` scalar functions and are discovered
-via DuckDB's catalog, so other extensions can ship their own marks without
-modifying stats_duck. Upstream ggsql's mark names are accepted as aliases:
-`range` for `errorbar`, `ribbon` for `errorband`, `tile` for `heatmap`, and
-`smooth` for `line STAT smooth`.
+**Marks:** `point`, `line`, `path`, `bar`, `histogram`, `text`, `area`, `rule`,
+`segment`, `tick`, `errorbar`, `errorband`, `boxplot`, `violin`, `heatmap`,
+`density`, `regression`. Custom marks register as `visualize_mark_v1_<name>`
+scalar functions and are discovered via DuckDB's catalog, so other extensions
+can ship their own marks without modifying stats_duck. Upstream ggsql's mark
+names are accepted as aliases: `range` for `errorbar`, `ribbon` for
+`errorband`, `tile` for `heatmap`, and `smooth` for `line STAT smooth`.
+
+`path` connects the rows in the order they come from the query, where `line`
+sorts them by `x`: a Vega-Lite `line` whose `order` channel keeps the data
+order, with the plain projection as layer SQL. `segment` draws one straight
+line per row from (`x`, `y`) to (`x2`, `y2`) as a `rule` and requires all four
+channels.
 
 `heatmap` is a `rect` mark with ordinal x/y and a quantitative value on `color`
 or `fill` (correlation matrices, contingency tables). `density` runs Vega-Lite's KDE on the `x`

@@ -102,18 +102,20 @@ Valid types: `:quantitative`, `:ordinal`, `:nominal`, `:temporal`.
 
 ## 3. Marks
 
-`DRAW <mark>` chooses the geometry. The 15 built-in marks and the aesthetics they
+`DRAW <mark>` chooses the geometry. The 17 built-in marks and the aesthetics they
 require:
 
 | mark | requires | use |
 |------|----------|-----|
 | `point` | x, y | scatter |
 | `line` | x, y | trend / series (sorted by x) |
+| `path` | x, y | connected points in data order |
 | `area` | x, y | filled line |
 | `bar` | x, y | categorical magnitudes |
 | `histogram` | x | distribution of one column (auto-binned) |
 | `tick` | — | 1-D strip of marks |
 | `rule` | — | reference line (map only `x` **or** only `y`) |
+| `segment` | x, y, x2, y2 | one straight line per row, from (x, y) to (x2, y2) |
 | `text` | x, y, text | data labels |
 | `boxplot` | x, y | distribution summary per category |
 | `violin` | x, y | density per category (vertical violins) |
@@ -128,14 +130,27 @@ Upstream ggsql's mark names are accepted as aliases: `range` for `errorbar`,
 `line STAT smooth`. `DRAW smooth` takes no `STAT` clause of its own. Error
 messages name our mark, so `DRAW range` without `x` reports `errorbar`.
 
-### Points, lines, areas
+### Points, lines, paths, areas
 
 ```sql
 VISUALIZE bill_len AS x, bill_dep AS y FROM penguins DRAW line;
 VISUALIZE bill_len AS x, bill_dep AS y FROM penguins DRAW area;
 ```
 
-`line` and `area` wrap their layer SQL in `ORDER BY x` so the path is monotone.
+`line` and `area` wrap their layer SQL in `ORDER BY x`, so the line runs from
+left to right.
+
+`path` connects the rows in the order they come from the query instead. Use it
+for a trajectory or a connected scatterplot, and sort the source in a CTE when
+the table order is not the order you want. One path is drawn per `color` value:
+
+```sql
+WITH steps AS (SELECT * FROM track ORDER BY t)
+VISUALIZE lon AS x, lat AS y, trip AS color FROM steps DRAW path;
+```
+
+The spec is a Vega-Lite `line` whose `order` channel keeps the data order, and
+the layer SQL is the plain projection.
 
 ### Bars and histograms
 
@@ -162,7 +177,7 @@ VISUALIZE body_mass AS x FROM penguins DRAW density;
 VISUALIZE bill_len AS x, species AS color FROM penguins DRAW density;
 ```
 
-### Intervals: errorbar, errorband, rule, tick
+### Intervals: errorbar, errorband, rule, tick, segment
 
 `errorbar` / `errorband` draw an interval from `y` to `y2`. Build the bounds with
 a CTE (see §9):
@@ -180,6 +195,14 @@ horizontal one; `tick` is a 1-D strip:
 ```sql
 VISUALIZE 18 AS y FROM penguins DRAW rule;
 VISUALIZE bill_len AS x FROM penguins DRAW tick;
+```
+
+`segment` draws one straight line per row from (`x`, `y`) to (`x2`, `y2`) and
+requires all four channels. Upstream's `xend` and `yend` are aliases of `x2`
+and `y2`. `rule` accepts the same four channels but does not require them:
+
+```sql
+VISUALIZE x0 AS x, y0 AS y, x1 AS xend, y1 AS yend, kind AS color FROM edges DRAW segment;
 ```
 
 ### Text labels
@@ -371,7 +394,7 @@ DRAW <mark> [STAT <identity|smooth|summary>] (DRAW <mark> [STAT ...])*
   `tooltip`, `text`, `x2`, `y2`. Aliases: `colour`, `label`, `xmin`, `xmax`,
   `ymin`, `ymax`, `xend`, `yend`.
 - **Types:** `:quantitative`, `:ordinal`, `:nominal`, `:temporal`.
-- **Marks:** `point`, `line`, `bar`, `histogram`, `text`, `area`, `rule`, `tick`,
-  `errorbar`, `errorband`, `boxplot`, `violin`, `heatmap`, `density`, `regression`.
-  Aliases: `range`, `ribbon`, `tile`, `smooth`.
+- **Marks:** `point`, `line`, `path`, `bar`, `histogram`, `text`, `area`, `rule`,
+  `segment`, `tick`, `errorbar`, `errorband`, `boxplot`, `violin`, `heatmap`,
+  `density`, `regression`. Aliases: `range`, `ribbon`, `tile`, `smooth`.
 - **Comments:** `--` and `/* … */` anywhere outside string literals.

@@ -32,6 +32,13 @@ that name is preserved across releases for backward compatibility.
   `color`, because upstream's `tile` maps the value to `fill`. Before this
   change `colour` was dropped without an error. Four more statements of
   `test/sql/ggsql_compat_upstream.test` pass: 11 of 55.
+- **The `path` and `segment` marks** (#90, Tier 1 of #58). `path` connects the
+  rows in the order they come from the query, where `line` sorts them by `x`.
+  It is a Vega-Lite `line` mark whose `order` channel keeps the data order, and
+  its layer SQL is the plain projection, so an `ORDER BY` in a CTE decides the
+  order. `segment` draws one straight line per row from (`x`, `y`) to (`x2`,
+  `y2`) as a Vega-Lite `rule` mark and requires all four channels. `rule` keeps
+  accepting any subset of them. Both names and meanings are upstream ggsql's.
 
 ### Fixed
 
