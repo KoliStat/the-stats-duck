@@ -1,0 +1,105 @@
+# name: test/sql/ggsql_visualize_path_segment.test
+# description: The path and segment marks: a line in data order, and one line per row between two points (#90, Tier 1 of #58)
+# group: [stats_duck]
+
+require stats_duck
+
+statement ok
+CREATE TABLE walk AS
+SELECT * FROM (VALUES
+    (1, 1.0, 1.0, 'A'), (2, 2.0, 1.0, 'A'), (3, 1.0, 3.0, 'A'),
+    (4, 3.0, 1.0, 'B'), (5, 2.0, 3.0, 'B'), (6, 3.0, 3.0, 'B')
+) AS t(step, px, py, id);
+
+statement ok
+CREATE TABLE edges AS
+SELECT * FROM (VALUES
+    (0, 0, 1, 1, 'A'), (1, 1, 2, 1, 'A'), (2, 1, 3, 0, 'A'),
+    (0, 3, 1, 2, 'B'), (1, 2, 2, 2, 'B')
+) AS t(x0, y0, x1, y1, kind);
+
+# ─── path ────────────────────────────────────────────────────────────────────
+
+# path connects the rows in the order they come from the query. The spec is a
+# line whose order channel keeps the data order, and the layer SQL is the
+# plain projection: no ORDER BY x.
+query TT
+VISUALIZE px AS x, py AS y FROM walk DRAW path
+----
+{"$schema":"https://vega.github.io/schema/vega-lite/v5.json","data":{"name":"layer_0"},"mark":"line","encoding":{"x":{"field":"x","type":"quantitative"},"y":{"field":"y","type":"quantitative"},"order":{"value":null}}}	{layer_0='SELECT px AS x, py AS y FROM walk'}
+
+# line sorts by x and path does not: both in one statement.
+query TT
+VISUALIZE px AS x, py AS y FROM walk DRAW line DRAW path
+----
+{"$schema":"https://vega.github.io/schema/vega-lite/v5.json","layer":[{"data":{"name":"layer_0"},"mark":"line","encoding":{"x":{"field":"x","type":"quantitative"},"y":{"field":"y","type":"quantitative"}}},{"data":{"name":"layer_1"},"mark":"line","encoding":{"x":{"field":"x","type":"quantitative"},"y":{"field":"y","type":"quantitative"},"order":{"value":null}}}]}	{layer_0='SELECT * FROM (SELECT px AS x, py AS y FROM walk) ORDER BY x', layer_1='SELECT px AS x, py AS y FROM walk'}
+
+# One path per color value.
+query TT
+VISUALIZE px AS x, py AS y, id AS color FROM walk DRAW path
+----
+{"$schema":"https://vega.github.io/schema/vega-lite/v5.json","data":{"name":"layer_0"},"mark":"line","encoding":{"x":{"field":"x","type":"quantitative"},"y":{"field":"y","type":"quantitative"},"color":{"field":"color","type":"nominal"},"order":{"value":null}}}	{layer_0='SELECT px AS x, py AS y, id AS color FROM walk'}
+
+# The query decides the order: sort the source in a CTE.
+query TT
+WITH backwards AS (SELECT * FROM walk ORDER BY step DESC)
+VISUALIZE px AS x, py AS y FROM backwards DRAW path
+----
+{"$schema":"https://vega.github.io/schema/vega-lite/v5.json","data":{"name":"layer_0"},"mark":"line","encoding":{"x":{"field":"x","type":"quantitative"},"y":{"field":"y","type":"quantitative"},"order":{"value":null}}}	{layer_0='WITH backwards AS (SELECT * FROM walk ORDER BY step DESC) SELECT px AS x, py AS y FROM backwards'}
+
+# FACET BY gives one panel per path.
+query TT
+VISUALIZE px AS x, py AS y FROM walk DRAW path FACET BY id
+----
+{"$schema":"https://vega.github.io/schema/vega-lite/v5.json","data":{"name":"layer_0"},"facet":{"field":"facet","type":"nominal"},"spec":{"mark":"line","encoding":{"x":{"field":"x","type":"quantitative"},"y":{"field":"y","type":"quantitative"},"order":{"value":null}}}}	{layer_0='SELECT px AS x, py AS y, id AS facet FROM walk'}
+
+# path requires x and y.
+statement error
+VISUALIZE px AS x FROM walk DRAW path
+----
+'path' requires 'y' aesthetic
+
+# ─── segment ─────────────────────────────────────────────────────────────────
+
+# segment draws one straight line per row from (x, y) to (x2, y2): a rule mark
+# with all four channels.
+query TT
+VISUALIZE x0 AS x, y0 AS y, x1 AS x2, y1 AS y2 FROM edges DRAW segment
+----
+{"$schema":"https://vega.github.io/schema/vega-lite/v5.json","data":{"name":"layer_0"},"mark":"rule","encoding":{"x":{"field":"x","type":"quantitative"},"y":{"field":"y","type":"quantitative"},"x2":{"field":"x2","type":"quantitative"},"y2":{"field":"y2","type":"quantitative"}}}	{layer_0='SELECT x0 AS x, y0 AS y, x1 AS x2, y1 AS y2 FROM edges'}
+
+# Upstream's spelling: xend and yend are x2 and y2, colour is color (#88).
+query TT
+VISUALISE x0 AS x, y0 AS y, x1 AS xend, y1 AS yend, kind AS colour FROM edges DRAW segment
+----
+{"$schema":"https://vega.github.io/schema/vega-lite/v5.json","data":{"name":"layer_0"},"mark":"rule","encoding":{"x":{"field":"x","type":"quantitative"},"y":{"field":"y","type":"quantitative"},"color":{"field":"color","type":"nominal"},"x2":{"field":"x2","type":"quantitative"},"y2":{"field":"y2","type":"quantitative"}}}	{layer_0='SELECT x0 AS x, y0 AS y, x1 AS x2, y1 AS y2, kind AS color FROM edges'}
+
+# segment requires all four channels. The error names the first missing one.
+statement error
+VISUALIZE x0 AS x, y0 AS y, x1 AS x2 FROM edges DRAW segment
+----
+'segment' requires 'y2' aesthetic
+
+statement error
+VISUALIZE x0 AS x, y0 AS y FROM edges DRAW segment
+----
+'segment' requires 'x2' aesthetic
+
+# rule keeps accepting any subset of the four channels.
+query TT
+VISUALIZE x0 AS x, y0 AS y, x1 AS x2 FROM edges DRAW rule
+----
+{"$schema":"https://vega.github.io/schema/vega-lite/v5.json","data":{"name":"layer_0"},"mark":"rule","encoding":{"x":{"field":"x","type":"quantitative"},"y":{"field":"y","type":"quantitative"},"x2":{"field":"x2","type":"quantitative"}}}	{layer_0='SELECT x0 AS x, y0 AS y, x1 AS x2 FROM edges'}
+
+# ─── registry ────────────────────────────────────────────────────────────────
+
+# Both marks are registry entries with their required channels.
+query T
+SELECT visualize_mark_v1_path()
+----
+{"name":"path","required_aesthetics":["x","y"]}
+
+query T
+SELECT visualize_mark_v1_segment()
+----
+{"name":"segment","required_aesthetics":["x","y","x2","y2"]}

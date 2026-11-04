@@ -135,6 +135,21 @@ MarkResult RenderLine(const MarkContext &ctx) {
 	return r;
 }
 
+MarkResult RenderPath(const MarkContext &ctx) {
+	// Upstream ggsql's path (#90): the rows are connected in the order they
+	// come from the query, where line sorts them by x. Vega-Lite sorts a line
+	// by x unless the order channel says otherwise, and `{"value":null}` keeps
+	// the data order. The layer SQL is the plain projection, so an ORDER BY in
+	// a CTE decides the order. x and y are required, so the encoding object is
+	// never empty and the leading comma is right.
+	string encoding = BuildEncoding(ctx, kStandardChannels);
+	encoding.insert(encoding.size() - 1, ",\"order\":{\"value\":null}");
+	MarkResult r;
+	r.layer_body = "\"mark\":\"line\",\"encoding\":" + encoding;
+	r.data_sql = ctx.projected_sql;
+	return r;
+}
+
 MarkResult RenderBar(const MarkContext &ctx) {
 	// When faceting is active, the facet column(s) ride through projected_sql
 	// and must be carried through bar's GROUP BY so each facet partition keeps
@@ -169,6 +184,16 @@ MarkResult RenderArea(const MarkContext &ctx) {
 }
 
 MarkResult RenderRule(const MarkContext &ctx) {
+	MarkResult r;
+	r.layer_body = "\"mark\":\"rule\",\"encoding\":" + BuildEncoding(ctx, kStandardChannels);
+	r.data_sql = ctx.projected_sql;
+	return r;
+}
+
+MarkResult RenderSegment(const MarkContext &ctx) {
+	// Upstream ggsql's segment (#90): one straight line per row from (x, y)
+	// to (x2, y2), drawn as a rule mark. The registry entry requires all four
+	// channels; rule is the loose form that takes any subset of them.
 	MarkResult r;
 	r.layer_body = "\"mark\":\"rule\",\"encoding\":" + BuildEncoding(ctx, kStandardChannels);
 	r.data_sql = ctx.projected_sql;
@@ -373,13 +398,18 @@ const MarkInfo &LookupMark(ClientContext &context, const string &name) {
 void RegisterBuiltinMarks(ExtensionLoader &loader) {
 	RegisterMark(loader, "point", {"x", "y"}, RenderPoint);
 	RegisterMark(loader, "line", {"x", "y"}, RenderLine);
+	// Upstream ggsql's path and segment (#90): a line in data order, and one
+	// line per row between two points.
+	RegisterMark(loader, "path", {"x", "y"}, RenderPath);
+	RegisterMark(loader, "segment", {"x", "y", "x2", "y2"}, RenderSegment);
 	RegisterMark(loader, "bar", {"x", "y"}, RenderBar);
 	RegisterMark(loader, "histogram", {"x"}, RenderHistogram);
 	RegisterMark(loader, "text", {"x", "y", "text"}, RenderText);
 	RegisterMark(loader, "area", {"x", "y"}, RenderArea);
 	// `rule` and `tick` accept any subset of x/y so a single mark serves the
-	// vline / hline / segment / rug-plot use cases. Vega-Lite renders sensibly
-	// with whatever the user maps; aesthetic validation stays minimal.
+	// vline / hline / rug-plot use cases. Vega-Lite renders sensibly with
+	// whatever the user maps; aesthetic validation stays minimal. `segment`
+	// is the strict form of `rule` with all four position channels.
 	RegisterMark(loader, "rule", {}, RenderRule);
 	RegisterMark(loader, "tick", {}, RenderTick);
 	// Stats marks: errorbar/errorband consume the y2 channel for the upper

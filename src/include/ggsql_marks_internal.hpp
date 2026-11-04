@@ -24,7 +24,7 @@ void RegisterMark(ExtensionLoader &loader, const string &name,
 // if the mark is not registered or carries an incompatible ABI version.
 const MarkInfo &LookupMark(ClientContext &context, const string &name);
 
-// Registers the four built-in marks (point, line, bar, histogram).
+// Registers the built-in marks. The list lives in RegisterBuiltinMarks.
 void RegisterBuiltinMarks(ExtensionLoader &loader);
 
 } // namespace ggsql
