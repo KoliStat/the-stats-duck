@@ -60,11 +60,11 @@ static LogicalType TTestResultType() {
 
 static double AggComputePValue(double t_stat, double df, const string &alternative) {
 	if (alternative == "two-sided") {
-		return 2.0 * (1.0 - stats_duck::StudentTCDF(std::abs(t_stat), df));
+		return 2.0 * stats_duck::StudentTUpperTail(std::abs(t_stat), df);
 	} else if (alternative == "less") {
 		return stats_duck::StudentTCDF(t_stat, df);
 	} else {
-		return 1.0 - stats_duck::StudentTCDF(t_stat, df);
+		return stats_duck::StudentTUpperTail(t_stat, df);
 	}
 }
 

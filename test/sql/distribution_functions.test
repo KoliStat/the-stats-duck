@@ -44,6 +44,35 @@ SELECT ROUND(dnorm(2.0, 2.0, 1.0), 8),
 ----
 0.39894228	0.9772
 
+# The lower tail, far out (#81). pnorm was 0.5 * (1 + erf(z / sqrt 2)), which
+# loses digits below z = -8 and is exactly 0 from z = -8.5 on. It is now
+# 0.5 * erfc(-z / sqrt 2). Each column is the ratio to scipy.stats.norm.cdf.
+query TTTTTTT
+SELECT ROUND(pnorm(-5.0) / 2.866515718792e-07, 6),
+       ROUND(pnorm(-8.0) / 6.220960574272e-16, 6),
+       ROUND(pnorm(-8.5) / 9.479534822203e-18, 6),
+       ROUND(pnorm(-10.0) / 7.619853024160e-24, 6),
+       ROUND(pnorm(-20.0) / 2.753624118606e-89, 6),
+       ROUND(pnorm(-30.0) / 4.906713927148e-198, 6),
+       ROUND(pnorm(-37.0) / 5.725571222524e-300, 6)
+----
+1.0	1.0	1.0	1.0	1.0	1.0	1.0
+
+# The same through mean and sd, and the upper side: a CDF saturates at 1.0 from
+# about z = 8.3, because 1 - 1e-17 is 1 in a double. An upper-tail p-value is
+# therefore never computed as 1 - pnorm; see test/sql/tail_pvalues.test.
+query TT
+SELECT ROUND(pnorm(-20.0, 0.0, 2.0) / 7.619853024160e-24, 6), pnorm(8.5)
+----
+1.0	1.0
+
+# pt's lower tail is the incomplete beta directly and was never lost.
+query TT
+SELECT ROUND(pt(-40.0, 5.0) / 9.205981085886e-08, 6),
+       ROUND(pt(-100.0, 3.0) / 1.102260961592e-06, 6)
+----
+1.0	1.0
+
 # ─── Student's t ────────────────────────────────────────────────────────────
 
 # dt at 0 with df=5: peak of the t distribution

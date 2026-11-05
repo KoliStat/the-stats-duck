@@ -3,6 +3,7 @@
 
 #include "duckdb/function/aggregate_function.hpp"
 #include "duckdb/function/function_set.hpp"
+#include "distributions.hpp"
 #include "duckdb_compat.hpp"
 #include "duckdb/main/extension/extension_loader.hpp"
 #include "duckdb/execution/expression_executor.hpp"
@@ -18,17 +19,13 @@ namespace compat = statsduck::compat;
 
 // ─── Helpers ────────────────────────────────────────────────────────────────────
 
-static double NormalCDF(double x) {
-	return 0.5 * (1.0 + std::erf(x / std::sqrt(2.0)));
-}
-
 static double NormalPValue(double z, const string &alternative) {
 	if (alternative == "two-sided") {
-		return 2.0 * (1.0 - NormalCDF(std::abs(z)));
+		return 2.0 * stats_duck::NormalUpperTail(std::abs(z));
 	} else if (alternative == "less") {
-		return NormalCDF(z);
+		return stats_duck::NormalCDF(z);
 	} else {
-		return 1.0 - NormalCDF(z);
+		return stats_duck::NormalUpperTail(z);
 	}
 }
 

@@ -55,6 +55,26 @@ that name is preserved across releases for backward compatibility.
   so the layer SQL of a `WITH ... AS MATERIALIZED (...)` statement reads
   the same on both DuckDB lines.
 
+- **Far-tail p-values, and `pnorm`'s lower tail** (#81). `pnorm(-8.5)`
+  returned 0 and `pnorm(-5)` had lost five digits, because the normal CDF was
+  `0.5 * (1 + erf(z / sqrt 2))` and that sum cancels for a negative `z`. It is
+  now `0.5 * erfc(-z / sqrt 2)`, which is accurate in the lower tail:
+  `pnorm(-37)` is 5.7e-300. Every upper-tail p-value in the extension was
+  `1 - CDF`, which is exactly 0 once the tail drops below about 1e-16, so
+  `anova_oneway`, `chisq_independence`, `chisq_goodness_of_fit`,
+  `pearson_test`, `spearman_test`, `kendall_test`, `mann_whitney_u`,
+  `wilcoxon_signed_rank`, `jarque_bera`, `shapiro_wilk`, the t-test
+  aggregates, `lm_fit`, `glm_fit`, `lin_hyp` and `emmeans` all reported a
+  `p_value` of 0 for a strong effect. `distributions.hpp` now has an
+  upper-tail function for the normal, t, chi-square and F references, computed
+  from `erfc`, the regularized incomplete beta at the complementary argument
+  and the upper incomplete gamma, and every p-value site calls it. A p-value
+  below about 1e-308 still underflows to 0. `test/sql/tail_pvalues.test` pins
+  one far-tail p-value per function against scipy's survival function. The
+  Tukey-adjusted p-value of `emmeans` keeps its `1 - CDF` form: that CDF is a
+  quadrature with an absolute accuracy of 1e-12, so a smaller tail is below
+  its resolution either way.
+
 ## [0.9.0-here-s-your-nine-pence] - 2026-10-28
 
 ### Added
