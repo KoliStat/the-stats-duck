@@ -714,7 +714,7 @@ GlmResult FitGlm(const std::vector<double> &y, const linalg::Mat &X_pred, const 
 				const double zj = beta[a] / se;
 				res.z_statistic[ja] = zj;
 				// A normal reference for all four families. See GlmResult.
-				res.p_value[ja] = 2.0 * (1.0 - stats_duck::NormalCDF(std::fabs(zj)));
+				res.p_value[ja] = 2.0 * stats_duck::NormalUpperTail(std::fabs(zj));
 			}
 			for (std::size_t b = 0; b < rank; b++) {
 				res.cov[ja * k + static_cast<std::size_t>(sel.keep[b])] = V(a, b);

@@ -110,3 +110,13 @@ that has been written down than to re-derive it.
   the `WITH` block by its structure. Why a tokenizer error does not decide
   ownership, what the DuckDB 2.0 token adapter cannot know (spacing), and why
   negative tests pin `Parser Error` only.
+
+- [`2026-11-tail-probabilities.md`](2026-11-tail-probabilities.md) — `pnorm(-8.5)`
+  was 0 and every test and fitter reported a `p_value` of exactly 0 below
+  about 1e-16 (#81). The special functions were accurate; the digits were lost
+  in two subtractions, `1 + erf` in the normal CDF and `1 - CDF` at every
+  p-value site. Fix: `erfc`, and an upper-tail function per reference
+  distribution (normal, t, chi-square, F) from the complementary incomplete
+  beta and gamma. Why the Tukey tail keeps `1 - CDF`, and why the tests pin a
+  ratio to scipy's survival function rounded to six places rather than the
+  p-value's digits.
