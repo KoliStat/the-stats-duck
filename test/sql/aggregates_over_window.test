@@ -1,0 +1,197 @@
+# name: test/sql/aggregates_over_window.test
+# description: Every aggregate works as a window function: OVER () equals the plain aggregate and OVER (PARTITION BY) equals GROUP BY (#69)
+# group: [stats_duck]
+
+require stats_duck
+
+# DuckDB's constant-frame window path (OVER () and OVER (PARTITION BY ...)
+# without ORDER BY or a frame) calls an aggregate's update once per partition
+# with a CONSTANT state vector: one state pointer for every input row. Until
+# #69 every update function in this extension read that vector as FLAT,
+# indexed it by row, and crashed the process. A framed window (ROWS BETWEEN)
+# goes through the segment tree with a flat vector and always worked. Each
+# block compares the window result with the plain aggregate, struct by struct;
+# IS NOT DISTINCT FROM treats NULL fields as equal.
+
+statement ok
+CREATE TABLE t AS
+SELECT i::DOUBLE AS y,
+       (i * 2 + i % 3)::DOUBLE AS x1,
+       (i % 3)::VARCHAR AS g,
+       (i + i % 4)::DOUBLE AS a,
+       (i * 1.5 + 1)::DOUBLE AS b,
+       CASE WHEN i % 5 < 2 THEN 'p' WHEN i % 5 < 4 THEN 'q' ELSE 'r' END AS k
+FROM range(1, 31) AS r(i);
+
+# ─── OVER (): the whole table as one partition ───────────────────────────────
+
+query T
+SELECT bool_and(w IS NOT DISTINCT FROM (SELECT ttest_1samp(y, 0.0) FROM t))
+FROM (SELECT ttest_1samp(y, 0.0) OVER () AS w FROM t);
+----
+true
+
+query T
+SELECT bool_and(w IS NOT DISTINCT FROM (SELECT ttest_paired(a, b) FROM t))
+FROM (SELECT ttest_paired(a, b) OVER () AS w FROM t);
+----
+true
+
+query T
+SELECT bool_and(w IS NOT DISTINCT FROM (SELECT ttest_2samp(a, b) FROM t))
+FROM (SELECT ttest_2samp(a, b) OVER () AS w FROM t);
+----
+true
+
+query T
+SELECT bool_and(w IS NOT DISTINCT FROM (SELECT mann_whitney_u(a, b) FROM t))
+FROM (SELECT mann_whitney_u(a, b) OVER () AS w FROM t);
+----
+true
+
+query T
+SELECT bool_and(w IS NOT DISTINCT FROM (SELECT wilcoxon_signed_rank(a, b) FROM t))
+FROM (SELECT wilcoxon_signed_rank(a, b) OVER () AS w FROM t);
+----
+true
+
+query T
+SELECT bool_and(w IS NOT DISTINCT FROM (SELECT pearson_test(y, x1) FROM t))
+FROM (SELECT pearson_test(y, x1) OVER () AS w FROM t);
+----
+true
+
+query T
+SELECT bool_and(w IS NOT DISTINCT FROM (SELECT spearman_test(y, x1) FROM t))
+FROM (SELECT spearman_test(y, x1) OVER () AS w FROM t);
+----
+true
+
+query T
+SELECT bool_and(w IS NOT DISTINCT FROM (SELECT kendall_test(y, x1) FROM t))
+FROM (SELECT kendall_test(y, x1) OVER () AS w FROM t);
+----
+true
+
+query T
+SELECT bool_and(w IS NOT DISTINCT FROM (SELECT anova_oneway(y, g) FROM t))
+FROM (SELECT anova_oneway(y, g) OVER () AS w FROM t);
+----
+true
+
+query T
+SELECT bool_and(w IS NOT DISTINCT FROM (SELECT chisq_independence(g, k) FROM t))
+FROM (SELECT chisq_independence(g, k) OVER () AS w FROM t);
+----
+true
+
+query T
+SELECT bool_and(w IS NOT DISTINCT FROM (SELECT chisq_goodness_of_fit(k) FROM t))
+FROM (SELECT chisq_goodness_of_fit(k) OVER () AS w FROM t);
+----
+true
+
+query T
+SELECT bool_and(w IS NOT DISTINCT FROM (SELECT jarque_bera(y) FROM t))
+FROM (SELECT jarque_bera(y) OVER () AS w FROM t);
+----
+true
+
+query T
+SELECT bool_and(w IS NOT DISTINCT FROM (SELECT shapiro_wilk(y) FROM t))
+FROM (SELECT shapiro_wilk(y) OVER () AS w FROM t);
+----
+true
+
+query T
+SELECT bool_and(w IS NOT DISTINCT FROM (SELECT anderson_darling(y) FROM t))
+FROM (SELECT anderson_darling(y) OVER () AS w FROM t);
+----
+true
+
+query T
+SELECT bool_and(w IS NOT DISTINCT FROM (SELECT ks_test_1samp(y) FROM t))
+FROM (SELECT ks_test_1samp(y) OVER () AS w FROM t);
+----
+true
+
+query T
+SELECT bool_and(w IS NOT DISTINCT FROM (SELECT ks_test_2samp(a, b) FROM t))
+FROM (SELECT ks_test_2samp(a, b) OVER () AS w FROM t);
+----
+true
+
+query T
+SELECT bool_and(w IS NOT DISTINCT FROM (SELECT sign_test_1samp(y, 10.0) FROM t))
+FROM (SELECT sign_test_1samp(y, 10.0) OVER () AS w FROM t);
+----
+true
+
+query T
+SELECT bool_and(w IS NOT DISTINCT FROM (SELECT sign_test_paired(a, b) FROM t))
+FROM (SELECT sign_test_paired(a, b) OVER () AS w FROM t);
+----
+true
+
+query T
+SELECT bool_and(w IS NOT DISTINCT FROM (SELECT summary_stats(y) FROM t))
+FROM (SELECT summary_stats(y) OVER () AS w FROM t);
+----
+true
+
+query T
+SELECT bool_and(w IS NOT DISTINCT FROM (SELECT bin_edges(y) FROM t))
+FROM (SELECT bin_edges(y) OVER () AS w FROM t);
+----
+true
+
+query T
+SELECT bool_and(w IS NOT DISTINCT FROM (SELECT lm_fit(y, [x1]) FROM t))
+FROM (SELECT lm_fit(y, [x1]) OVER () AS w FROM t);
+----
+true
+
+query T
+SELECT bool_and(w IS NOT DISTINCT FROM (SELECT glm_fit(y, [x1], 'gaussian') FROM t))
+FROM (SELECT glm_fit(y, [x1], 'gaussian') OVER () AS w FROM t);
+----
+true
+
+# bootstrap draws its resamples from the rows in the order they arrive, so only
+# the fact that it runs under a window is pinned here.
+statement ok
+SELECT bootstrap(y, 'mean', 50, 7) OVER () FROM t;
+
+# ─── OVER (PARTITION BY ...): several states behind one constant vector ──────
+
+query T
+SELECT bool_and(w IS NOT DISTINCT FROM gr)
+FROM (SELECT g, ttest_1samp(y, 0.0) OVER (PARTITION BY g) AS w FROM t) AS win
+JOIN (SELECT g, ttest_1samp(y, 0.0) AS gr FROM t GROUP BY g) AS grp USING (g);
+----
+true
+
+query T
+SELECT bool_and(w IS NOT DISTINCT FROM gr)
+FROM (SELECT k, anova_oneway(y, g) OVER (PARTITION BY k) AS w FROM t) AS win
+JOIN (SELECT k, anova_oneway(y, g) AS gr FROM t GROUP BY k) AS grp USING (k);
+----
+true
+
+query T
+SELECT bool_and(w IS NOT DISTINCT FROM gr)
+FROM (SELECT g, lm_fit(y, [x1]) OVER (PARTITION BY g) AS w FROM t) AS win
+JOIN (SELECT g, lm_fit(y, [x1]) AS gr FROM t GROUP BY g) AS grp USING (g);
+----
+true
+
+# ─── A framed window takes the segment-tree path, which always worked ────────
+
+# The frame up to y = 20 holds the same rows, in the same order, as the plain
+# aggregate over y <= 20.
+query T
+SELECT w IS NOT DISTINCT FROM (SELECT lm_fit(y, [x1]) FROM t WHERE y <= 20)
+FROM (SELECT y, lm_fit(y, [x1]) OVER (ORDER BY y ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS w FROM t)
+WHERE y = 20;
+----
+true

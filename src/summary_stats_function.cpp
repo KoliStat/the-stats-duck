@@ -158,7 +158,7 @@ static void SummaryStatsUpdate(Vector inputs[], AggregateInputData &, idx_t, Vec
 	UnifiedVectorFormat idata;
 	input.ToUnifiedFormat(count, idata);
 
-	auto states = FlatVector::GetData<SummaryStatsState *>(state_vector);
+	compat::AggregateStates<SummaryStatsState> states(state_vector, count);
 	auto values = UnifiedVectorFormat::GetData<double>(idata);
 
 	for (idx_t i = 0; i < count; i++) {

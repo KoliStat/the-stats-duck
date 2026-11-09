@@ -164,7 +164,7 @@ static void MannWhitneyUpdate(Vector inputs[], AggregateInputData &, idx_t, Vect
 	inputs[0].ToUnifiedFormat(count, idata1);
 	inputs[1].ToUnifiedFormat(count, idata2);
 
-	auto states = FlatVector::GetData<MannWhitneyState *>(state_vector);
+	compat::AggregateStates<MannWhitneyState> states(state_vector, count);
 	auto v1 = UnifiedVectorFormat::GetData<double>(idata1);
 	auto v2 = UnifiedVectorFormat::GetData<double>(idata2);
 
@@ -349,7 +349,7 @@ static void WilcoxonUpdate(Vector inputs[], AggregateInputData &, idx_t, Vector 
 	inputs[0].ToUnifiedFormat(count, idata1);
 	inputs[1].ToUnifiedFormat(count, idata2);
 
-	auto states = FlatVector::GetData<WilcoxonState *>(state_vector);
+	compat::AggregateStates<WilcoxonState> states(state_vector, count);
 	auto v1 = UnifiedVectorFormat::GetData<double>(idata1);
 	auto v2 = UnifiedVectorFormat::GetData<double>(idata2);
 

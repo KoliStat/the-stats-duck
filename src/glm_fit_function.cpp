@@ -500,7 +500,7 @@ static void GlmFitUpdate(Vector inputs[], AggregateInputData &aggr_input, idx_t,
 		}
 	}
 
-	auto states = FlatVector::GetData<GlmFitState *>(state_vector);
+	compat::AggregateStates<GlmFitState> states(state_vector, count);
 
 	for (idx_t i = 0; i < count; i++) {
 		const auto yidx = y_fmt.sel->get_index(i);

@@ -133,7 +133,7 @@ static void CorrelationUpdate(Vector inputs[], AggregateInputData &, idx_t, Vect
 	inputs[0].ToUnifiedFormat(count, xdata);
 	inputs[1].ToUnifiedFormat(count, ydata);
 
-	auto states = FlatVector::GetData<CorrelationState *>(state_vector);
+	compat::AggregateStates<CorrelationState> states(state_vector, count);
 	auto xv = UnifiedVectorFormat::GetData<double>(xdata);
 	auto yv = UnifiedVectorFormat::GetData<double>(ydata);
 
