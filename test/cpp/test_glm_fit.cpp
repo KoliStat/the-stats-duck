@@ -414,14 +414,14 @@ static const double TOL_DEV = 1e-10;
 // moves at FIRST order in the fitted values, and loglik and aic follow it
 // for gamma. They inherit the coefficient band above. Measured 2.94e-08.
 static const double TOL_SCALE = TOL_COEF;
-// P-values are compared ABSOLUTELY. A far-tail p-value cannot be compared
-// relatively: NormalCDF(8.97) rounds to exactly 1.0 in double precision,
-// so this kernel reports p = 0 where DS3's oracle carries 2.9e-19, and
-// the absolute gap of 2.9e-19 is the honest measure of that. The band is
-// driven by the z agreement instead: |dp/dz| is at most 2*NormalPDF(0) =
-// 0.8, so a z agreeing to 1.95e-06 relative at DS7's |z| = 1.25 moves p
-// by about 2e-06. Measured 8.88e-07. The band still separates a normal
-// reference from a t one, which differ by 2e-02 on DS4.
+// P-values are compared ABSOLUTELY, because the band is driven by the z
+// agreement: |dp/dz| is at most 2*NormalPDF(0) = 0.8, so a z agreeing to
+// 1.95e-06 relative at DS7's |z| = 1.25 moves p by about 2e-06. Measured
+// 8.88e-07. The band still separates a normal reference from a t one,
+// which differ by 2e-02 on DS4. A far-tail p-value such as DS3's 2.9e-19
+// at |z| = 8.97 passes this band whatever its digits, so the loop below
+// also checks that it is not 0: until #81 the kernel computed the tail as
+// 2 * (1 - NormalCDF(|z|)), and NormalCDF(8.97) rounds to exactly 1.0.
 static const double TOL_P = 1e-5;
 
 struct Fixture {
@@ -522,6 +522,11 @@ static void test_oracles() {
 			// dispersion is estimated.
 			check(std::fabs(at(g.p_value, j) - f.p_expected[j]) <= TOL_P,
 			      "p-value matches the normal-referenced expectation");
+			// The far tail itself (#81). The oracle's p is never 0 here, and
+			// ours must not be either; DS3's 2.9e-19 is the one that was.
+			if (f.p_expected[j] > 0.0) {
+				check(at(g.p_value, j) > 0.0, "a far-tail p-value is not rounded to 0");
+			}
 		}
 		for (std::size_t e = 0; e < f.k * f.k; e++) {
 			if (std::isnan(f.cov[e])) {

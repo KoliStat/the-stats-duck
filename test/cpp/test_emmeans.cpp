@@ -121,13 +121,15 @@ static const double TOL_T = 1e-8;
 // agrees with the ~1e-11 relative accuracy test_tukey.cpp measures for qtukey.
 // 1e-8 is 500 times the worse of the two.
 static const double TOL_CL = 1e-8;
-// p-values get a relative band WITH an absolute floor. Both sides compute a
-// tail as 2·(1 − CDF), and that subtraction throws away the leading digits: at
-// DS2's smallest p, 7.7e-10, one ULP of the intermediate is already 1.2e-7 of
-// the answer, so a relative band alone would reject a correct tail. The floor
-// is that rounding — measured worst 9.5e-17 absolute, so 1e-15 is about ten
-// times it — and the relative part covers every p of order 1e-3 and up, where
-// the measured worst is 6.8e-14 relative.
+// p-values get a relative band WITH an absolute floor. The floor dates from
+// before #81, when the kernel computed a tail as 2·(1 − CDF) and that
+// subtraction threw away the leading digits: at DS2's smallest p, 7.7e-10, one
+// ULP of the intermediate was already 1.2e-7 of the answer, so a relative band
+// alone would have rejected a correct tail. The tail now comes straight from
+// the incomplete beta, and the floor only guards against the last places of
+// two continued-fraction implementations. Measured worst before the change
+// was 9.5e-17 absolute, and 1e-15 is about ten times it. The relative part
+// covers every p of order 1e-3 and up, where the measured worst was 6.8e-14.
 static const double RTOL_P = 1e-9;
 static const double ATOL_P = 1e-15;
 // The studentized range tail is documented in distributions.hpp as accurate to
