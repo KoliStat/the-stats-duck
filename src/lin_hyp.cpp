@@ -157,9 +157,9 @@ LinHypResult lin_hyp(const linalg::Mat &L, const std::vector<double> &beta, cons
 	r.df_num = rank;
 	const double rank_d = static_cast<double>(rank);
 	r.chisq = w;
-	r.chisq_p_value = 1.0 - stats_duck::ChiSquareCDF(w, rank_d);
+	r.chisq_p_value = stats_duck::ChiSquareUpperTail(w, rank_d);
 	r.f_statistic = w / rank_d;
-	r.f_p_value = 1.0 - stats_duck::FCDF(r.f_statistic, rank_d, df);
+	r.f_p_value = stats_duck::FUpperTail(r.f_statistic, rank_d, df);
 	// Only a sum of squares when V is the classical σ²(XᵀX)⁻¹; see the README.
 	r.ss = w * sigma2;
 
@@ -174,7 +174,7 @@ LinHypResult lin_hyp(const linalg::Mat &L, const std::vector<double> &beta, cons
 		if (se > 0.0) {
 			const double t = theta[i] / se;
 			r.t_statistic[i] = t;
-			r.p_value[i] = 2.0 * (1.0 - stats_duck::StudentTCDF(std::fabs(t), df));
+			r.p_value[i] = 2.0 * stats_duck::StudentTUpperTail(std::fabs(t), df);
 		}
 	}
 	return r;
