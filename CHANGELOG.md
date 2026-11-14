@@ -42,6 +42,21 @@ that name is preserved across releases for backward compatibility.
 
 ### Fixed
 
+- **Every aggregate works as a window function** (#69). `lm_fit(...) OVER ()`,
+  `glm_fit(...) OVER ()`, `ttest_1samp(...) OVER ()` and every other
+  aggregate of the extension under `OVER ()` or `OVER (PARTITION BY ...)`
+  crashed the process. DuckDB's constant-frame window path calls an
+  aggregate's update once per partition with a CONSTANT state vector, one
+  state pointer for every input row, because these aggregates have no
+  `simple_update`. Every update function read that vector as FLAT and indexed
+  it by row, so the second row already read past the vector's one entry. The
+  update functions now read the state vector through its unified format
+  (`compat::AggregateStates`), which maps every row to its state for both
+  shapes. A framed window (`ROWS BETWEEN ...`) took the segment-tree path
+  with a flat vector and always worked. `test/sql/aggregates_over_window.test`
+  compares `OVER ()` with the plain aggregate and `OVER (PARTITION BY)` with
+  `GROUP BY`, struct by struct, for 22 aggregates, and runs `bootstrap` under
+  a window.
 - **Which statements are ours is decided by the grammar's tokenizer** (#86).
   The parser extension used a private byte scan to decide whether a
   statement was a `VISUALIZE` statement. The scan and the grammar's

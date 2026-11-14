@@ -90,6 +90,16 @@ that has been written down than to re-derive it.
   function, by name, from the stale static copy. How to detect each, and
   what to run instead.
 
+- [`2026-11-aggregate-states-under-a-window.md`](2026-11-aggregate-states-under-a-window.md)
+  — every aggregate crashed the process under `OVER ()` and `OVER (PARTITION
+  BY ...)` while `GROUP BY` and framed windows worked (#69). DuckDB's
+  constant-frame window aggregator hands `update` a CONSTANT state vector
+  with one pointer for all rows when the aggregate has no `simple_update`,
+  and every hand-written update read it as FLAT and indexed it by row. Fix:
+  `compat::AggregateStates`, a unified-format read of the state vector. Why
+  the ungrouped path never showed it, and why a crash test's evidence is the
+  runner's exit code.
+
 - [`2026-10-duckdb-v2-port.md`](2026-10-duckdb-v2-port.md) — one source
   tree builds on DuckDB 1.4, 1.5 and 2.0 through `src/include/duckdb_compat.hpp`,
   detected with `__has_include`. What 2.0 changed in shape (the aggregate bind

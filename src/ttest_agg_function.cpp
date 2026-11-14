@@ -207,7 +207,7 @@ static void TTest1SampUpdate(Vector inputs[], AggregateInputData &, idx_t, Vecto
 	UnifiedVectorFormat idata;
 	input.ToUnifiedFormat(count, idata);
 
-	auto states = FlatVector::GetData<TTest1SampState *>(state_vector);
+	compat::AggregateStates<TTest1SampState> states(state_vector, count);
 	auto values = UnifiedVectorFormat::GetData<double>(idata);
 
 	for (idx_t i = 0; i < count; i++) {
@@ -335,7 +335,7 @@ static void TTestPairedUpdate(Vector inputs[], AggregateInputData &, idx_t, Vect
 	inputs[0].ToUnifiedFormat(count, idata1);
 	inputs[1].ToUnifiedFormat(count, idata2);
 
-	auto states = FlatVector::GetData<TTest1SampState *>(state_vector);
+	compat::AggregateStates<TTest1SampState> states(state_vector, count);
 	auto v1 = UnifiedVectorFormat::GetData<double>(idata1);
 	auto v2 = UnifiedVectorFormat::GetData<double>(idata2);
 
@@ -455,7 +455,7 @@ static void TTest2SampUpdate(Vector inputs[], AggregateInputData &, idx_t, Vecto
 	inputs[0].ToUnifiedFormat(count, idata1);
 	inputs[1].ToUnifiedFormat(count, idata2);
 
-	auto states = FlatVector::GetData<TTest2SampState *>(state_vector);
+	compat::AggregateStates<TTest2SampState> states(state_vector, count);
 	auto v1 = UnifiedVectorFormat::GetData<double>(idata1);
 	auto v2 = UnifiedVectorFormat::GetData<double>(idata2);
 
