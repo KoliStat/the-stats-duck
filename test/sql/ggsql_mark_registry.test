@@ -39,9 +39,11 @@ visualize_mark_v1_errorbar
 visualize_mark_v1_heatmap
 visualize_mark_v1_histogram
 visualize_mark_v1_line
+visualize_mark_v1_path
 visualize_mark_v1_point
 visualize_mark_v1_regression
 visualize_mark_v1_rule
+visualize_mark_v1_segment
 visualize_mark_v1_text
 visualize_mark_v1_tick
 visualize_mark_v1_violin
