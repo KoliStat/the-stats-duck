@@ -228,12 +228,12 @@ static void AssignMidranks(std::vector<double> &values) {
 
 static double SpearmanPValue(double t_stat, double df, const std::string &alternative) {
 	if (alternative == "two-sided") {
-		return 2.0 * (1.0 - stats_duck::StudentTCDF(std::abs(t_stat), df));
+		return 2.0 * stats_duck::StudentTUpperTail(std::abs(t_stat), df);
 	}
 	if (alternative == "less") {
 		return stats_duck::StudentTCDF(t_stat, df);
 	}
-	return 1.0 - stats_duck::StudentTCDF(t_stat, df);
+	return stats_duck::StudentTUpperTail(t_stat, df);
 }
 
 static void SpearmanFinalize(Vector &state_vector, compat::FinalizeInput &aggr_input_data,
@@ -383,12 +383,12 @@ static TieMoments TieMomentsOf(const std::vector<double> &values) {
 
 static double KendallPValue(double z, const std::string &alternative) {
 	if (alternative == "two-sided") {
-		return 2.0 * (1.0 - stats_duck::NormalCDF(std::abs(z)));
+		return 2.0 * stats_duck::NormalUpperTail(std::abs(z));
 	}
 	if (alternative == "less") {
 		return stats_duck::NormalCDF(z);
 	}
-	return 1.0 - stats_duck::NormalCDF(z);
+	return stats_duck::NormalUpperTail(z);
 }
 
 static void KendallFinalize(Vector &state_vector, compat::FinalizeInput &aggr_input_data,

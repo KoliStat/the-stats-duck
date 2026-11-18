@@ -11,6 +11,12 @@
 // throughout stats_duck. Header-only so callers pay no link cost and the
 // compiler can inline across the aggregate hot path.
 //
+// The normal, t, chi-square and F references each have an upper-tail function
+// next to their CDF (NormalUpperTail, StudentTUpperTail, ChiSquareUpperTail,
+// FUpperTail). A p-value is computed from the upper tail, never as 1 - CDF:
+// the CDF rounds to 1 once the tail is below about 1e-16, and the subtraction
+// then returns exactly 0 where the tail function still holds the value (#81).
+//
 // Numerical references:
 //   - Numerical Recipes in C, 3rd ed., ch. 6 (gamma/beta functions and their
 //     incomplete companions).
@@ -214,7 +220,22 @@ inline double NormalCDF(double x, double mean = 0.0, double sd = 1.0) {
 		throw std::invalid_argument("sd must be > 0");
 	}
 	double z = (x - mean) / sd;
-	return 0.5 * (1.0 + std::erf(z / std::sqrt(2.0)));
+	// erfc(-z / sqrt 2), not 1 + erf(z / sqrt 2): that sum cancels for a
+	// negative z. It loses digits below z = -8 and is exactly 0 from z = -8.5,
+	// where the value is 9.5e-18. erfc keeps the lower tail down to the
+	// underflow of a double, near z = -38 (#81).
+	return 0.5 * std::erfc(-z / std::sqrt(2.0));
+}
+
+//! P(X > x), the upper tail. A p-value is never 1 - NormalCDF: the CDF rounds
+//! to 1 from about z = 8.3 and the subtraction is then exactly 0, while the
+//! tail is still 5e-17 there and representable down to about z = 38 (#81).
+inline double NormalUpperTail(double x, double mean = 0.0, double sd = 1.0) {
+	if (sd <= 0.0) {
+		throw std::invalid_argument("sd must be > 0");
+	}
+	double z = (x - mean) / sd;
+	return 0.5 * std::erfc(z / std::sqrt(2.0));
 }
 
 //! Quantile of the normal distribution via Acklam's rational approximation.
@@ -286,6 +307,23 @@ inline double StudentTCDF(double t, double df) {
 	return 0.5 * ibeta;
 }
 
+//! P(T > t), the upper tail. For t > 0 it is half the regularized incomplete
+//! beta at x = df / (df + t^2). That x is small when t is large, so the value
+//! comes out of the continued fraction with its full relative precision, where
+//! 1 - StudentTCDF keeps nothing below about 1e-16. For t <= 0 the tail is at
+//! least 0.5 and the subtraction is harmless (#81).
+inline double StudentTUpperTail(double t, double df) {
+	if (df <= 0.0) {
+		throw std::invalid_argument("df must be > 0");
+	}
+	double x = df / (df + t * t);
+	double ibeta = BetaIncomplete(df / 2.0, 0.5, x);
+	if (t > 0.0) {
+		return 0.5 * ibeta;
+	}
+	return 1.0 - 0.5 * ibeta;
+}
+
 //! Quantile (inverse CDF) of Student's t via bisection.
 inline double StudentTQuantile(double p, double df) {
 	if (df <= 0.0) {
@@ -353,6 +391,20 @@ inline double ChiSquareCDF(double x, double df) {
 	return GammaP(df / 2.0, x / 2.0);
 }
 
+//! P(X > x), the upper tail: the regularized upper incomplete gamma
+//! Q(df / 2, x / 2), from its continued fraction when x is large. ChiSquareCDF
+//! is P = 1 - Q, so 1 - ChiSquareCDF is exactly 0 for any tail below about
+//! 1e-16 (#81).
+inline double ChiSquareUpperTail(double x, double df) {
+	if (df <= 0.0) {
+		throw std::invalid_argument("df must be > 0");
+	}
+	if (x <= 0.0) {
+		return 1.0;
+	}
+	return GammaQ(df / 2.0, x / 2.0);
+}
+
 inline double ChiSquareQuantile(double p, double df) {
 	if (df <= 0.0) {
 		throw std::invalid_argument("df must be > 0");
@@ -406,6 +458,21 @@ inline double FCDF(double x, double df1, double df2) {
 	}
 	double z = df2 / (df2 + df1 * x);
 	return 1.0 - BetaIncomplete(df2 / 2.0, df1 / 2.0, z);
+}
+
+//! P(X > x), the upper tail: the regularized incomplete beta at
+//! z = df2 / (df2 + df1 x) with the parameters swapped, which is the value
+//! FCDF subtracts from 1. Taken directly it keeps its relative precision
+//! however small it is; 1 - FCDF is exactly 0 below about 1e-16 (#81).
+inline double FUpperTail(double x, double df1, double df2) {
+	if (df1 <= 0.0 || df2 <= 0.0) {
+		throw std::invalid_argument("df must be > 0");
+	}
+	if (x <= 0.0) {
+		return 1.0;
+	}
+	double z = df2 / (df2 + df1 * x);
+	return BetaIncomplete(df2 / 2.0, df1 / 2.0, z);
 }
 
 inline double FQuantile(double p, double df1, double df2) {

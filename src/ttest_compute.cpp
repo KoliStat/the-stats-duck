@@ -23,11 +23,11 @@ static double Variance(const std::vector<double> &v, double mean) {
 
 static double ComputePValue(double t_stat, double df, const std::string &alternative) {
 	if (alternative == "two-sided") {
-		return 2.0 * (1.0 - StudentTCDF(std::abs(t_stat), df));
+		return 2.0 * StudentTUpperTail(std::abs(t_stat), df);
 	} else if (alternative == "less") {
 		return StudentTCDF(t_stat, df);
 	} else { // "greater"
-		return 1.0 - StudentTCDF(t_stat, df);
+		return StudentTUpperTail(t_stat, df);
 	}
 }
 

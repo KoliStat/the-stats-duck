@@ -221,7 +221,7 @@ static void ChiSqIndFinalize(Vector &state_vector, compat::FinalizeInput &aggr_i
 		}
 
 		double df = static_cast<double>((n_rows - 1) * (n_cols - 1));
-		double p_value = 1.0 - stats_duck::ChiSquareCDF(chi_square, df);
+		double p_value = stats_duck::ChiSquareUpperTail(chi_square, df);
 
 		compat::WriteData<string_t>(compat::Deref(children[0]))[idx] =
 		    StringVector::AddString(compat::Deref(children[0]), "Chi-square Independence");
@@ -333,7 +333,7 @@ static void ChiSqGoFFinalize(Vector &state_vector, compat::FinalizeInput &, Vect
 			chi_square += diff * diff / expected;
 		}
 		double df = static_cast<double>(k - 1);
-		double p_value = 1.0 - stats_duck::ChiSquareCDF(chi_square, df);
+		double p_value = stats_duck::ChiSquareUpperTail(chi_square, df);
 
 		compat::WriteData<string_t>(compat::Deref(children[0]))[idx] =
 		    StringVector::AddString(compat::Deref(children[0]), "Chi-square Goodness-of-Fit (uniform)");

@@ -339,7 +339,7 @@ LmResult fit_lm(const std::vector<double> &y, const linalg::Mat &X_pred, const L
 		if (se > 0.0) {
 			const double t = beta[a] / se;
 			res.t_statistic[ja] = t;
-			res.p_value[ja] = 2.0 * (1.0 - stats_duck::StudentTCDF(std::fabs(t), df_infer));
+			res.p_value[ja] = 2.0 * stats_duck::StudentTUpperTail(std::fabs(t), df_infer);
 		} else {
 			res.t_statistic[ja] = kNaN;
 			res.p_value[ja] = kNaN;
@@ -376,7 +376,7 @@ LmResult fit_lm(const std::vector<double> &y, const linalg::Mat &X_pred, const L
 	if (df_model > 0.0 && df_resid > 0.0 && rss > 0.0 && tss > 0.0) {
 		const double ess = tss - rss;
 		res.f_statistic = (ess / df_model) / (rss / df_resid);
-		res.f_p_value = 1.0 - stats_duck::FCDF(res.f_statistic, df_model, df_resid);
+		res.f_p_value = stats_duck::FUpperTail(res.f_statistic, df_model, df_resid);
 	} else {
 		res.f_statistic = kNaN;
 		res.f_p_value = kNaN;

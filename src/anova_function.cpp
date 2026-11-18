@@ -28,7 +28,7 @@ namespace compat = statsduck::compat;
 //   MS_between = SS_between / df_between
 //   MS_within  = SS_within  / df_within
 //   F          = MS_between / MS_within
-//   p_value    = 1 - F_CDF(F, df_between, df_within)
+//   p_value    = the F upper tail at F on (df_between, df_within), #81
 //   eta^2      = SS_between / (SS_between + SS_within)
 //
 // Groups are keyed by VARCHAR (the most common case in practice). Users with
@@ -217,7 +217,7 @@ static void AnovaFinalize(Vector &state_vector, compat::FinalizeInput &, Vector 
 			}
 		} else {
 			f_stat = ms_between / ms_within;
-			p_value = 1.0 - stats_duck::FCDF(f_stat, df_between, df_within);
+			p_value = stats_duck::FUpperTail(f_stat, df_between, df_within);
 		}
 
 		double ss_total = ss_between + ss_within;

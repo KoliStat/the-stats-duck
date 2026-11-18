@@ -731,10 +731,12 @@ Pass `cov` exactly as `lm_fit` returns it: flat, row-major, k² elements. `df`
 is a DOUBLE so a fractional denominator df fits; `lm_fit`'s `df_residual` casts
 in on its own.
 
-A p-value smaller than about 1e-16 reads as exactly **0**, because the p-values
-are computed as `1 − CDF` and the far tail is lost in that subtraction. The
-joint example above is one: its `chisq_p_value` comes back 0 where statsmodels
-reports about 1e-58. The same applies to `lm_fit`.
+A p-value far in the tail keeps its value. Every upper tail is computed from
+the complementary function (`erfc`, the incomplete beta at the complementary
+argument, the upper incomplete gamma) and not as `1 − CDF`, which is exactly 0
+below about 1e-16 (#81). The joint example above has a `chisq_p_value` of
+2.8e-58, the value statsmodels reports. Below about 1e-308 a p-value underflows
+to 0. The same holds for every test and fitter in the extension.
 
 **`ss` is a sum of squares only when `cov` is the classical σ²(XᵀX)⁻¹.** With an
 HC or CR covariance the F and the chi-square are a Wald test — the same thing

@@ -211,7 +211,7 @@ EmmeansResult emmeans(const linalg::Mat &L, const std::vector<double> &beta, con
 		m.std_error = var > 0.0 ? std::sqrt(var) : 0.0;
 		if (m.std_error > 0.0) {
 			m.t_statistic = m.estimate / m.std_error;
-			m.p_value = 2.0 * (1.0 - stats_duck::StudentTCDF(std::fabs(m.t_statistic), df));
+			m.p_value = 2.0 * stats_duck::StudentTUpperTail(std::fabs(m.t_statistic), df);
 		} else {
 			// A zero standard error gives no t and no p, but the estimate and
 			// the limits are still the right answer: the interval is a point.
@@ -258,7 +258,7 @@ EmmeansResult emmeans(const linalg::Mat &L, const std::vector<double> &beta, con
 			d.std_error = var > 0.0 ? std::sqrt(var) : 0.0;
 			if (d.std_error > 0.0) {
 				d.t_statistic = d.estimate / d.std_error;
-				d.p_value = 2.0 * (1.0 - stats_duck::StudentTCDF(std::fabs(d.t_statistic), df));
+				d.p_value = 2.0 * stats_duck::StudentTUpperTail(std::fabs(d.t_statistic), df);
 			} else {
 				// Two identical grid rows reach this. The difference is exactly
 				// zero with no variance, so there is no t and no p, but the
@@ -306,6 +306,8 @@ EmmeansResult emmeans(const linalg::Mat &L, const std::vector<double> &beta, con
 			for (EmmDiff &d : r.diffs) {
 				if (d.estimable) {
 					const double q = std::sqrt(2.0) * std::fabs(d.t_statistic);
+					// 1 - CDF on purpose (#81): this CDF is a quadrature with an absolute
+					// accuracy of 1e-12, so a tail below that is noise in either form.
 					d.p_adjusted = 1.0 - stats_duck::StudentizedRangeCDF(q, k_d, df);
 				}
 			}

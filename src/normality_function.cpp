@@ -167,7 +167,7 @@ static void JBFinalize(Vector &state_vector, compat::FinalizeInput &, Vector &re
 		// so that the statistic is directly comparable across implementations
 		// (R's tseries::jarque.bera.test uses the same convention).
 		double jb = (dn / 6.0) * (g1 * g1 + 0.25 * g2 * g2);
-		double p_value = 1.0 - stats_duck::ChiSquareCDF(jb, 2.0);
+		double p_value = stats_duck::ChiSquareUpperTail(jb, 2.0);
 
 		compat::WriteData<string_t>(compat::Deref(children[0]))[idx] =
 		    StringVector::AddString(compat::Deref(children[0]), "Jarque-Bera");
@@ -598,7 +598,7 @@ static void SWFinalize(Vector &state_vector, compat::FinalizeInput &, Vector &re
 			}
 			if (!saturated) {
 				double z = (y - mu) / sigma;
-				pw = 1.0 - stats_duck::NormalCDF(z);
+				pw = stats_duck::NormalUpperTail(z);
 				if (pw < 0.0) {
 					pw = 0.0;
 				}

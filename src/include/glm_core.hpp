@@ -370,7 +370,7 @@ struct GlmResult {
 	std::vector<double> beta;
 	std::vector<double> std_error;
 	// beta / std_error, against a NORMAL reference for all four families,
-	// with p_value = 2 * (1 - NormalCDF(|z|)). R and statsmodels switch to
+	// with p_value = 2 * NormalUpperTail(|z|). R and statsmodels switch to
 	// a t reference for gaussian and gamma, whose dispersion is estimated.
 	// This project does not. The deviation is deliberate and it is written
 	// down in the fixtures, which carry both the oracle's t-based p-value

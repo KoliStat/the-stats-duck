@@ -207,12 +207,12 @@ static void PearsonCombine(Vector &source, Vector &target, AggregateInputData &,
 
 static double ComputePValue(double t_stat, double df, const std::string &alternative) {
 	if (alternative == "two-sided") {
-		return 2.0 * (1.0 - stats_duck::StudentTCDF(std::abs(t_stat), df));
+		return 2.0 * stats_duck::StudentTUpperTail(std::abs(t_stat), df);
 	}
 	if (alternative == "less") {
 		return stats_duck::StudentTCDF(t_stat, df);
 	}
-	return 1.0 - stats_duck::StudentTCDF(t_stat, df);
+	return stats_duck::StudentTUpperTail(t_stat, df);
 }
 
 static void PearsonFinalize(Vector &state_vector, compat::FinalizeInput &aggr_input_data, Vector &result, idx_t count,

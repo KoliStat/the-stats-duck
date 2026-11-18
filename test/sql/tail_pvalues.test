@@ -1,0 +1,222 @@
+# name: test/sql/tail_pvalues.test
+# description: Far-tail p-values stay above zero: every upper tail is the complementary function, not 1 - CDF (#81)
+# group: [stats_duck]
+
+require stats_duck
+
+# Before #81 every upper-tail p-value was computed as 1 - CDF, which is exactly
+# 0 once the tail drops below about 1e-16, and pnorm's lower tail cancelled the
+# same way (see test/sql/distribution_functions.test). Each block below drives
+# one function to a p-value far below that and divides it by scipy's survival
+# function at the same statistic; the formula is quoted per block. A passing
+# block prints 1.0. A failing one prints the ratio, which is 0.0 when the tail
+# is lost. The statistic is printed too, so a ratio off 1.0 reads as either a
+# different statistic or a different tail.
+
+# ─── Student's t: the t-test aggregates ─────────────────────────────────────
+
+statement ok
+CREATE TABLE one AS SELECT i::DOUBLE AS x FROM range(1, 31) AS r(i);
+
+# t = 71.8608 on 29 df; 2 * t.sf(71.8608, 29) = 3.157764260939e-34
+query TT
+SELECT printf('%.4f', (s).t_statistic), ROUND((s).p_value / 3.157764260939e-34, 6)
+FROM (SELECT ttest_1samp(x, -100.0) AS s FROM one);
+----
+71.8608	1.0
+
+statement ok
+CREATE TABLE pairs AS SELECT i::DOUBLE AS x, (i + 50 + i % 3)::DOUBLE AS y FROM range(1, 31) AS r(i);
+
+# |t| = 336.3681 on 29 df; 2 * t.sf = 1.237592659709e-53
+query TT
+SELECT printf('%.4f', abs((s).t_statistic)), ROUND((s).p_value / 1.237592659709e-53, 6)
+FROM (SELECT ttest_paired(x, y) AS s FROM pairs);
+----
+336.3681	1.0
+
+statement ok
+CREATE TABLE two AS SELECT i::DOUBLE AS a, (i + 200)::DOUBLE AS b FROM range(1, 31) AS r(i);
+
+# Welch: |t| = 87.9883 on 58 df; 2 * t.sf = 1.943986427524e-63
+query TTT
+SELECT printf('%.4f', abs((s).t_statistic)), printf('%.2f', (s).df),
+       ROUND((s).p_value / 1.943986427524e-63, 6)
+FROM (SELECT ttest_2samp(a, b) AS s FROM two);
+----
+87.9883	58.00	1.0
+
+# ─── F: one-way ANOVA ───────────────────────────────────────────────────────
+
+statement ok
+CREATE TABLE groups AS SELECT (i + 100 * g)::DOUBLE AS v, g::VARCHAR AS g
+FROM range(1, 21) AS r(i), range(0, 3) AS t(g);
+
+# F = 5714.2857 on (2, 57) df; f.sf = 2.128551127689e-66, which is also the
+# closed form (1 + 2F/57)^(-57/2) for a numerator df of 2.
+query TT
+SELECT printf('%.4f', (s).f_statistic), ROUND((s).p_value / 2.128551127689e-66, 6)
+FROM (SELECT anova_oneway(v, g) AS s FROM groups);
+----
+5714.2857	1.0
+
+# ─── Chi-square: independence and goodness of fit ───────────────────────────
+
+statement ok
+CREATE TABLE assoc AS SELECT (i % 2)::VARCHAR AS rv,
+       (CASE WHEN i < 200 THEN i % 2 ELSE 1 - i % 2 END)::VARCHAR AS cv
+FROM range(210) AS t(i);
+
+# A 2x2 table with 100, 5, 5, 100 and no continuity correction: chi-square
+# 171.9048 on 1 df; chi2.sf = 2.838969423742e-39
+query TT
+SELECT printf('%.4f', (s).chi_square), ROUND((s).p_value / 2.838969423742e-39, 6)
+FROM (SELECT chisq_independence(rv, cv) AS s FROM assoc);
+----
+171.9048	1.0
+
+statement ok
+CREATE TABLE cats AS SELECT CASE WHEN i < 100 THEN 'a' WHEN i < 200 THEN 'b' ELSE 'c' END AS k
+FROM range(205) AS t(i);
+
+# Counts 100, 100 and 5 against a uniform 68.33 each: chi-square 88.0488 on
+# 2 df; chi2.sf = exp(-88.0488 / 2) = 7.593644261091e-20
+query TT
+SELECT printf('%.4f', (s).chi_square), ROUND((s).p_value / 7.593644261091e-20, 6)
+FROM (SELECT chisq_goodness_of_fit(k) AS s FROM cats);
+----
+88.0488	1.0
+
+# ─── Correlations: t for Pearson and Spearman, z for Kendall ────────────────
+
+# y rises with x and swaps every neighbouring pair, so no correlation is 1 and
+# there are no ties.
+statement ok
+CREATE TABLE xy AS SELECT i::DOUBLE AS x, i + 1.5 * (i % 2) AS y FROM range(1, 81) AS r(i);
+
+# Pearson: t = 271.7990 on 78 df; 2 * t.sf = 7.198020958284e-118
+query TT
+SELECT printf('%.4f', (s).t_statistic), ROUND((s).p_value / 7.198020958284e-118, 6)
+FROM (SELECT pearson_test(x, y) AS s FROM xy);
+----
+271.7990	1.0
+
+# Spearman: t = 203.8014 on 78 df; 2 * t.sf = 3.950497496783e-108
+query TT
+SELECT printf('%.4f', (s).t_statistic), ROUND((s).p_value / 3.950497496783e-108, 6)
+FROM (SELECT spearman_test(x, y) AS s FROM xy);
+----
+203.8014	1.0
+
+# Kendall: S = 3080, z = S / sqrt(n (n - 1) (2n + 5) / 18) = 12.7964;
+# 2 * norm.sf = 1.718174086660e-37
+query TT
+SELECT printf('%.4f', (s).z_statistic), ROUND((s).p_value / 1.718174086660e-37, 6)
+FROM (SELECT kendall_test(x, y) AS s FROM xy);
+----
+12.7964	1.0
+
+# ─── Normal approximation: the rank tests ───────────────────────────────────
+
+statement ok
+CREATE TABLE mw AS SELECT i::DOUBLE AS a, (i + 100)::DOUBLE AS b FROM range(1, 61) AS r(i);
+
+# Complete separation of 60 and 60: U = 0 and |z| = 9.4475 without a continuity
+# correction; 2 * norm.sf = 3.468544363931e-21
+query TT
+SELECT printf('%.4f', abs((s).z_statistic)), ROUND((s).p_value / 3.468544363931e-21, 6)
+FROM (SELECT mann_whitney_u(a, b) AS s FROM mw);
+----
+9.4475	1.0
+
+statement ok
+CREATE TABLE wsr AS SELECT i::DOUBLE AS x, (i + 10 + i % 4)::DOUBLE AS y FROM range(1, 121) AS r(i);
+
+# Every difference is 10 to 13, so all 120 ranks go one way and four tie groups
+# of 30 shrink the variance: |z| = 9.5806; 2 * norm.sf = 9.646272803394e-22
+query TT
+SELECT printf('%.4f', abs((s).z_statistic)), ROUND((s).p_value / 9.646272803394e-22, 6)
+FROM (SELECT wilcoxon_signed_rank(x, y) AS s FROM wsr);
+----
+9.5806	1.0
+
+# ─── Normality: chi-square for Jarque-Bera, normal for Shapiro-Wilk ─────────
+
+statement ok
+CREATE TABLE quartic AS SELECT (i * i * i * i)::DOUBLE AS x FROM range(1, 401) AS r(i);
+
+# The fourth powers of 1..400 are strongly skewed: JB = 137.6860 on 2 df;
+# chi2.sf = exp(-JB / 2) = 1.264350400126e-30
+query TT
+SELECT printf('%.4f', (s).jb_statistic), ROUND((s).p_value / 1.264350400126e-30, 6)
+FROM (SELECT jarque_bera(x) AS s FROM quartic);
+----
+137.6860	1.0
+
+# Shapiro-Wilk on the same sample: W = 0.760979 and Royston's z = 9.9620;
+# norm.sf(z) = 1.118121439153e-23, which scipy.stats.shapiro reports to all
+# digits. W comes from the AS R94 polynomial approximations, so the ratio is
+# rounded to 4 places.
+query TT
+SELECT printf('%.6f', (s).w_statistic), ROUND((s).p_value / 1.118121439153e-23, 4)
+FROM (SELECT shapiro_wilk(x) AS s FROM quartic);
+----
+0.760979	1.0
+
+# ─── The fitters: lm_fit (t and F), glm_fit (z), lin_hyp, emmeans ───────────
+
+statement ok
+CREATE TABLE line AS SELECT i::DOUBLE AS x, (2 * i + i % 3)::DOUBLE AS y FROM range(1, 41) AS r(i);
+
+# The slope is 1.9976 with t = 176.4143 on 38 df; 2 * t.sf = 5.584443691543e-57.
+# With one predictor F = t^2, so the model's F p-value is the same number. The
+# intercept's p-value, 3.3576e-04, is the control: a tail 1 - CDF could hold.
+query TTTT
+SELECT printf('%.4f', (m.coefficients[2]).t_statistic),
+       ROUND((m.coefficients[2]).p_value / 5.584443691543e-57, 6),
+       ROUND(m.f_p_value / 5.584443691543e-57, 6),
+       printf('%.4e', (m.coefficients[1]).p_value)
+FROM (SELECT lm_fit(y, [x]) AS m FROM line);
+----
+176.4143	1.0	1.0	3.3576e-04
+
+statement ok
+CREATE TABLE counts AS SELECT i / 10.0 AS x, floor(exp(0.2 * (i / 10.0)) + 0.5) AS y
+FROM range(1, 101) AS r(i);
+
+# Poisson counts from 1 to 7 that follow exp(0.2 x): the slope is 0.2049 with
+# z = 9.5845; erfc(|z| / sqrt 2) = 9.287813268321e-22, from a statsmodels GLM on
+# the same rows. IRLS stops at a tolerance, so the ratio is rounded to 4 places.
+query TT
+SELECT printf('%.4f', (m.coefficients[2]).z_statistic),
+       ROUND((m.coefficients[2]).p_value / 9.287813268321e-22, 4)
+FROM (SELECT glm_fit(y, [x], 'poisson') AS m FROM counts);
+----
+9.5845	1.0
+
+# lin_hyp on fixed inputs, the example of #81: the Wald W is 79.3651 on 1 df and
+# chi2.sf = 5.163066699870e-19. The F form on 1 and 9 df is 9.2800e-06, and the
+# single estimate's t-test gives the same 9.2800e-06: both within reach of
+# 1 - CDF, and therefore controls.
+query TTTT
+SELECT printf('%.4f', (h).chisq),
+       ROUND((h).chisq_p_value / 5.163066699870e-19, 6),
+       printf('%.4e', (h).f_p_value),
+       printf('%.4e', (h).estimates[1].p_value)
+FROM (SELECT lin_hyp([[0, 1, -1]], [10.0, 2.0, -1.0],
+                     [4.3, -0.14, -0.52, -0.14, 0.017, 0.0023, -0.52, 0.0023, 0.101],
+                     7.46, 9.0) AS h);
+----
+79.3651	1.0	9.2800e-06	9.2800e-06
+
+# emmeans on fixed inputs: the second mean is 50 with standard error 0.1, so
+# t = 500 on 20 df and 2 * t.sf = 1.890457324269e-42. The one difference is -50
+# with standard error sqrt(0.02): t = -353.5534 and 2 * t.sf = 1.934350772017e-39.
+query TTTT
+SELECT printf('%.1f', (e).means[2].t_statistic),
+       ROUND((e).means[2].p_value / 1.890457324269e-42, 6),
+       printf('%.4f', (e).diffs[1].t_statistic),
+       ROUND((e).diffs[1].p_value / 1.934350772017e-39, 6)
+FROM (SELECT emmeans([[1.0, 0.0], [0.0, 1.0]], [0.0, 50.0], [0.01, 0.0, 0.0, 0.01], 20.0) AS e);
+----
+500.0	1.0	-353.5534	1.0

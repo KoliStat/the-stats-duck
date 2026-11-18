@@ -310,9 +310,10 @@ static void test_chisq_p_value() {
 	std::printf("chisq_p_value (the chi-square reference, not the F one)\n");
 
 	// A hypothesis DS1 does not reject: beta1 + 2*beta2 is about 0.1. The
-	// strong cases above all have a chi-square tail below 1e-16, where
-	// `1 - CDF` returns exactly 0, so the golden has to come from a weak one.
-	// statsmodels wald_test(use_f=False), via gen_lin_hyp_fixtures.py.
+	// strong cases above all have a chi-square tail below 1e-16; this weak one
+	// checks the reference where the tail is large, and the far tail of the
+	// joint test is pinned below. statsmodels wald_test(use_f=False), via
+	// gen_lin_hyp_fixtures.py.
 	{
 		auto r = lin_hyp(mat(1, 3, {0, 1, 2}), kBeta, kCov, kSigma2, kDf);
 		CHECK(r.ok && r.estimable);
@@ -338,16 +339,16 @@ static void test_chisq_p_value() {
 		CHECK(std::fabs(r.chisq_p_value - 0.991467606628814) > 0.1);
 	}
 
-	// The far tail underflows to exactly 0, because chisq_p_value is 1 − CDF
-	// and the tail is lost below about 1e-16. statsmodels reports 2.766e-58 for
-	// this one. Inherited from distributions.hpp, which lm_core shares, so it
-	// is pinned here rather than fixed; the README says so too.
+	// The far tail. Until #81 chisq_p_value was 1 − CDF, which is exactly 0
+	// below about 1e-16, and this block pinned the 0. The tail now comes from
+	// the upper incomplete gamma in distributions.hpp, which lm_core shares.
+	// Oracle: scipy chi2.sf(W, 2), which for 2 df is exp(−W / 2).
 	{
 		auto r = lin_hyp(mat(2, 3, {0, 1, 0, 0, 0, 1}), kBeta, kCov, kSigma2, kDf);
 		CHECK(r.ok && r.estimable);
 		CHECK_CLOSE(r.chisq, 265.064948736093, TOL_F);
-		CHECK(r.chisq_p_value == 0.0);
-		CHECK(r.f_p_value > 0.0); // the F tail survives: 2.107e-07
+		check_rel(r.chisq_p_value, 2.76616262446365e-58, RTOL_CHISQ_P, "joint.chisq_p", __LINE__);
+		check_rel(r.f_p_value, 2.10741740745106e-07, RTOL_P, "joint.f_p", __LINE__);
 	}
 }
 

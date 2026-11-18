@@ -43,9 +43,9 @@ FROM (SELECT lin_hyp([[0, 1, -1]],
 # A joint test of both slopes reproduces the model's own F, and every row still
 # reports its own estimate. Every remaining struct child is read here too —
 # `ss`, `f_p_value` and `chisq_p_value` — so a mis-indexed child write shows up
-# as a wrong number rather than passing unnoticed. `chisq_p_value` reads as
-# 0.0000 because the chi-square tail at W = 265 is about 1e-58, which `1 − CDF`
-# cannot represent; statsmodels reports 2.766e-58. See the README.
+# as a wrong number rather than passing unnoticed. `chisq_p_value` is the
+# chi-square tail at W = 265 on 2 df, exp(-W / 2) = 2.766e-58, the value
+# statsmodels reports. Before #81 it read as 0, because the tail was `1 − CDF`.
 query TTTTTTTT
 SELECT (h).df_num, len((h).estimates),
        printf('%.4f', (h).f_statistic),
@@ -53,13 +53,13 @@ SELECT (h).df_num, len((h).estimates),
        printf('%.4f', (h).chisq),
        printf('%.4f', (h).ss),
        printf('%.3e', (h).f_p_value),
-       printf('%.4f', (h).chisq_p_value)
+       printf('%.3e', (h).chisq_p_value)
 FROM (SELECT lin_hyp([[0, 1, 0], [0, 0, 1]],
                      list_transform(m.coefficients, lambda c: c.estimate),
                      m.cov, m.sigma * m.sigma, m.df_residual) AS h, m
       FROM (SELECT lm_fit(y, [x1, x2]) AS m FROM ds1))
 ----
-2	2	132.5325	132.5325	265.0649	1978.4892	2.107e-07	0.0000
+2	2	132.5325	132.5325	265.0649	1978.4892	2.107e-07	2.766e-58
 
 # ── Finding 1: a change of units must not move the test ─────────────────────
 # One predictor in thousands and another as a proportion is an ordinary
