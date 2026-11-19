@@ -27,5 +27,11 @@ const MarkInfo &LookupMark(ClientContext &context, const string &name);
 // Registers the built-in marks. The list lives in RegisterBuiltinMarks.
 void RegisterBuiltinMarks(ExtensionLoader &loader);
 
+// The Vega-Lite encoding channel that receives an aesthetic: `strokeWidth` for
+// `linewidth`, `strokeDash` for `linetype`, the aesthetic itself for every
+// other channel. A SCALE clause names the aesthetic; the compiler injects it
+// into the Vega-Lite channel.
+string VegaChannelName(const string &aesthetic);
+
 } // namespace ggsql
 } // namespace duckdb

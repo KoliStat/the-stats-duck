@@ -48,18 +48,27 @@ void MarkIntrospectionStub(DataChunk &args, ExpressionState &state, Vector &resu
 // Encoding helpers (Phase 4b).
 //===--------------------------------------------------------------------===//
 
+// One encoding channel. `name` is the aesthetic as the statement writes it and
+// as the layer SQL projects it. `vega_name` is the Vega-Lite encoding channel
+// that receives the field. The two differ only for upstream ggsql's
+// `linewidth` and `linetype` (#94), which Vega-Lite calls `strokeWidth` and
+// `strokeDash`.
 struct ChannelDefault {
 	const char *name;
+	const char *vega_name;
 	const char *vega_type;
 };
 
 // Canonical encoding-channel order used for byte-stable output. New channels
 // must be appended (not inserted) to keep fixtures stable.
 static const vector<ChannelDefault> kStandardChannels = {
-    {"x", "quantitative"},       {"y", "quantitative"},     {"color", "nominal"},
-    {"fill", "nominal"},         {"stroke", "nominal"},     {"shape", "nominal"},
-    {"size", "quantitative"},    {"opacity", "quantitative"}, {"tooltip", "nominal"},
-    {"text", "nominal"},         {"x2", "quantitative"},    {"y2", "quantitative"},
+    {"x", "x", "quantitative"},                   {"y", "y", "quantitative"},
+    {"color", "color", "nominal"},                {"fill", "fill", "nominal"},
+    {"stroke", "stroke", "nominal"},              {"shape", "shape", "nominal"},
+    {"size", "size", "quantitative"},             {"opacity", "opacity", "quantitative"},
+    {"tooltip", "tooltip", "nominal"},            {"text", "text", "nominal"},
+    {"x2", "x2", "quantitative"},                 {"y2", "y2", "quantitative"},
+    {"linewidth", "strokeWidth", "quantitative"}, {"linetype", "strokeDash", "nominal"},
 };
 
 bool HasAesthetic(const MarkContext &ctx, const string &channel) {
@@ -72,14 +81,14 @@ bool HasAesthetic(const MarkContext &ctx, const string &channel) {
 }
 
 // Returns "" if the user did not map this aesthetic, otherwise:
-//   "<channel>":{"field":"<channel>","type":"<vega_type>"<extras>}
+//   "<vega_name>":{"field":"<name>","type":"<vega_type>"<extras>}
 // `extras` is appended verbatim (must already start with "," when non-empty).
-string BuildChannel(const MarkContext &ctx, const string &channel,
-                    const string &vega_type, const string &extras) {
-	if (!HasAesthetic(ctx, channel)) {
+string BuildChannel(const MarkContext &ctx, const ChannelDefault &ch, const string &vega_type,
+                    const string &extras) {
+	if (!HasAesthetic(ctx, ch.name)) {
 		return "";
 	}
-	string out = "\"" + channel + "\":{\"field\":\"" + channel + "\",\"type\":\"" + vega_type + "\"";
+	string out = "\"" + string(ch.vega_name) + "\":{\"field\":\"" + ch.name + "\",\"type\":\"" + vega_type + "\"";
 	out += extras;
 	out += "}";
 	return out;
@@ -103,7 +112,7 @@ string BuildEncoding(const MarkContext &ctx, const vector<ChannelDefault> &chann
 		if (extras_it != extras_overrides.end()) {
 			extras = extras_it->second;
 		}
-		string fragment = BuildChannel(ctx, ch.name, vega_type, extras);
+		string fragment = BuildChannel(ctx, ch, vega_type, extras);
 		if (fragment.empty()) {
 			continue;
 		}
@@ -268,7 +277,7 @@ string BuildOptionalChannels(const MarkContext &ctx) {
 		if (name == "x" || name == "y") {
 			continue;
 		}
-		string fragment = BuildChannel(ctx, name, ch.vega_type, "");
+		string fragment = BuildChannel(ctx, ch, ch.vega_type, "");
 		if (!fragment.empty()) {
 			out += "," + fragment;
 		}
@@ -336,16 +345,7 @@ MarkResult RenderHistogram(const MarkContext &ctx) {
 	// and y are spliced manually.
 	string encoding = "{\"x\":{\"field\":\"x\",\"type\":\"quantitative\",\"bin\":true},"
 	                  "\"y\":{\"aggregate\":\"count\",\"type\":\"quantitative\"}";
-	for (const auto &ch : kStandardChannels) {
-		string name = ch.name;
-		if (name == "x" || name == "y") {
-			continue;
-		}
-		string fragment = BuildChannel(ctx, name, ch.vega_type, "");
-		if (!fragment.empty()) {
-			encoding += "," + fragment;
-		}
-	}
+	encoding += BuildOptionalChannels(ctx);
 	encoding += "}";
 	MarkResult r;
 	r.layer_body = "\"mark\":\"bar\",\"encoding\":" + encoding;
@@ -354,6 +354,15 @@ MarkResult RenderHistogram(const MarkContext &ctx) {
 }
 
 } // namespace
+
+string VegaChannelName(const string &aesthetic) {
+	for (const auto &ch : kStandardChannels) {
+		if (StringUtil::CIEquals(aesthetic, ch.name)) {
+			return ch.vega_name;
+		}
+	}
+	return aesthetic;
+}
 
 void RegisterMark(ExtensionLoader &loader, const string &name,
                   vector<string> required_aesthetics, mark_render_t render) {

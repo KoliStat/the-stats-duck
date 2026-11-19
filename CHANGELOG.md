@@ -39,6 +39,14 @@ that name is preserved across releases for backward compatibility.
   order. `segment` draws one straight line per row from (`x`, `y`) to (`x2`,
   `y2`) as a Vega-Lite `rule` mark and requires all four channels. `rule` keeps
   accepting any subset of them. Both names and meanings are upstream ggsql's.
+- **The `linewidth` and `linetype` channels** (#94, Tier 1 of #58). `AS
+  linewidth` drives the stroke width and `AS linetype` the dash pattern, one
+  value per row, under upstream ggsql's names. The spec carries them as the
+  Vega-Lite `strokeWidth` (quantitative by default) and `strokeDash` (nominal
+  by default) channels. The layer SQL keeps our name for the field, so a
+  `:type` suffix and a `SCALE linewidth ...` clause apply as on any other
+  channel. Every mark that takes the optional channels takes these two. Before
+  this change both names were dropped without an error.
 
 ### Fixed
 

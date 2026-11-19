@@ -172,7 +172,9 @@ string ApplyScales(string layer_body, const vector<ScaleSpec> &scales) {
 		}
 	}
 	for (const auto &channel : channel_order) {
-		string needle = "\"" + channel + "\":{";
+		// The clause names the aesthetic; the encoding key is the Vega-Lite
+		// channel, which differs for linewidth and linetype (#94).
+		string needle = "\"" + ggsql::VegaChannelName(channel) + "\":{";
 		size_t pos = layer_body.find(needle);
 		if (pos == string::npos) {
 			continue; // channel not mapped → silently ignore
@@ -211,8 +213,10 @@ string BuildTitleBlock(const VisualizeStatement &stmt) {
 // share its name. The two differ in transform marks: violin renders the x
 // aesthetic as the `column` facet while its literal `x` channel is the
 // computed KDE density sweep (retyping that to nominal shatters the axis into
-// one band per density sample). For every direct mark BuildChannel emits
-// field == channel name, so the behavior there is unchanged. Aesthetics whose
+// one band per density sample). For every direct mark BuildChannel emits the
+// aesthetic as the field under the channel's Vega-Lite name (`strokeWidth` for
+// `linewidth`), so matching on the field is also what lets a `:type` suffix
+// reach the renamed channels (#94). Aesthetics whose
 // values only feed a transform (violin/density y, histogram's count axis)
 // render no field and the override is silently ignored, same as an unmapped
 // channel. Runs before ApplyScales, so channel blocks are still flat — the
