@@ -93,7 +93,7 @@ static void ChiSqIndUpdate(Vector inputs[], AggregateInputData &, idx_t, Vector 
 	inputs[0].ToUnifiedFormat(count, rdata);
 	inputs[1].ToUnifiedFormat(count, cdata);
 
-	auto states = FlatVector::GetData<ChiSqIndependenceState *>(state_vector);
+	compat::AggregateStates<ChiSqIndependenceState> states(state_vector, count);
 	auto rvals = UnifiedVectorFormat::GetData<string_t>(rdata);
 	auto cvals = UnifiedVectorFormat::GetData<string_t>(cdata);
 
@@ -260,7 +260,7 @@ static void ChiSqGoFUpdate(Vector inputs[], AggregateInputData &, idx_t, Vector 
 	UnifiedVectorFormat cdata;
 	inputs[0].ToUnifiedFormat(count, cdata);
 
-	auto states = FlatVector::GetData<ChiSqGoFState *>(state_vector);
+	compat::AggregateStates<ChiSqGoFState> states(state_vector, count);
 	auto cvals = UnifiedVectorFormat::GetData<string_t>(cdata);
 
 	for (idx_t i = 0; i < count; i++) {

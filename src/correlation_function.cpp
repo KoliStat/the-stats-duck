@@ -154,7 +154,7 @@ static void PearsonUpdate(Vector inputs[], AggregateInputData &, idx_t, Vector &
 	inputs[0].ToUnifiedFormat(count, xdata);
 	inputs[1].ToUnifiedFormat(count, ydata);
 
-	auto states = FlatVector::GetData<PearsonState *>(state_vector);
+	compat::AggregateStates<PearsonState> states(state_vector, count);
 	auto xv = UnifiedVectorFormat::GetData<double>(xdata);
 	auto yv = UnifiedVectorFormat::GetData<double>(ydata);
 

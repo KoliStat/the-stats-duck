@@ -139,6 +139,34 @@ inline const duckdb::Vector &Deref(const duckdb::Vector &v) {
 	return v;
 }
 
+//! The states an aggregate update receives, one per input row, whatever the
+//! shape of the vector. A GROUP BY hands update a FLAT vector with one state
+//! pointer per row. DuckDB's constant-frame window path (OVER () and OVER
+//! (PARTITION BY ...) without a frame) hands it a CONSTANT vector with a
+//! single pointer for every row, because these aggregates have no
+//! simple_update. Reading that vector as FLAT and indexing it by row walks
+//! off its one entry: every update function here did, and OVER () crashed
+//! the process (#69). The unified format maps every row to its pointer for
+//! both shapes, as DuckDB's own AggregateExecutor does by checking the
+//! vector type. Combine and Finalize keep their flat reads, because DuckDB
+//! hands those flat vectors on every path.
+template <class STATE>
+class AggregateStates {
+public:
+	AggregateStates(duckdb::Vector &state_vector, duckdb::idx_t count) {
+		state_vector.ToUnifiedFormat(count, format_);
+		data_ = duckdb::UnifiedVectorFormat::GetData<STATE *>(format_);
+	}
+	//! The state that input row `row` belongs to.
+	STATE *operator[](duckdb::idx_t row) const {
+		return data_[format_.sel->get_index(row)];
+	}
+
+private:
+	duckdb::UnifiedVectorFormat format_;
+	STATE *const *data_;
+};
+
 //===--------------------------------------------------------------------===//
 // Tier 2: the signature and API-shape changes.
 //

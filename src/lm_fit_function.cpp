@@ -219,7 +219,7 @@ static void LmFitUpdate(Vector inputs[], AggregateInputData &aggr_input, idx_t, 
 		cl_vals = UnifiedVectorFormat::GetData<string_t>(cl_fmt);
 	}
 
-	auto states = FlatVector::GetData<LmFitState *>(state_vector);
+	compat::AggregateStates<LmFitState> states(state_vector, count);
 
 	for (idx_t i = 0; i < count; i++) {
 		const auto yidx = y_fmt.sel->get_index(i);

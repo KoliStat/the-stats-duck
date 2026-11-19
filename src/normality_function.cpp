@@ -85,7 +85,7 @@ static void JBUpdate(Vector inputs[], AggregateInputData &, idx_t, Vector &state
 	UnifiedVectorFormat idata;
 	inputs[0].ToUnifiedFormat(count, idata);
 
-	auto states = FlatVector::GetData<JBState *>(state_vector);
+	compat::AggregateStates<JBState> states(state_vector, count);
 	auto values = UnifiedVectorFormat::GetData<double>(idata);
 
 	for (idx_t i = 0; i < count; i++) {
@@ -228,7 +228,7 @@ static void ADUpdate(Vector inputs[], AggregateInputData &, idx_t, Vector &state
 	UnifiedVectorFormat idata;
 	inputs[0].ToUnifiedFormat(count, idata);
 
-	auto states = FlatVector::GetData<ADState *>(state_vector);
+	compat::AggregateStates<ADState> states(state_vector, count);
 	auto values = UnifiedVectorFormat::GetData<double>(idata);
 
 	for (idx_t i = 0; i < count; i++) {
@@ -429,7 +429,7 @@ STATS_DUCK_AGGREGATE_INIT(SWInit) {
 static void SWUpdate(Vector inputs[], AggregateInputData &, idx_t, Vector &state_vector, idx_t count) {
 	UnifiedVectorFormat idata;
 	inputs[0].ToUnifiedFormat(count, idata);
-	auto states = FlatVector::GetData<SWState *>(state_vector);
+	compat::AggregateStates<SWState> states(state_vector, count);
 	auto values = UnifiedVectorFormat::GetData<double>(idata);
 	for (idx_t i = 0; i < count; i++) {
 		auto idx = idata.sel->get_index(i);

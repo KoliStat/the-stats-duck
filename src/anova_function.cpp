@@ -108,7 +108,7 @@ static void AnovaUpdate(Vector inputs[], AggregateInputData &, idx_t, Vector &st
 	inputs[0].ToUnifiedFormat(count, vdata);
 	inputs[1].ToUnifiedFormat(count, gdata);
 
-	auto states = FlatVector::GetData<AnovaState *>(state_vector);
+	compat::AggregateStates<AnovaState> states(state_vector, count);
 	auto values = UnifiedVectorFormat::GetData<double>(vdata);
 	auto groups = UnifiedVectorFormat::GetData<string_t>(gdata);
 
