@@ -96,6 +96,13 @@ that name is preserved across releases for backward compatibility.
   Tukey-adjusted p-value of `emmeans` keeps its `1 - CDF` form: that CDF is a
   quadrature with an absolute accuracy of 1e-12, so a smaller tail is below
   its resolution either way.
+- **A quoted boolean for `add_intercept` gets the right error** (#70).
+  `lm_fit(y, x, 'const', 'false')` resolved to the cluster overload, because
+  `'false'` is a VARCHAR, and failed with a message about cluster-robust
+  covariance. A cluster key is per-row data, so a constant string in that
+  slot is never a cluster key. When DuckDB itself would read the string as a
+  boolean, the error now says that `add_intercept` is a BOOLEAN and shows the
+  call without the quotes.
 
 ## [0.9.0-here-s-your-nine-pence] - 2026-10-28
 

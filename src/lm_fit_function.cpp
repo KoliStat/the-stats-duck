@@ -5,6 +5,7 @@
 #include "lm_core.hpp"      // statsduck::fit_lm / Vcov / LmResult / parse_vcov / vcov_name
 
 #include "duckdb_compat.hpp"
+#include "duckdb/common/operator/cast_operators.hpp"
 #include "duckdb/execution/expression_executor.hpp"
 #include "duckdb/function/aggregate_function.hpp"
 #include "duckdb/function/function_set.hpp"
@@ -120,6 +121,29 @@ static void RequireClusterVcov(statsduck::Vcov vcov) {
 	}
 }
 
+// A quoted boolean in the cluster slot is a mistyped add_intercept, not a
+// cluster key (#70): lm_fit(y, x, 'const', 'false') resolves to the cluster
+// overload because 'false' is a VARCHAR, and the vcov rule would then complain
+// about cluster-robust covariance. A cluster key is per-row data, so a constant
+// string there is never what the user meant. When DuckDB itself would read the
+// string as a boolean (the rule behind 'false'::BOOLEAN), say what to write.
+static void RejectQuotedBoolean(ClientContext &context, Expression &cluster) {
+	if (!cluster.IsFoldable()) {
+		return;
+	}
+	Value v = ExpressionExecutor::EvaluateScalar(context, cluster);
+	if (v.IsNull()) {
+		return;
+	}
+	const string text = v.GetValue<string>();
+	bool as_bool = false;
+	if (TryCast::Operation(string_t(text), as_bool, false)) {
+		throw BinderException("lm_fit: '%s' was read as a cluster column; add_intercept is a BOOLEAN, "
+		                      "so write it without quotes: lm_fit(y, x, vcov, %s)",
+		                      text, as_bool ? "true" : "false");
+	}
+}
+
 // lm_fit(y, x) — defaults: classical SEs, intercept on.
 STATS_DUCK_AGGREGATE_BIND(LmFitBind2) {
 	return make_uniq<LmFitBindData>();
@@ -151,6 +175,7 @@ STATS_DUCK_AGGREGATE_BIND(LmFitBind4) {
 STATS_DUCK_AGGREGATE_BIND(LmFitBind4Cluster) {
 	auto bd = make_uniq<LmFitBindData>();
 	bd->vcov = ParseVcovArg(context, function, arguments, 2);
+	RejectQuotedBoolean(context, *arguments[3]);
 	RequireClusterVcov(bd->vcov);
 	bd->has_cluster = true;
 	compat::EraseArgument(function, arguments, 2);
