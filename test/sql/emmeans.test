@@ -451,3 +451,29 @@ SELECT emmeans([[1.0, 0.0, 0.0]], [1.0, 2.0, 3.0],
                [1.0,0,0, 0,1.0,0, 0,0,1.0], 6.0, 0.05, 'nope');
 ----
 adjust
+
+# ═════ The Tukey multiplier cache (#72) ═══════════════════════════════════════
+# qtukey(1 - alpha, k, df) is derived once per distinct (alpha, k, df) and kept
+# in a small per-thread cache. Rows with differing keys in one query, two of
+# them repeated, each get their own multiplier: a stale entry would show as a
+# mismatch against qtukey computed directly for that row.
+query I
+SELECT bool_and(abs((t).diffs[1].lower_cl -
+                    ((t).diffs[1].estimate - qtukey(1 - a, 3, d) / sqrt(2) * (t).diffs[1].std_error)) < 1e-12)
+FROM (SELECT emmeans([[1,0,0],[0,1,0],[0,0,1]], b, cv, d, a, 'tukey') AS t, a, d
+      FROM (SELECT list_transform(m.coefficients, lambda c: c.estimate) AS b, m.cov AS cv
+            FROM (SELECT lm_fit(y, [g1, g2, g3], 'const', false) AS m FROM ds1)),
+           (VALUES (6.0, 0.05), (10.0, 0.05), (6.0, 0.01), (6.0, 0.05), (20.0, 0.10), (10.0, 0.05)) AS keys(d, a));
+----
+true
+
+# The family size is part of the key: a two-mean grid at the alpha and df of a
+# three-mean row above gets qtukey(0.95, 2, 6), not the cached k = 3 value.
+query I
+SELECT abs((t).diffs[1].lower_cl -
+           ((t).diffs[1].estimate - qtukey(0.95, 2, 6) / sqrt(2) * (t).diffs[1].std_error)) < 1e-12
+FROM (SELECT emmeans([[1,0,0],[0,1,0]], list_transform(m.coefficients, lambda c: c.estimate),
+                     m.cov, 6.0, 0.05, 'tukey') AS t
+      FROM (SELECT lm_fit(y, [g1, g2, g3], 'const', false) AS m FROM ds1));
+----
+true

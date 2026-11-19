@@ -4,7 +4,9 @@
 #include "estimability.hpp"
 #include "p_adjust.hpp"
 
+#include <array>
 #include <cmath>
+#include <cstddef>
 #include <limits>
 #include <string>
 
@@ -22,6 +24,35 @@ const double kNaN = std::numeric_limits<double>::quiet_NaN();
 // case, because the terms that cancel differ: max_j C_jj for a mean and
 // C_ii + C_jj for a difference. See emmeans.hpp.
 const double kNegVarTol = 1e-12;
+
+// The Tukey multiplier qtukey(1 - alpha, k_compare, df) depends on nothing
+// else, and a GROUP BY of many groups asks for the same triple on every row.
+// Deriving it is a bracketed bisection over a double integral, about 15 ms
+// per call here, and it was 82% of a 1000-row run (#72). This keeps the last
+// sixteen distinct triples per thread. The cache is thread_local on purpose:
+// DuckDB runs a scalar function on several threads at once, a per-thread table
+// needs no lock and cannot race, and the price is one derivation per thread
+// per distinct key instead of one per query, a few multiples of 15 ms. Keys
+// are compared exactly, so a different df is a different entry, and a NaN
+// never matches (NaN arguments are rejected before this point anyway).
+double CachedStudentizedRangeQuantile(double p, double k, double df) {
+	struct Entry {
+		bool used;
+		double p, k, df, value;
+	};
+	constexpr std::size_t kEntries = 16;
+	thread_local std::array<Entry, kEntries> cache {};
+	thread_local std::size_t next = 0;
+	for (const Entry &e : cache) {
+		if (e.used && e.p == p && e.k == k && e.df == df) {
+			return e.value;
+		}
+	}
+	const double value = stats_duck::StudentizedRangeQuantile(p, k, df);
+	cache[next] = Entry {true, p, k, df, value};
+	next = (next + 1) % kEntries;
+	return value;
+}
 
 EmmeansResult Fail(const std::string &msg) {
 	EmmeansResult r;
@@ -302,7 +333,7 @@ EmmeansResult emmeans(const linalg::Mat &L, const std::vector<double> &beta, con
 		// bit-identical, which is why no test can catch its absence.
 		if (r.k_compare >= 2) {
 			const double k_d = static_cast<double>(r.k_compare);
-			pair_crit = stats_duck::StudentizedRangeQuantile(1.0 - alpha, k_d, df) / std::sqrt(2.0);
+			pair_crit = CachedStudentizedRangeQuantile(1.0 - alpha, k_d, df) / std::sqrt(2.0);
 			for (EmmDiff &d : r.diffs) {
 				if (d.estimable) {
 					const double q = std::sqrt(2.0) * std::fabs(d.t_statistic);
