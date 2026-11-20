@@ -330,6 +330,25 @@ SELECT lm_fit(y, [x1, x2], 'HC1', grp) FROM ds4
 ----
 cluster-robust
 
+# A quoted boolean in the fourth slot is a mistyped add_intercept, not a
+# cluster key (#70). The error names the real problem, whatever the vcov, and
+# shows the call to write.
+statement error
+SELECT lm_fit(y, [x1, x2], 'const', 'false') FROM ds4
+----
+add_intercept is a BOOLEAN
+
+statement error
+SELECT lm_fit(y, [x1, x2], 'CR1', 'TRUE') FROM ds4
+----
+lm_fit(y, x, vcov, true)
+
+# A constant string that is not a boolean still gets the cluster-robust error.
+statement error
+SELECT lm_fit(y, [x1, x2], 'HC1', 'abc') FROM ds4
+----
+cluster-robust
+
 # ═════ Increment A fields: rank (12), loglik (13), cov (14) ══════════════════
 # Goldens from statsmodels (.llf, .cov_params()) via test/cpp/gen_lm_fit_fixtures.py.
 # cov is row-major k×k in coefficient order; SQL lists are 1-based, so
