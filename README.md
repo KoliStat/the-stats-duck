@@ -946,12 +946,17 @@ scalar-function call positionally, regardless of any `name :=` label.
 reads that fifth position as `alpha`, a `DOUBLE`, and gets the string
 `'bonferroni'`. Call `emmeans` positionally.
 
-**The default `'tukey'` adjustment evaluates a double integral for every
-row**, through `qtukey`'s quantile search, and is far slower than the
-other methods. Measured over 1000 rows of a five-mean grid, `'tukey'` took
-about 28.5 s against `'bonferroni'`'s 0.158 s — a factor of about 180. A
-caller running `emmeans` once per group over many groups should expect
-that, or choose a cheaper `adjust` method.
+**The default `'tukey'` adjustment evaluates a double integral**, through
+`qtukey`'s quantile search, and is far slower than the other methods. The
+multiplier on a difference's standard error depends only on `(alpha, k, df)`,
+so it is derived once per distinct triple and kept in a small per-thread cache
+(#72). Measured over 1000 rows of a five-mean grid that share one triple,
+`'tukey'` takes about 2.8 s against `'bonferroni'`'s 0.08 s; before the cache
+it took 17.8 s on the same machine. The adjusted p-values still cost one
+studentized-range integral per pair and row. When every row brings its own
+`df`, as a `GROUP BY` over groups of different sizes does, the cache cannot
+help and the run takes about 18 s. A caller running `emmeans` once per group
+over many groups should expect that, or choose a cheaper `adjust` method.
 
 ### Multiple-testing correction (scalar)
 

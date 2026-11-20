@@ -48,6 +48,19 @@ that name is preserved across releases for backward compatibility.
   channel. Every mark that takes the optional channels takes these two. Before
   this change both names were dropped without an error.
 
+### Changed
+
+- **`emmeans` derives the Tukey multiplier once per distinct `(alpha, k, df)`**
+  (#72). The studentized-range quantile behind the `'tukey'` confidence limits
+  was searched again on every row, and it was most of the run. It is now kept
+  in a small per-thread cache keyed on the exact triple; a per-thread table
+  needs no lock, at the price of one derivation per thread per key. Over 1000
+  rows of a five-mean grid that share one triple, the run went from 17.8 s to
+  2.8 s on the same machine. Rows that each bring their own `df` still pay the
+  full search, and the adjusted p-values still cost one integral per pair.
+  Results are unchanged; `test/sql/emmeans.test` and `test/cpp/test_emmeans.cpp`
+  check rows with differing keys against the quantile computed directly.
+
 ### Fixed
 
 - **Every aggregate works as a window function** (#69). `lm_fit(...) OVER ()`,

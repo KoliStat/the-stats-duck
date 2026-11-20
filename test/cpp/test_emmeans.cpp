@@ -15,6 +15,7 @@
 //
 // Builds standalone (no DuckDB) via scripts/run-cpp-tests.sh. Exit 0 = pass.
 
+#include "distributions.hpp" // stats_duck::StudentizedRangeQuantile, the uncached oracle
 #include "emmeans.hpp"
 
 #include "emmeans_fixtures.hpp"
@@ -954,6 +955,38 @@ static void test_extreme_df_and_alpha() {
 	}
 }
 
+// ──────────────────────── the Tukey multiplier cache ────────────────────────
+static void test_tukey_multiplier_cache() {
+	std::printf("tukey_multiplier_cache (keys repeated with other keys in between)\n");
+	const Mat L = ds1_grid();
+	// The multiplier is derived once per distinct (alpha, k, df) and kept in a
+	// small per-thread cache (#72). Interleave keys so that a cached entry is
+	// served after other entries were written, and compare every pair's lower
+	// limit against the quantile computed directly for that row's key.
+	const double keys[][2] = {{6.0, 0.05}, {10.0, 0.05}, {6.0, 0.01}, {6.0, 0.05}, {10.0, 0.05}};
+	for (const auto &key : keys) {
+		const double df = key[0], alpha = key[1];
+		const auto rt = emmeans(L, kBetaDs1, kCovDs1, df, alpha, EmmAdjust::TUKEY);
+		CHECK_MSG(rt.ok, "tukey accepts the key");
+		const double crit = stats_duck::StudentizedRangeQuantile(1.0 - alpha, 3.0, df) / std::sqrt(2.0);
+		for (std::size_t d = 0; d < rt.diffs.size(); d++) {
+			const auto &x = diff_at(rt, d);
+			check(std::fabs(x.lower_cl - (x.estimate - crit * x.std_error)) < 1e-12,
+			      lbl("the lower limit uses this row's own multiplier", d), __LINE__);
+		}
+	}
+	// A two-mean grid at a key seen above differs in k only.
+	Mat L2(2, 3);
+	L2(0, 0) = 1.0;
+	L2(1, 1) = 1.0;
+	const auto r2 = emmeans(L2, kBetaDs1, kCovDs1, 6.0, 0.05, EmmAdjust::TUKEY);
+	CHECK_MSG(r2.ok && r2.diffs.size() == 1, "two means give one pair");
+	const double crit2 = stats_duck::StudentizedRangeQuantile(0.95, 2.0, 6.0) / std::sqrt(2.0);
+	const auto &x2 = diff_at(r2, 0);
+	CHECK_MSG(std::fabs(x2.lower_cl - (x2.estimate - crit2 * x2.std_error)) < 1e-12,
+	          "k = 2 is its own key, not the cached k = 3 value");
+}
+
 int main() {
 	std::printf("=== test_emmeans ===\n");
 	test_ds1_hand_values();
@@ -968,6 +1001,7 @@ int main() {
 	test_scale_invariance();
 	test_one_estimable_mean();
 	test_extreme_df_and_alpha();
+	test_tukey_multiplier_cache();
 	test_misuse();
 	test_adjust_names();
 	std::printf("%s: %d checks, %d failures\n", g_fail == 0 ? "PASS" : "FAIL", g_checks, g_fail);

@@ -130,3 +130,11 @@ that has been written down than to re-derive it.
   beta and gamma. Why the Tukey tail keeps `1 - CDF`, and why the tests pin a
   ratio to scipy's survival function rounded to six places rather than the
   p-value's digits.
+
+- [`2026-11-tukey-multiplier-cache.md`](2026-11-tukey-multiplier-cache.md) —
+  `emmeans` with `adjust = 'tukey'` searched the studentized-range quantile
+  on every row, 15 of 17.8 s over 1000 rows (#72). The quantile depends only
+  on `(alpha, k, df)`, so a small per-thread cache keeps the last sixteen
+  triples: 2.8 s on the same rows, unchanged when every row brings its own
+  `df`. Why `thread_local` rather than a mutex, and why a timing outlier is
+  measured twice before it is quoted.
