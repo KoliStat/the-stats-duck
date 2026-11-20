@@ -1060,7 +1060,10 @@ via Vega-Lite's regression transform, also grouped by `color`. Use
 `DRAW point DRAW regression` for a scatter-with-fit overlay.
 
 **Aesthetic channels:** `x`, `y`, `color`, `fill`, `stroke`, `shape`, `size`,
-`opacity`, `tooltip`, `text`, `x2`, `y2`. Unknown channels are silently dropped.
+`opacity`, `tooltip`, `text`, `x2`, `y2`, `linewidth`, `linetype`. Unknown
+channels are silently dropped. `linewidth` and `linetype` are the stroke width
+and the dash pattern under upstream ggsql's names; the spec carries them as
+Vega-Lite's `strokeWidth` and `strokeDash`.
 Upstream ggsql's channel names are accepted as aliases: `colour` for `color`,
 `label` for `text`, `xmin`/`xmax` for `x`/`x2`, `ymin`/`ymax` for `y`/`y2`,
 `xend`/`yend` for `x2`/`y2`. The layer SQL and the spec carry our name.

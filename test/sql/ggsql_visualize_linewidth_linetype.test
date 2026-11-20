@@ -1,0 +1,62 @@
+# name: test/sql/ggsql_visualize_linewidth_linetype.test
+# description: The linewidth and linetype channels: stroke width and dash pattern driven by a column (#94, Tier 1 of #58)
+# group: [stats_duck]
+
+require stats_duck
+
+statement ok
+CREATE TABLE series AS
+SELECT * FROM (VALUES
+    (1, 1.0, 1.0, 'A'), (2, 2.0, 1.0, 'A'), (3, 1.5, 1.0, 'A'),
+    (1, 2.0, 3.0, 'B'), (2, 3.0, 3.0, 'B'), (3, 2.5, 3.0, 'B')
+) AS s(t, v, w, grp);
+
+# linewidth is the Vega-Lite strokeWidth channel, quantitative by default. The
+# field keeps our name, so the layer SQL projects `AS linewidth`.
+query TT
+VISUALIZE t AS x, v AS y, w AS linewidth FROM series DRAW line
+----
+{"$schema":"https://vega.github.io/schema/vega-lite/v5.json","data":{"name":"layer_0"},"mark":"line","encoding":{"x":{"field":"x","type":"quantitative"},"y":{"field":"y","type":"quantitative"},"strokeWidth":{"field":"linewidth","type":"quantitative"}}}	{layer_0='SELECT * FROM (SELECT t AS x, v AS y, w AS linewidth FROM series) ORDER BY x'}
+
+# linetype is the Vega-Lite strokeDash channel, nominal by default.
+query TT
+VISUALIZE t AS x, v AS y, grp AS linetype FROM series DRAW line
+----
+{"$schema":"https://vega.github.io/schema/vega-lite/v5.json","data":{"name":"layer_0"},"mark":"line","encoding":{"x":{"field":"x","type":"quantitative"},"y":{"field":"y","type":"quantitative"},"strokeDash":{"field":"linetype","type":"nominal"}}}	{layer_0='SELECT * FROM (SELECT t AS x, v AS y, grp AS linetype FROM series) ORDER BY x'}
+
+# Both channels next to color. The encoding follows the channel table's order:
+# color, then strokeWidth, then strokeDash.
+query TT
+VISUALIZE t AS x, v AS y, grp AS color, w AS linewidth, grp AS linetype FROM series DRAW line
+----
+{"$schema":"https://vega.github.io/schema/vega-lite/v5.json","data":{"name":"layer_0"},"mark":"line","encoding":{"x":{"field":"x","type":"quantitative"},"y":{"field":"y","type":"quantitative"},"color":{"field":"color","type":"nominal"},"strokeWidth":{"field":"linewidth","type":"quantitative"},"strokeDash":{"field":"linetype","type":"nominal"}}}	{layer_0='SELECT * FROM (SELECT t AS x, v AS y, grp AS color, w AS linewidth, grp AS linetype FROM series) ORDER BY x'}
+
+# A :type suffix targets the field, so it reaches the renamed channel.
+query TT
+VISUALIZE t AS x, v AS y, w AS linewidth:ordinal FROM series DRAW line
+----
+{"$schema":"https://vega.github.io/schema/vega-lite/v5.json","data":{"name":"layer_0"},"mark":"line","encoding":{"x":{"field":"x","type":"quantitative"},"y":{"field":"y","type":"quantitative"},"strokeWidth":{"field":"linewidth","type":"ordinal"}}}	{layer_0='SELECT * FROM (SELECT t AS x, v AS y, w AS linewidth FROM series) ORDER BY x'}
+
+# SCALE names our channel and lands on the Vega-Lite one.
+query TT
+VISUALIZE t AS x, v AS y, w AS linewidth FROM series DRAW line SCALE linewidth DOMAIN 1 4
+----
+{"$schema":"https://vega.github.io/schema/vega-lite/v5.json","data":{"name":"layer_0"},"mark":"line","encoding":{"x":{"field":"x","type":"quantitative"},"y":{"field":"y","type":"quantitative"},"strokeWidth":{"field":"linewidth","type":"quantitative","scale":{"domain":[1,4]}}}}	{layer_0='SELECT * FROM (SELECT t AS x, v AS y, w AS linewidth FROM series) ORDER BY x'}
+
+# Every mark that takes the optional channels takes the two new ones. On a
+# point the width is that of the outline.
+query TT
+VISUALIZE t AS x, v AS y, w AS linewidth FROM series DRAW point
+----
+{"$schema":"https://vega.github.io/schema/vega-lite/v5.json","data":{"name":"layer_0"},"mark":"point","encoding":{"x":{"field":"x","type":"quantitative"},"y":{"field":"y","type":"quantitative"},"strokeWidth":{"field":"linewidth","type":"quantitative"}}}	{layer_0='SELECT t AS x, v AS y, w AS linewidth FROM series'}
+
+# The transform marks splice their own x and y and add the optional channels.
+query TT
+VISUALIZE t AS x, v AS y, w AS linewidth FROM series DRAW regression
+----
+{"$schema":"https://vega.github.io/schema/vega-lite/v5.json","data":{"name":"layer_0"},"transform":[{"regression":"y","on":"x"}],"mark":"line","encoding":{"x":{"field":"x","type":"quantitative"},"y":{"field":"y","type":"quantitative"},"strokeWidth":{"field":"linewidth","type":"quantitative"}}}	{layer_0='SELECT t AS x, v AS y, w AS linewidth FROM series'}
+
+query TT
+VISUALIZE v AS x, grp AS linetype FROM series DRAW histogram
+----
+{"$schema":"https://vega.github.io/schema/vega-lite/v5.json","data":{"name":"layer_0"},"mark":"bar","encoding":{"x":{"field":"x","type":"quantitative","bin":true},"y":{"aggregate":"count","type":"quantitative"},"strokeDash":{"field":"linetype","type":"nominal"}}}	{layer_0='SELECT v AS x, grp AS linetype FROM series'}

@@ -78,7 +78,11 @@ VISUALIZE bill_len AS x, bill_dep AS y, species AS color FROM penguins DRAW poin
 ```
 
 The full channel set: `x`, `y`, `color`, `fill`, `stroke`, `shape`, `size`,
-`opacity`, `tooltip`, `text`, `x2`, `y2`. Unknown channels are silently dropped.
+`opacity`, `tooltip`, `text`, `x2`, `y2`, `linewidth`, `linetype`. Unknown
+channels are silently dropped. `linewidth` and `linetype` are upstream ggsql's
+names for the stroke width and the dash pattern. The spec carries them as
+Vega-Lite's `strokeWidth` and `strokeDash` channels; the layer SQL keeps our
+name for the field.
 
 Upstream ggsql's channel names are accepted as aliases: `colour` for `color`,
 `label` for `text`, `xmin` and `xmax` for `x` and `x2`, `ymin` and `ymax` for
@@ -204,6 +208,24 @@ and `y2`. `rule` accepts the same four channels but does not require them:
 ```sql
 VISUALIZE x0 AS x, y0 AS y, x1 AS xend, y1 AS yend, kind AS color FROM edges DRAW segment;
 ```
+
+### Line width and dash pattern
+
+`linewidth` drives the stroke width and `linetype` the dash pattern, one value
+per row, under upstream ggsql's names. The spec carries them as the Vega-Lite
+`strokeWidth` (quantitative by default) and `strokeDash` (nominal by default)
+channels, so a legend shows one dash pattern per group:
+
+```sql
+VISUALIZE bill_len AS x, bill_dep AS y, species AS color, species AS linetype FROM penguins DRAW line;
+VISUALIZE bill_len AS x, bill_dep AS y, body_mass AS linewidth FROM penguins DRAW line;
+```
+
+Every mark that takes the optional channels takes these two. Vega-Lite's
+composite marks (`boxplot`, `errorbar`, `errorband`) document only `color`,
+`opacity` and, for `boxplot`, `size`, so a width or dash pattern on them has no
+documented effect. A `:type` suffix and a `SCALE linewidth ...` clause apply as
+on any other channel.
 
 ### Text labels
 
@@ -391,8 +413,8 @@ DRAW <mark> [STAT <identity|smooth|summary>] (DRAW <mark> [STAT ...])*
 ```
 
 - **Channels:** `x`, `y`, `color`, `fill`, `stroke`, `shape`, `size`, `opacity`,
-  `tooltip`, `text`, `x2`, `y2`. Aliases: `colour`, `label`, `xmin`, `xmax`,
-  `ymin`, `ymax`, `xend`, `yend`.
+  `tooltip`, `text`, `x2`, `y2`, `linewidth`, `linetype`. Aliases: `colour`,
+  `label`, `xmin`, `xmax`, `ymin`, `ymax`, `xend`, `yend`.
 - **Types:** `:quantitative`, `:ordinal`, `:nominal`, `:temporal`.
 - **Marks:** `point`, `line`, `path`, `bar`, `histogram`, `text`, `area`, `rule`,
   `segment`, `tick`, `errorbar`, `errorband`, `boxplot`, `violin`, `heatmap`,
