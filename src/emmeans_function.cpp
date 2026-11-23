@@ -89,7 +89,7 @@ static void EmmeansExec(DataChunk &args, ExpressionState &, Vector &result) {
 	ListVectorReader cov_reader(args.data[2], count);
 
 	UnifiedVectorFormat df_fmt, alpha_fmt, adjust_fmt;
-	args.data[3].ToUnifiedFormat(count, df_fmt);
+	compat::ToUnified(args.data[3], count, df_fmt);
 	const auto df_data = UnifiedVectorFormat::GetData<double>(df_fmt);
 
 	// The optional arguments. An overload that does not have one never reads
@@ -99,11 +99,11 @@ static void EmmeansExec(DataChunk &args, ExpressionState &, Vector &result) {
 	const double *alpha_data = nullptr;
 	const string_t *adjust_data = nullptr;
 	if (has_alpha) {
-		args.data[4].ToUnifiedFormat(count, alpha_fmt);
+		compat::ToUnified(args.data[4], count, alpha_fmt);
 		alpha_data = UnifiedVectorFormat::GetData<double>(alpha_fmt);
 	}
 	if (has_adjust) {
-		args.data[5].ToUnifiedFormat(count, adjust_fmt);
+		compat::ToUnified(args.data[5], count, adjust_fmt);
 		adjust_data = UnifiedVectorFormat::GetData<string_t>(adjust_fmt);
 	}
 

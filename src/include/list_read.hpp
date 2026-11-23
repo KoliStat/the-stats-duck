@@ -54,9 +54,9 @@ struct ListVectorReader {
 	UnifiedVectorFormat child_fmt;
 
 	ListVectorReader(Vector &v, idx_t count) {
-		v.ToUnifiedFormat(count, list_fmt);
+		statsduck::compat::ToUnified(v, count, list_fmt);
 		entries = UnifiedVectorFormat::GetData<list_entry_t>(list_fmt);
-		statsduck::compat::ListChild(v).ToUnifiedFormat(ListVector::GetListSize(v), child_fmt);
+		statsduck::compat::ToUnified(statsduck::compat::ListChild(v), ListVector::GetListSize(v), child_fmt);
 	}
 
 	// False when row's own list argument is NULL. Read() is not meaningful
@@ -83,14 +83,15 @@ struct ListMatrixReader {
 	std::vector<double> buf; // scratch for one sub-row, reused across Read() calls
 
 	ListMatrixReader(Vector &v, idx_t count) {
-		v.ToUnifiedFormat(count, outer_fmt);
+		statsduck::compat::ToUnified(v, count, outer_fmt);
 		outer_entries = UnifiedVectorFormat::GetData<list_entry_t>(outer_fmt);
 
 		auto &rows_vec = statsduck::compat::ListChild(v);
-		rows_vec.ToUnifiedFormat(ListVector::GetListSize(v), row_fmt);
+		statsduck::compat::ToUnified(rows_vec, ListVector::GetListSize(v), row_fmt);
 		row_entries = UnifiedVectorFormat::GetData<list_entry_t>(row_fmt);
 
-		statsduck::compat::ListChild(rows_vec).ToUnifiedFormat(ListVector::GetListSize(rows_vec), val_fmt);
+		auto &vals_vec = statsduck::compat::ListChild(rows_vec);
+		statsduck::compat::ToUnified(vals_vec, ListVector::GetListSize(rows_vec), val_fmt);
 	}
 
 	// False when row's own list argument is NULL. Rows() and Read() are not

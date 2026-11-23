@@ -98,7 +98,7 @@ STATS_DUCK_AGGREGATE_INIT(Ks1Init) {
 
 static void Ks1Update(Vector inputs[], AggregateInputData &, idx_t, Vector &state_vector, idx_t count) {
 	UnifiedVectorFormat idata;
-	inputs[0].ToUnifiedFormat(count, idata);
+	compat::ToUnified(inputs[0], count, idata);
 	compat::AggregateStates<Ks1SampState> states(state_vector, count);
 	auto values = UnifiedVectorFormat::GetData<double>(idata);
 	for (idx_t i = 0; i < count; i++) {
@@ -223,8 +223,8 @@ STATS_DUCK_AGGREGATE_INIT(Ks2Init) {
 
 static void Ks2Update(Vector inputs[], AggregateInputData &, idx_t, Vector &state_vector, idx_t count) {
 	UnifiedVectorFormat x_data, y_data;
-	inputs[0].ToUnifiedFormat(count, x_data);
-	inputs[1].ToUnifiedFormat(count, y_data);
+	compat::ToUnified(inputs[0], count, x_data);
+	compat::ToUnified(inputs[1], count, y_data);
 	compat::AggregateStates<Ks2SampState> states(state_vector, count);
 	auto xs = UnifiedVectorFormat::GetData<double>(x_data);
 	auto ys = UnifiedVectorFormat::GetData<double>(y_data);

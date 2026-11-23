@@ -158,8 +158,8 @@ STATS_DUCK_AGGREGATE_INIT(MannWhitneyInit) {
 
 static void MannWhitneyUpdate(Vector inputs[], AggregateInputData &, idx_t, Vector &state_vector, idx_t count) {
 	UnifiedVectorFormat idata1, idata2;
-	inputs[0].ToUnifiedFormat(count, idata1);
-	inputs[1].ToUnifiedFormat(count, idata2);
+	compat::ToUnified(inputs[0], count, idata1);
+	compat::ToUnified(inputs[1], count, idata2);
 
 	compat::AggregateStates<MannWhitneyState> states(state_vector, count);
 	auto v1 = UnifiedVectorFormat::GetData<double>(idata1);
@@ -343,8 +343,8 @@ STATS_DUCK_AGGREGATE_INIT(WilcoxonInit) {
 
 static void WilcoxonUpdate(Vector inputs[], AggregateInputData &, idx_t, Vector &state_vector, idx_t count) {
 	UnifiedVectorFormat idata1, idata2;
-	inputs[0].ToUnifiedFormat(count, idata1);
-	inputs[1].ToUnifiedFormat(count, idata2);
+	compat::ToUnified(inputs[0], count, idata1);
+	compat::ToUnified(inputs[1], count, idata2);
 
 	compat::AggregateStates<WilcoxonState> states(state_vector, count);
 	auto v1 = UnifiedVectorFormat::GetData<double>(idata1);

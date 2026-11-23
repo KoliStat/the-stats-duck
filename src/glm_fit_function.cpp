@@ -453,15 +453,15 @@ static void GlmFitUpdate(Vector inputs[], AggregateInputData &aggr_input, idx_t,
 	const bool has_options = bd && bd->has_options_arg;
 
 	UnifiedVectorFormat y_fmt, x_fmt;
-	y_in.ToUnifiedFormat(count, y_fmt);
-	x_in.ToUnifiedFormat(count, x_fmt);
+	compat::ToUnified(y_in, count, y_fmt);
+	compat::ToUnified(x_in, count, x_fmt);
 	auto y_vals = UnifiedVectorFormat::GetData<double>(y_fmt);
 	auto list_entries = UnifiedVectorFormat::GetData<list_entry_t>(x_fmt);
 
 	auto &child = compat::ListChild(x_in);
 	const idx_t child_size = ListVector::GetListSize(x_in);
 	UnifiedVectorFormat child_fmt;
-	child.ToUnifiedFormat(child_size, child_fmt);
+	compat::ToUnified(child, child_size, child_fmt);
 	auto child_vals = UnifiedVectorFormat::GetData<double>(child_fmt);
 
 	// The per-row options, read out of the options struct by the child index
@@ -484,18 +484,18 @@ static void GlmFitUpdate(Vector inputs[], AggregateInputData &aggr_input, idx_t,
 	const bool has_offset = has_options && bd->HasOffset();
 	const bool has_cluster = has_options && bd->HasCluster();
 	if (has_options) {
-		inputs[2].ToUnifiedFormat(count, opt_fmt);
+		compat::ToUnified(inputs[2], count, opt_fmt);
 		auto &opt_children = StructVector::GetEntries(inputs[2]);
 		if (has_weights) {
-			compat::Deref(opt_children[NumericCast<idx_t>(bd->weights_child)]).ToUnifiedFormat(count, w_fmt);
+			compat::ToUnified(compat::Deref(opt_children[NumericCast<idx_t>(bd->weights_child)]), count, w_fmt);
 			w_vals = UnifiedVectorFormat::GetData<double>(w_fmt);
 		}
 		if (has_offset) {
-			compat::Deref(opt_children[NumericCast<idx_t>(bd->offset_child)]).ToUnifiedFormat(count, off_fmt);
+			compat::ToUnified(compat::Deref(opt_children[NumericCast<idx_t>(bd->offset_child)]), count, off_fmt);
 			off_vals = UnifiedVectorFormat::GetData<double>(off_fmt);
 		}
 		if (has_cluster) {
-			compat::Deref(opt_children[NumericCast<idx_t>(bd->cluster_child)]).ToUnifiedFormat(count, cl_fmt);
+			compat::ToUnified(compat::Deref(opt_children[NumericCast<idx_t>(bd->cluster_child)]), count, cl_fmt);
 			cl_vals = UnifiedVectorFormat::GetData<string_t>(cl_fmt);
 		}
 	}

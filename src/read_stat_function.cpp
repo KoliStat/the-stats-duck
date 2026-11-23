@@ -303,7 +303,7 @@ static int LoadValueHandler(int obs_index, readstat_variable_t *variable, readst
 
 	// Crossing a vector boundary means the staging chunk is full: append and reset.
 	while (oi - lc.flushed >= STANDARD_VECTOR_SIZE) {
-		lc.staging->SetCardinality(STANDARD_VECTOR_SIZE);
+		compat::SetCardinality(*lc.staging, STANDARD_VECTOR_SIZE);
 		lc.buffer->Append(*lc.append_state, *lc.staging);
 		lc.staging->Reset();
 		lc.flushed += STANDARD_VECTOR_SIZE;
@@ -378,7 +378,7 @@ static unique_ptr<GlobalTableFunctionState> ReadStatInitGlobal(ClientContext &co
 
 	// Append the final partial chunk.
 	if (lc.staged > 0) {
-		staging.SetCardinality(lc.staged);
+		compat::SetCardinality(staging, lc.staged);
 		state->buffer->Append(append_state, staging);
 	}
 
@@ -567,12 +567,12 @@ static void ReadStatMetadataExecute(ClientContext &, TableFunctionInput &input, 
 	idx_t emit = std::min<idx_t>(available, STANDARD_VECTOR_SIZE);
 	for (idx_t i = 0; i < emit; i++) {
 		auto &row = bind_data.rows[state.offset + i];
-		output.SetValue(0, i, Value(row.column_name));
-		output.SetValue(1, i, Value(row.type));
-		output.SetValue(2, i, Value(row.format));
-		output.SetValue(3, i, Value(row.label));
+		output.data[0].SetValue(i, Value(row.column_name));
+		output.data[1].SetValue(i, Value(row.type));
+		output.data[2].SetValue(i, Value(row.format));
+		output.data[3].SetValue(i, Value(row.label));
 	}
-	output.SetCardinality(emit);
+	compat::SetCardinality(output, emit);
 	state.offset += emit;
 }
 

@@ -105,7 +105,7 @@ template <typename Quantile>
 static inline void RunPerRow1(DataChunk &args, Vector &result, Quantile &&q) {
 	idx_t count = args.size();
 	UnifiedVectorFormat a0;
-	args.data[0].ToUnifiedFormat(count, a0);
+	compat::ToUnified(args.data[0], count, a0);
 	auto v0 = UnifiedVectorFormat::GetData<double>(a0);
 	result.SetVectorType(VectorType::FLAT_VECTOR);
 	auto out = compat::WriteData<double>(result);
@@ -127,8 +127,8 @@ template <typename Quantile>
 static inline void RunPerRow2(DataChunk &args, Vector &result, Quantile &&q) {
 	idx_t count = args.size();
 	UnifiedVectorFormat a0, a1;
-	args.data[0].ToUnifiedFormat(count, a0);
-	args.data[1].ToUnifiedFormat(count, a1);
+	compat::ToUnified(args.data[0], count, a0);
+	compat::ToUnified(args.data[1], count, a1);
 	auto v0 = UnifiedVectorFormat::GetData<double>(a0);
 	auto v1 = UnifiedVectorFormat::GetData<double>(a1);
 	result.SetVectorType(VectorType::FLAT_VECTOR);
@@ -153,9 +153,9 @@ template <typename Quantile>
 static inline void RunPerRow3(DataChunk &args, Vector &result, Quantile &&q) {
 	idx_t count = args.size();
 	UnifiedVectorFormat a0, a1, a2;
-	args.data[0].ToUnifiedFormat(count, a0);
-	args.data[1].ToUnifiedFormat(count, a1);
-	args.data[2].ToUnifiedFormat(count, a2);
+	compat::ToUnified(args.data[0], count, a0);
+	compat::ToUnified(args.data[1], count, a1);
+	compat::ToUnified(args.data[2], count, a2);
 	auto v0 = UnifiedVectorFormat::GetData<double>(a0);
 	auto v1 = UnifiedVectorFormat::GetData<double>(a1);
 	auto v2 = UnifiedVectorFormat::GetData<double>(a2);

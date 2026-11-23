@@ -63,8 +63,8 @@ static void LinHypExec(DataChunk &args, ExpressionState &, Vector &result) {
 	ListVectorReader cov_reader(args.data[2], count);
 
 	UnifiedVectorFormat s2_fmt, df_fmt;
-	args.data[3].ToUnifiedFormat(count, s2_fmt);
-	args.data[4].ToUnifiedFormat(count, df_fmt);
+	compat::ToUnified(args.data[3], count, s2_fmt);
+	compat::ToUnified(args.data[4], count, df_fmt);
 	const auto s2_data = UnifiedVectorFormat::GetData<double>(s2_fmt);
 	const auto df_data = UnifiedVectorFormat::GetData<double>(df_fmt);
 

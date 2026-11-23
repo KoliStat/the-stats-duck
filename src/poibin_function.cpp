@@ -91,14 +91,14 @@ static void PoibinCdfExec(DataChunk &args, ExpressionState &, Vector &result) {
 	auto &k_input = args.data[1];
 
 	UnifiedVectorFormat list_fmt, k_fmt;
-	list_input.ToUnifiedFormat(row_count, list_fmt);
-	k_input.ToUnifiedFormat(row_count, k_fmt);
+	compat::ToUnified(list_input, row_count, list_fmt);
+	compat::ToUnified(k_input, row_count, k_fmt);
 	auto list_entries = UnifiedVectorFormat::GetData<list_entry_t>(list_fmt);
 	auto k_data = UnifiedVectorFormat::GetData<int64_t>(k_fmt);
 
 	auto &input_child = compat::ListChild(list_input);
 	UnifiedVectorFormat child_fmt;
-	input_child.ToUnifiedFormat(ListVector::GetListSize(list_input), child_fmt);
+	compat::ToUnified(input_child, ListVector::GetListSize(list_input), child_fmt);
 	auto child_data = UnifiedVectorFormat::GetData<double>(child_fmt);
 
 	auto result_data = compat::WriteData<double>(result);

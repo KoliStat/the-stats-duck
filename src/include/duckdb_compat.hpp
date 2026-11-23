@@ -29,6 +29,11 @@
 //   - FlatVector::Validity gained a ValidityMutable counterpart.
 //   - StructVector::GetEntries hands back vector<Vector> instead of
 //     vector<unique_ptr<Vector>>, so `*children[i]` no longer compiles.
+//   - DataChunk::SetCardinality is deprecated. A table function that wrote
+//     rows by index calls SetChildCardinality, which also sets the size of
+//     each vector (#79). See compat::SetCardinality.
+//   - Vector::ToUnifiedFormat(count, format) is deprecated, because a vector
+//     carries its own size. ToUnified takes the same arguments (#79).
 //
 // FlatVector::SetNull and FlatVector::GetData's read form are unchanged, which
 // is why 56 and 205 call sites respectively are untouched by this port.
@@ -130,6 +135,40 @@ inline duckdb::ValidityMask &WriteValidity(duckdb::Vector &vector) {
 #endif
 }
 
+//! Sets the row count of a chunk after the caller has written rows
+//! [0, count) into its vectors by index. On 1.x the chunk alone carries the
+//! count. On 2.0 each vector carries a size as well. The deprecated
+//! DataChunk::SetCardinality leaves that size at 0, and SetChildCardinality
+//! sets both. The engine compares the two only under
+//! SET debug_verification_mode = 'VERIFY_VECTORS' (#79).
+//!
+//! Use it for a chunk whose own flat vectors were filled. On 2.0
+//! SetChildCardinality resizes flat and constant vectors only, and throws for
+//! any other vector of a different size. The size lives on the vector's
+//! buffer, so a vector that shares the buffer gets it too.
+inline void SetCardinality(duckdb::DataChunk &chunk, duckdb::idx_t count) {
+#ifdef STATS_DUCK_DUCKDB_VECTOR_V2
+	chunk.SetChildCardinality(count);
+#else
+	chunk.SetCardinality(count);
+#endif
+}
+
+//! Fills `format` with the unified view of the first `count` rows of
+//! `vector`. 2.0 deprecates Vector::ToUnifiedFormat(count, format), because a
+//! vector carries its own size there. Its counted form only forwards to
+//! ToUnifiedFormat(format), so the result is the same. On 1.x the counted
+//! form is the only one. It is not const, so `vector` is not const either
+//! (#79).
+inline void ToUnified(duckdb::Vector &vector, duckdb::idx_t count, duckdb::UnifiedVectorFormat &format) {
+#ifdef STATS_DUCK_DUCKDB_VECTOR_V2
+	(void)count;
+	vector.ToUnifiedFormat(format);
+#else
+	vector.ToUnifiedFormat(count, format);
+#endif
+}
+
 //! A STRUCT's child vectors. 1.x hands back vector<unique_ptr<Vector>>, 2.0
 //! vector<Vector>. Deref takes either; overloads rather than an #if, so each
 //! line uses the pair that applies and never instantiates the other.
@@ -168,7 +207,7 @@ template <class STATE>
 class AggregateStates {
 public:
 	AggregateStates(duckdb::Vector &state_vector, duckdb::idx_t count) {
-		state_vector.ToUnifiedFormat(count, format_);
+		ToUnified(state_vector, count, format_);
 		data_ = duckdb::UnifiedVectorFormat::GetData<STATE *>(format_);
 	}
 	//! The state that input row `row` belongs to.
