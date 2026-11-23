@@ -151,8 +151,8 @@ static inline void PearsonUpdateOne(PearsonState &state, double x, double y) {
 
 static void PearsonUpdate(Vector inputs[], AggregateInputData &, idx_t, Vector &state_vector, idx_t count) {
 	UnifiedVectorFormat xdata, ydata;
-	inputs[0].ToUnifiedFormat(count, xdata);
-	inputs[1].ToUnifiedFormat(count, ydata);
+	compat::ToUnified(inputs[0], count, xdata);
+	compat::ToUnified(inputs[1], count, ydata);
 
 	compat::AggregateStates<PearsonState> states(state_vector, count);
 	auto xv = UnifiedVectorFormat::GetData<double>(xdata);

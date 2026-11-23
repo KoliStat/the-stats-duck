@@ -220,7 +220,7 @@ STATS_DUCK_AGGREGATE_INIT(TTest1SampInit) {
 static void TTest1SampUpdate(Vector inputs[], AggregateInputData &, idx_t, Vector &state_vector, idx_t count) {
 	auto &input = inputs[0];
 	UnifiedVectorFormat idata;
-	input.ToUnifiedFormat(count, idata);
+	compat::ToUnified(input, count, idata);
 
 	compat::AggregateStates<TTest1SampState> states(state_vector, count);
 	auto values = UnifiedVectorFormat::GetData<double>(idata);
@@ -347,8 +347,8 @@ void RegisterTTest1SampAgg(ExtensionLoader &loader) {
 
 static void TTestPairedUpdate(Vector inputs[], AggregateInputData &, idx_t, Vector &state_vector, idx_t count) {
 	UnifiedVectorFormat idata1, idata2;
-	inputs[0].ToUnifiedFormat(count, idata1);
-	inputs[1].ToUnifiedFormat(count, idata2);
+	compat::ToUnified(inputs[0], count, idata1);
+	compat::ToUnified(inputs[1], count, idata2);
 
 	compat::AggregateStates<TTest1SampState> states(state_vector, count);
 	auto v1 = UnifiedVectorFormat::GetData<double>(idata1);
@@ -467,8 +467,8 @@ STATS_DUCK_AGGREGATE_INIT(TTest2SampInit) {
 
 static void TTest2SampUpdate(Vector inputs[], AggregateInputData &, idx_t, Vector &state_vector, idx_t count) {
 	UnifiedVectorFormat idata1, idata2;
-	inputs[0].ToUnifiedFormat(count, idata1);
-	inputs[1].ToUnifiedFormat(count, idata2);
+	compat::ToUnified(inputs[0], count, idata1);
+	compat::ToUnified(inputs[1], count, idata2);
 
 	compat::AggregateStates<TTest2SampState> states(state_vector, count);
 	auto v1 = UnifiedVectorFormat::GetData<double>(idata1);

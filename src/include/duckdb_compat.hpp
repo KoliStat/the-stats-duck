@@ -32,6 +32,8 @@
 //   - DataChunk::SetCardinality is deprecated. A table function that wrote
 //     rows by index calls SetChildCardinality, which also sets the size of
 //     each vector (#79). See compat::SetCardinality.
+//   - Vector::ToUnifiedFormat(count, format) is deprecated, because a vector
+//     carries its own size. ToUnified takes the same arguments (#79).
 //
 // FlatVector::SetNull and FlatVector::GetData's read form are unchanged, which
 // is why 56 and 205 call sites respectively are untouched by this port.
@@ -147,6 +149,21 @@ inline void SetCardinality(duckdb::DataChunk &chunk, duckdb::idx_t count) {
 #endif
 }
 
+//! Fills `format` with the unified view of the first `count` rows of
+//! `vector`. 2.0 deprecates Vector::ToUnifiedFormat(count, format), because a
+//! vector carries its own size there. Its counted form only forwards to
+//! ToUnifiedFormat(format), so the result is the same. On 1.x the counted
+//! form is the only one. It is not const, so `vector` is not const either
+//! (#79).
+inline void ToUnified(duckdb::Vector &vector, duckdb::idx_t count, duckdb::UnifiedVectorFormat &format) {
+#ifdef STATS_DUCK_DUCKDB_VECTOR_V2
+	(void)count;
+	vector.ToUnifiedFormat(format);
+#else
+	vector.ToUnifiedFormat(count, format);
+#endif
+}
+
 //! A STRUCT's child vectors. 1.x hands back vector<unique_ptr<Vector>>, 2.0
 //! vector<Vector>. Deref takes either; overloads rather than an #if, so each
 //! line uses the pair that applies and never instantiates the other.
@@ -185,7 +202,7 @@ template <class STATE>
 class AggregateStates {
 public:
 	AggregateStates(duckdb::Vector &state_vector, duckdb::idx_t count) {
-		state_vector.ToUnifiedFormat(count, format_);
+		ToUnified(state_vector, count, format_);
 		data_ = duckdb::UnifiedVectorFormat::GetData<STATE *>(format_);
 	}
 	//! The state that input row `row` belongs to.
