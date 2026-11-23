@@ -125,3 +125,18 @@ statement error
 SELECT spearman_test(x, y, 0.0) FROM monotonic
 ----
 alpha must be in the open interval (0, 1)
+
+# NaN outputs become NULL fields (#53). The Fisher-z interval needs n >= 4 and
+# |rho| < 1. Without them, ci_lower and ci_upper are NULL, and the other
+# fields keep their values: here n = 3, then rho = 1.
+query TTTT
+SELECT (r).ci_lower IS NULL, (r).ci_upper IS NULL, ROUND((r).rho, 4), (r).n
+FROM (SELECT spearman_test(x, y) AS r FROM (VALUES (1.0, 1.0), (2.0, 3.0), (3.0, 2.0)) AS t(x, y))
+----
+true	true	0.5	3
+
+query TTT
+SELECT (r).ci_lower IS NULL, (r).ci_upper IS NULL, (r).t_statistic
+FROM (SELECT spearman_test(x, y) AS r FROM monotonic)
+----
+true	true	inf

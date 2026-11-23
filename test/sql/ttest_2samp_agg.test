@@ -56,3 +56,21 @@ SELECT ROUND((ttest_2samp(a, b)).t_statistic, 4),
 FROM sparse
 ----
 -2.0	0.0805
+
+# NaN outputs become NULL fields (#53). Both samples are constant, so Welch's
+# df is 0/0. df, the p-value and both interval bounds come out NULL. t and
+# Cohen's d are minus infinity and pass through unchanged.
+query TTTTTTT
+SELECT (r).df IS NULL, (r).p_value IS NULL, (r).ci_lower IS NULL, (r).ci_upper IS NULL,
+       (r).t_statistic, (r).cohens_d, (r).mean_diff
+FROM (SELECT ttest_2samp(a, b) AS r FROM (VALUES (1.0, 3.0), (1.0, 3.0)) AS t(a, b))
+----
+true	true	true	true	-inf	-inf	-2.0
+
+# Student's test keeps df = n1 + n2 - 2 there, so its p-value is 0 and its
+# interval is the single point mean_diff.
+query TTTTT
+SELECT (r).df, (r).p_value, (r).ci_lower, (r).ci_upper, (r).t_statistic
+FROM (SELECT ttest_2samp(a, b, true) AS r FROM (VALUES (1.0, 3.0), (1.0, 3.0)) AS t(a, b))
+----
+2.0	0.0	-2.0	-2.0	-inf

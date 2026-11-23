@@ -70,3 +70,21 @@ query T
 SELECT ttest_1samp(val) FROM (SELECT 1.0 AS val)
 ----
 NULL
+
+# NaN outputs become NULL fields (#53). Two equal values leave the standard
+# error at 0. With mu at the mean, t and Cohen's d are 0/0, so they and the
+# p-value come out NULL. df, mean_diff and the interval keep their values.
+query TTTTTTT
+SELECT (r).t_statistic IS NULL, (r).p_value IS NULL, (r).cohens_d IS NULL,
+       (r).df, (r).mean_diff, (r).ci_lower, (r).ci_upper
+FROM (SELECT ttest_1samp(v, 5.0) AS r FROM (VALUES (5.0), (5.0)) AS t(v))
+----
+true	true	true	1.0	0.0	0.0	0.0
+
+# With mu below the mean, t and Cohen's d are infinite. Infinite values pass
+# through unchanged, and the p-value is 0.
+query TTT
+SELECT (r).t_statistic, (r).cohens_d, (r).p_value
+FROM (SELECT ttest_1samp(v, 3.0) AS r FROM (VALUES (5.0), (5.0)) AS t(v))
+----
+inf	inf	0.0

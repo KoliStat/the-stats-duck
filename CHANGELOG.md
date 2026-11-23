@@ -98,6 +98,20 @@ that name is preserved across releases for backward compatibility.
   so the layer SQL of a `WITH ... AS MATERIALIZED (...)` statement reads
   the same on both DuckDB lines.
 
+- **The t-tests and the correlation tests write a NaN result field as NULL**
+  (#53). The fitter conventions turn a NaN result field into SQL NULL and
+  let an infinite value pass through. Five older aggregates wrote the NaN.
+  `ttest_1samp` and `ttest_paired` with zero variance and a mean difference
+  of 0 now give NULL for `t_statistic`, `p_value` and `cohens_d`.
+  `ttest_2samp` with two constant samples gives NULL for Welch's `df`, the
+  `p_value` and both interval bounds. Its interval used to collapse to the
+  single point `mean_diff`, because `StudentTQuantile` returns a finite
+  number for a NaN `df`. `pearson_test` and `spearman_test` give NULL
+  interval bounds at `n = 3` or a perfect correlation, where the Fisher-z
+  interval is not defined. The other fields keep their values, and an
+  infinite `t_statistic` or `cohens_d` stays infinite. The rule lives in one
+  helper, `compat::WriteDoubleOrNull` in `src/include/duckdb_compat.hpp`.
+
 - **Far-tail p-values, and `pnorm`'s lower tail** (#81). `pnorm(-8.5)`
   returned 0 and `pnorm(-5)` had lost five digits, because the normal CDF was
   `0.5 * (1 + erf(z / sqrt 2))` and that sum cancels for a negative `z`. It is
