@@ -68,18 +68,30 @@ static double AggComputePValue(double t_stat, double df, const string &alternati
 	}
 }
 
+// The critical value of Student's t, or NaN when df is NaN. Welch's df is 0/0
+// when both samples have zero variance. StudentTQuantile's `df <= 0` guard
+// does not catch a NaN, and its bisection then returns a finite number, which
+// made the interval collapse to a single point. A NaN bound is written as NULL
+// instead (#53).
+static double CriticalT(double p, double df) {
+	if (std::isnan(df)) {
+		return std::numeric_limits<double>::quiet_NaN();
+	}
+	return stats_duck::StudentTQuantile(p, df);
+}
+
 static void AggComputeCI(double mean_diff, double se, double df, double alpha, const string &alternative,
                           double &ci_lower, double &ci_upper) {
 	if (alternative == "two-sided") {
-		double t_crit = stats_duck::StudentTQuantile(1.0 - alpha / 2.0, df);
+		double t_crit = CriticalT(1.0 - alpha / 2.0, df);
 		ci_lower = mean_diff - t_crit * se;
 		ci_upper = mean_diff + t_crit * se;
 	} else if (alternative == "less") {
-		double t_crit = stats_duck::StudentTQuantile(1.0 - alpha, df);
+		double t_crit = CriticalT(1.0 - alpha, df);
 		ci_lower = -std::numeric_limits<double>::infinity();
 		ci_upper = mean_diff + t_crit * se;
 	} else {
-		double t_crit = stats_duck::StudentTQuantile(1.0 - alpha, df);
+		double t_crit = CriticalT(1.0 - alpha, df);
 		ci_lower = mean_diff - t_crit * se;
 		ci_upper = std::numeric_limits<double>::infinity();
 	}
@@ -127,18 +139,21 @@ static void WelfordCombine(WelfordState &target, const WelfordState &source) {
 
 // ─── Finalize helper: write one STRUCT result ───────────────────────────────────
 
+// Every DOUBLE field goes through WriteDoubleOrNull: a NaN, such as t = 0/0
+// when the standard error is 0, becomes a NULL field, and an infinite value
+// passes through (#53).
 static void WriteStructResult(compat::StructChildren &children, idx_t idx, const string &test_type,
                                double t_stat, double df, double p_value, const string &alternative,
                                double mean_diff, double ci_lower, double ci_upper, double cohens_d) {
 	compat::WriteData<string_t>(compat::Deref(children[0]))[idx] = StringVector::AddString(compat::Deref(children[0]), test_type);
-	compat::WriteData<double>(compat::Deref(children[1]))[idx] = t_stat;
-	compat::WriteData<double>(compat::Deref(children[2]))[idx] = df;
-	compat::WriteData<double>(compat::Deref(children[3]))[idx] = p_value;
+	compat::WriteDoubleOrNull(compat::Deref(children[1]), idx, t_stat);
+	compat::WriteDoubleOrNull(compat::Deref(children[2]), idx, df);
+	compat::WriteDoubleOrNull(compat::Deref(children[3]), idx, p_value);
 	compat::WriteData<string_t>(compat::Deref(children[4]))[idx] = StringVector::AddString(compat::Deref(children[4]), alternative);
-	compat::WriteData<double>(compat::Deref(children[5]))[idx] = mean_diff;
-	compat::WriteData<double>(compat::Deref(children[6]))[idx] = ci_lower;
-	compat::WriteData<double>(compat::Deref(children[7]))[idx] = ci_upper;
-	compat::WriteData<double>(compat::Deref(children[8]))[idx] = cohens_d;
+	compat::WriteDoubleOrNull(compat::Deref(children[5]), idx, mean_diff);
+	compat::WriteDoubleOrNull(compat::Deref(children[6]), idx, ci_lower);
+	compat::WriteDoubleOrNull(compat::Deref(children[7]), idx, ci_upper);
+	compat::WriteDoubleOrNull(compat::Deref(children[8]), idx, cohens_d);
 }
 
 // ─── Bind helpers for extracting constant parameters ────────────────────────────

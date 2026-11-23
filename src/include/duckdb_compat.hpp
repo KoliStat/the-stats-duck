@@ -49,6 +49,8 @@
 #include "duckdb/parser/expression/constant_expression.hpp"
 #include "duckdb/planner/expression/bound_function_expression.hpp"
 
+#include <cmath>
+
 #if __has_include("duckdb/common/vector/list_vector.hpp")
 // DuckDB v2.0 and later.
 #include "duckdb/common/vector/flat_vector.hpp"
@@ -85,6 +87,18 @@ inline T *WriteData(duckdb::Vector &vector) {
 #else
 	return duckdb::FlatVector::GetData<T>(vector);
 #endif
+}
+
+//! Write a DOUBLE into row `row` of a flat vector, or mark the row NULL when
+//! the value is NaN. Infinite values are written as they are. This is the NaN
+//! rule of docs/fitter_conventions.md (#53). The binding files still carry
+//! their own copies of it (SetD, SetDoubleOrNull); #82 moves them here.
+inline void WriteDoubleOrNull(duckdb::Vector &vector, duckdb::idx_t row, double value) {
+	if (std::isnan(value)) {
+		duckdb::FlatVector::SetNull(vector, row, true);
+	} else {
+		WriteData<double>(vector)[row] = value;
+	}
 }
 
 //! The child vector of a LIST, for writing. A mutable reference also serves

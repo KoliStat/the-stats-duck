@@ -261,7 +261,8 @@ static void PearsonFinalize(Vector &state_vector, compat::FinalizeInput &aggr_in
 		double p_value = ComputePValue(t_stat, df, alternative);
 
 		// Fisher-z confidence interval (two-sided regardless of `alternative`,
-		// matching R's cor.test behavior).
+		// matching R's cor.test behavior). It needs n >= 4 and |r| < 1;
+		// otherwise both bounds stay NaN and are written as NULL (#53).
 		double ci_lower = std::numeric_limits<double>::quiet_NaN();
 		double ci_upper = std::numeric_limits<double>::quiet_NaN();
 		if (state.n >= 4 && std::abs(r) < 1.0) {
@@ -274,13 +275,13 @@ static void PearsonFinalize(Vector &state_vector, compat::FinalizeInput &aggr_in
 
 		compat::WriteData<string_t>(compat::Deref(children[0]))[idx] =
 		    StringVector::AddString(compat::Deref(children[0]), "Pearson Correlation");
-		compat::WriteData<double>(compat::Deref(children[1]))[idx] = r;
-		compat::WriteData<double>(compat::Deref(children[2]))[idx] = t_stat;
-		compat::WriteData<double>(compat::Deref(children[3]))[idx] = df;
-		compat::WriteData<double>(compat::Deref(children[4]))[idx] = p_value;
+		compat::WriteDoubleOrNull(compat::Deref(children[1]), idx, r);
+		compat::WriteDoubleOrNull(compat::Deref(children[2]), idx, t_stat);
+		compat::WriteDoubleOrNull(compat::Deref(children[3]), idx, df);
+		compat::WriteDoubleOrNull(compat::Deref(children[4]), idx, p_value);
 		compat::WriteData<string_t>(compat::Deref(children[5]))[idx] = StringVector::AddString(compat::Deref(children[5]), alternative);
-		compat::WriteData<double>(compat::Deref(children[6]))[idx] = ci_lower;
-		compat::WriteData<double>(compat::Deref(children[7]))[idx] = ci_upper;
+		compat::WriteDoubleOrNull(compat::Deref(children[6]), idx, ci_lower);
+		compat::WriteDoubleOrNull(compat::Deref(children[7]), idx, ci_upper);
 		compat::WriteData<int64_t>(compat::Deref(children[8]))[idx] = state.n;
 	}
 }

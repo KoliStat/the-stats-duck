@@ -306,6 +306,8 @@ static void SpearmanFinalize(Vector &state_vector, compat::FinalizeInput &aggr_i
 		double p_value = SpearmanPValue(t_stat, df, alternative);
 
 		// Fisher-z CI on rho — two-sided regardless of `alternative`, matching cor.test.
+		// It needs n >= 4 and |rho| < 1; otherwise both bounds stay NaN and are
+		// written as NULL (#53).
 		double ci_lower = std::numeric_limits<double>::quiet_NaN();
 		double ci_upper = std::numeric_limits<double>::quiet_NaN();
 		if (n >= 4 && std::abs(rho) < 1.0) {
@@ -318,14 +320,14 @@ static void SpearmanFinalize(Vector &state_vector, compat::FinalizeInput &aggr_i
 
 		compat::WriteData<string_t>(compat::Deref(children[0]))[idx] =
 		    StringVector::AddString(compat::Deref(children[0]), "Spearman Correlation");
-		compat::WriteData<double>(compat::Deref(children[1]))[idx] = rho;
-		compat::WriteData<double>(compat::Deref(children[2]))[idx] = t_stat;
-		compat::WriteData<double>(compat::Deref(children[3]))[idx] = df;
-		compat::WriteData<double>(compat::Deref(children[4]))[idx] = p_value;
+		compat::WriteDoubleOrNull(compat::Deref(children[1]), idx, rho);
+		compat::WriteDoubleOrNull(compat::Deref(children[2]), idx, t_stat);
+		compat::WriteDoubleOrNull(compat::Deref(children[3]), idx, df);
+		compat::WriteDoubleOrNull(compat::Deref(children[4]), idx, p_value);
 		compat::WriteData<string_t>(compat::Deref(children[5]))[idx] =
 		    StringVector::AddString(compat::Deref(children[5]), alternative);
-		compat::WriteData<double>(compat::Deref(children[6]))[idx] = ci_lower;
-		compat::WriteData<double>(compat::Deref(children[7]))[idx] = ci_upper;
+		compat::WriteDoubleOrNull(compat::Deref(children[6]), idx, ci_lower);
+		compat::WriteDoubleOrNull(compat::Deref(children[7]), idx, ci_upper);
 		compat::WriteData<int64_t>(compat::Deref(children[8]))[idx] = static_cast<int64_t>(n);
 	}
 }

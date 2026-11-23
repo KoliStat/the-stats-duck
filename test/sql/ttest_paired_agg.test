@@ -45,3 +45,11 @@ query T
 SELECT ROUND((ttest_paired(drug1, drug2)).df, 1) FROM sleep
 ----
 9.0
+
+# NaN outputs become NULL fields (#53). Every difference is 0, so the standard
+# error is 0 and t and Cohen's d are 0/0. They and the p-value come out NULL.
+query TTTTT
+SELECT (r).t_statistic IS NULL, (r).p_value IS NULL, (r).cohens_d IS NULL, (r).mean_diff, (r).df
+FROM (SELECT ttest_paired(x, y) AS r FROM (VALUES (1.0, 1.0), (2.0, 2.0)) AS t(x, y))
+----
+true	true	true	0.0	1.0
