@@ -106,6 +106,13 @@ statement ok
 VISUALISE Day AS x, Month AS y, Temp AS fill FROM airquality
   DRAW tile
 
+# gallery/examples/heatmap.qmd, reversed magma fill (SETTING reverse, #98)
+statement ok
+VISUALISE Month AS y, Day AS x, Temp AS fill FROM airquality
+  DRAW tile
+  SCALE fill TO magma
+    SETTING reverse => true
+
 # ===========================================================================
 # Not running yet
 # ===========================================================================
@@ -517,16 +524,6 @@ VISUALISE Month AS y, Day AS x, Temp AS fill FROM airquality
     SETTING stroke => null, opacity => 1
 ----
 Expected 'DRAW', got 'SETTING'
-
-# gallery/examples/heatmap.qmd: waits for SCALE ... SETTING reverse (1a, as
-# SCALE ... REVERSE)
-statement error
-VISUALISE Month AS y, Day AS x, Temp AS fill FROM airquality
-  DRAW tile
-  SCALE fill TO magma
-    SETTING reverse => true
-----
-Unknown SCALE operator 'SETTING'
 
 # gallery/examples/heatmap.qmd: waits for the trailing SELECT form (1a) and
 # SCALE ... FROM (lo, hi) TO (partly ours). DuckDB's own syntax error.

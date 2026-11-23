@@ -1,0 +1,70 @@
+# name: test/sql/ggsql_visualize_scale_reverse_via_binned.test
+# description: SCALE ... SETTING reverse, SCALE ... VIA <transform> and SCALE BINNED, from upstream ggsql (#98, #58 item 6)
+# group: [stats_duck]
+
+require stats_duck
+
+statement ok
+CREATE TABLE penguins AS SELECT * FROM (VALUES (39.1, 18.7, 3750, 'Adelie'), (39.5, 17.4, 3800, 'Adelie'), (44.0, 18.0, 5000, 'Gentoo')) AS t(bill_len, bill_dep, body_mass, species);
+
+# ---------------------------------------------------------------------------
+# SETTING reverse
+# ---------------------------------------------------------------------------
+
+query TT
+VISUALIZE bill_len AS x, bill_dep AS y FROM penguins DRAW point SCALE y SETTING reverse => true
+----
+{"$schema":"https://vega.github.io/schema/vega-lite/v5.json","data":{"name":"layer_0"},"mark":"point","encoding":{"x":{"field":"x","type":"quantitative"},"y":{"field":"y","type":"quantitative","scale":{"reverse":true}}}}	{layer_0='SELECT bill_len AS x, bill_dep AS y FROM penguins'}
+
+# The arrow written without spaces gives the same spec on both DuckDB lines.
+query TT
+VISUALIZE bill_len AS x, bill_dep AS y FROM penguins DRAW point SCALE y SETTING reverse=>true
+----
+{"$schema":"https://vega.github.io/schema/vega-lite/v5.json","data":{"name":"layer_0"},"mark":"point","encoding":{"x":{"field":"x","type":"quantitative"},"y":{"field":"y","type":"quantitative","scale":{"reverse":true}}}}	{layer_0='SELECT bill_len AS x, bill_dep AS y FROM penguins'}
+
+# Setting names and values are case-insensitive.
+query TT
+VISUALIZE bill_len AS x, bill_dep AS y FROM penguins DRAW point SCALE y SETTING REVERSE => FALSE
+----
+{"$schema":"https://vega.github.io/schema/vega-lite/v5.json","data":{"name":"layer_0"},"mark":"point","encoding":{"x":{"field":"x","type":"quantitative"},"y":{"field":"y","type":"quantitative","scale":{"reverse":false}}}}	{layer_0='SELECT bill_len AS x, bill_dep AS y FROM penguins'}
+
+# SETTING merges with the other options of the same channel, in order.
+query TT
+VISUALIZE bill_len AS x, bill_dep AS y, species AS color FROM penguins DRAW point SCALE color TO viridis SETTING reverse => true
+----
+{"$schema":"https://vega.github.io/schema/vega-lite/v5.json","data":{"name":"layer_0"},"mark":"point","encoding":{"x":{"field":"x","type":"quantitative"},"y":{"field":"y","type":"quantitative"},"color":{"field":"color","type":"nominal","scale":{"scheme":"viridis","reverse":true}}}}	{layer_0='SELECT bill_len AS x, bill_dep AS y, species AS color FROM penguins'}
+
+statement error
+VISUALIZE bill_len AS x, bill_dep AS y FROM penguins DRAW point SCALE y SETTING breaks => 5
+----
+Unsupported SCALE setting 'breaks' (supported: reverse)
+
+statement error
+VISUALIZE bill_len AS x, bill_dep AS y FROM penguins DRAW point SCALE y SETTING reverse => true, breaks => 5
+----
+Unsupported SCALE setting 'breaks' (supported: reverse)
+
+statement error
+VISUALIZE bill_len AS x, bill_dep AS y FROM penguins DRAW point SCALE y SETTING reverse => maybe
+----
+Expected true or false after 'SETTING reverse =>', got 'maybe'
+
+statement error
+VISUALIZE bill_len AS x, bill_dep AS y FROM penguins DRAW point SCALE y SETTING reverse true
+----
+Expected '=>' after 'SETTING reverse'
+
+statement error
+VISUALIZE bill_len AS x, bill_dep AS y FROM penguins DRAW point SCALE y SETTING reverse =>
+----
+Expected a value after 'SETTING reverse =>'
+
+statement error
+VISUALIZE bill_len AS x, bill_dep AS y FROM penguins DRAW point SCALE y SETTING
+----
+Expected a setting name after 'SETTING'
+
+statement error
+VISUALIZE bill_len AS x, bill_dep AS y FROM penguins DRAW point SCALE y SETTING reverse => true,
+----
+Expected a setting name after ','

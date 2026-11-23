@@ -12,9 +12,9 @@ struct TokenizeResult {
 	string error;
 };
 
-// Tokenizer: at depth 0, splits on whitespace and emits commas as their own
-// token. Inside parens or quotes (single or double) all characters are
-// accumulated into the current token so that `coalesce(a, b)`, `"my col"`,
+// Tokenizer: at depth 0, splits on whitespace and emits commas and the `=>`
+// arrow as their own tokens. Inside parens or quotes (single or double) all
+// characters are accumulated into the current token so that `coalesce(a, b)`, `"my col"`,
 // `'don''t'`, and `(SELECT max(x) FROM t)` all become single tokens. SQL
 // doubled-quote escapes (`''` and `""`) are handled. Trailing semicolons are
 // dropped.
@@ -92,6 +92,10 @@ TokenizeResult Tokenize(const string &input) {
 		} else if (c == ',') {
 			flush();
 			tokens.emplace_back(",");
+		} else if (c == '=' && i + 1 < input.size() && input[i + 1] == '>') {
+			flush();
+			tokens.emplace_back("=>");
+			i++;
 		} else if (c == ';') {
 			flush();
 		} else {
@@ -628,6 +632,8 @@ ParseResult ParseGgsql(const string &query) {
 	//   ZERO <true|false>       — include zero in quantitative scale
 	//   DOMAIN <num1> <num2>    — explicit numeric domain
 	//   LABEL '<text>'          — axis title
+//   SETTING <name> => <value> [, <name> => <value>]...
+//                           — upstream ggsql settings; only `reverse` so far
 	while (!at_end() && IEqual(peek(), "SCALE")) {
 		i++;
 		if (at_end()) {
@@ -687,16 +693,59 @@ ParseResult ParseGgsql(const string &query) {
 				scale.sub_object = "axis";
 				scale.property = "title";
 				scale.value_json = "\"" + JsonEscape(UnquoteSqlString(tokens[i++])) + "\"";
+			} else if (IEqual(op, "SETTING")) {
+				// One ScaleSpec per setting. The list goes on while a ',' follows.
+				bool first = true;
+				while (true) {
+					if (at_end()) {
+						result.error = string("Expected a setting name after ") + (first ? "'SETTING'" : "','");
+						return result;
+					}
+					string name = tokens[i++];
+					if (!IEqual(name, "reverse")) {
+						result.error = "Unsupported SCALE setting '" + name + "' (supported: reverse)";
+						return result;
+					}
+					if (at_end() || tokens[i] != "=>") {
+						result.error = "Expected '=>' after 'SETTING " + name + "'";
+						return result;
+					}
+					i++;
+					if (at_end()) {
+						result.error = "Expected a value after 'SETTING " + name + " =>'";
+						return result;
+					}
+					string v = tokens[i++];
+					ScaleSpec setting;
+					setting.aesthetic = aesthetic;
+					setting.property = "reverse";
+					if (IEqual(v, "true")) {
+						setting.value_json = "true";
+					} else if (IEqual(v, "false")) {
+						setting.value_json = "false";
+					} else {
+						result.error = "Expected true or false after 'SETTING " + name + " =>', got '" + v + "'";
+						return result;
+					}
+					result.stmt.scales.push_back(std::move(setting));
+					if (at_end() || peek() != ",") {
+						break;
+					}
+					i++;
+					first = false;
+				}
+				any_op = true;
+				continue;
 			} else {
 				result.error = "Unknown SCALE operator '" + op +
-				               "' (expected TO / ZERO / DOMAIN / LABEL)";
+				               "' (expected TO / ZERO / DOMAIN / LABEL / SETTING)";
 				return result;
 			}
 			result.stmt.scales.push_back(std::move(scale));
 			any_op = true;
 		}
 		if (!any_op) {
-			result.error = "Expected SCALE operator (TO / ZERO / DOMAIN / LABEL) after aesthetic";
+			result.error = "Expected SCALE operator (TO / ZERO / DOMAIN / LABEL / SETTING) after aesthetic";
 			return result;
 		}
 	}

@@ -502,7 +502,7 @@ static bool IsClauseKeyword(const string &text) {
 	    "LIKE",      "ILIKE",    "IS",     "WITH",   "HAVING", "LIMIT",     "OFFSET", "UNION",    "EXCEPT",
 	    "INTERSECT", "ALL",      "DISTINCT", "CASE", "END",    "USING",     "ANY",   "SOME",      "INTO",
 	    "GROUP",     "ORDER",    "RETURNING", "SET", "DRAW",   "FACET",     "SCALE", "TITLE", "MATERIALIZED",
-	    "SUBTITLE",  "DOMAIN",   "LABEL",  "TO",     "ROWS",   "COLUMNS",   "ZERO",  "RETURN"};
+	    "SUBTITLE",  "DOMAIN",   "LABEL",  "TO",     "ROWS",   "COLUMNS",   "ZERO",  "RETURN",    "SETTING"};
 	auto upper = StringUtil::Upper(text);
 	for (auto word : kWords) {
 		if (upper == word) {

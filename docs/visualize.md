@@ -312,6 +312,11 @@ VISUALIZE bill_len AS x, bill_dep AS y FROM penguins DRAW point FACET BY species
 | `ZERO true\|false` | include / exclude zero on a quantitative scale |
 | `DOMAIN <lo> <hi>` | fixed numeric domain |
 | `LABEL '<text>'` | axis title |
+| `SETTING reverse => true\|false` | reverse the direction of the scale |
+
+`SETTING` takes upstream ggsql's `name => value` form. Separate several
+settings with commas. `reverse` is the only setting so far, and any other name
+is an error. You may write `=>` with or without spaces around it.
 
 **Stack multiple options** on one `SCALE`, or repeat `SCALE <channel>` — they
 merge into one scale/axis block either way:
@@ -408,7 +413,7 @@ VISUALIZE <expr> AS <aesthetic> [: <type>] (, <expr> AS <aesthetic> ...)
 FROM <table>
 DRAW <mark> [STAT <identity|smooth|summary>] (DRAW <mark> [STAT ...])*
 [FACET BY <expr> [ROWS | COLS] | FACET BY <row_expr>, <col_expr>]
-[SCALE <channel> {TO <scheme> | ZERO true|false | DOMAIN <lo> <hi> | LABEL '<text>'}+]*
+[SCALE <channel> {TO <scheme> | ZERO true|false | DOMAIN <lo> <hi> | LABEL '<text>' | SETTING reverse => true|false}+]*
 [TITLE '<text>' [SUBTITLE '<text>']]
 ```
 
