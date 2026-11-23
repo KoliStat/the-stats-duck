@@ -583,3 +583,21 @@ git commit -m "CI guard, changelog and note for the DuckDB 2.0 deprecated calls 
 ```
 
 Give the commit a body of two or three sentences.
+
+---
+
+## Corrections made during execution
+
+The text above is the plan as it was written on 2026-11-23, before the work. Five of its statements turned out inexact. The code, the changelog and the note carry the corrected versions.
+
+- Task 4's fact list says DuckDB 2.0 calls `SetChildCardinality` in 114 places in `src/`. 114 was the number of lines that hold the name in `.cpp` files, with the definition and two comments among them. The number of calls is 113: 111 in `.cpp` files and 2 in a header.
+- The changelog text of Task 4 says "GCC and Clang warned at 126 call sites". Only GCC was measured.
+- Task 4's fact list says `Vector::SetValue` "checks the index against the capacity". That holds for fixed-size types. The string buffer has no such check.
+- Finding 5 and the changelog text of Task 4 say that query results were right. What was measured is that the suite passed and no test showed a wrong result.
+- Task 4's fact list says "on every line" where it means "on every DuckDB line".
+
+Three things were added after the whole-branch review:
+
+- The check script fails when it meets a deprecation warning that it cannot parse. In a UTF-8 locale GCC quotes a name with typographic quotes, and the script's pattern looks for the ASCII apostrophe. The script sets `LC_ALL=C` for the compiler. Before the fix nothing marked that line, and a run without it would have printed `OK`.
+- The CI job has a second step. It adds one deprecated call to the runner's checkout and requires the script to report it.
+- `test/sql/vector_verification.test` writes 17-character strings in its `read_stat` round trip, so the string heap of the staging chunk is used.
