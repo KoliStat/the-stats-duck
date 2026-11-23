@@ -140,16 +140,16 @@ static void TTestExecute(ClientContext &context, TableFunctionInput &data, DataC
 	state.finished = true;
 
 	auto &r = data.bind_data->Cast<TTestBindData>().result;
-	output.SetCardinality(1);
-	output.SetValue(0, 0, Value(r.test_type));
-	output.SetValue(1, 0, Value(r.t_statistic));
-	output.SetValue(2, 0, Value(r.df));
-	output.SetValue(3, 0, Value(r.p_value));
-	output.SetValue(4, 0, Value(r.alternative));
-	output.SetValue(5, 0, Value(r.mean_diff));
-	output.SetValue(6, 0, Value(r.ci_lower));
-	output.SetValue(7, 0, Value(r.ci_upper));
-	output.SetValue(8, 0, Value(r.cohens_d));
+	compat::SetCardinality(output, 1);
+	output.data[0].SetValue(0, Value(r.test_type));
+	output.data[1].SetValue(0, Value(r.t_statistic));
+	output.data[2].SetValue(0, Value(r.df));
+	output.data[3].SetValue(0, Value(r.p_value));
+	output.data[4].SetValue(0, Value(r.alternative));
+	output.data[5].SetValue(0, Value(r.mean_diff));
+	output.data[6].SetValue(0, Value(r.ci_lower));
+	output.data[7].SetValue(0, Value(r.ci_upper));
+	output.data[8].SetValue(0, Value(r.cohens_d));
 }
 
 // ─── One-sample t-test ──────────────────────────────────────────────────────

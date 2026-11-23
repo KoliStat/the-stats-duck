@@ -486,12 +486,12 @@ void GgsqlResultFunc(ClientContext &, TableFunctionInput &data_p, DataChunk &out
 	auto &bind = data_p.bind_data->Cast<GgsqlResultBindData>();
 	auto &state = data_p.global_state->Cast<GgsqlResultState>();
 	if (state.emitted) {
-		output.SetCardinality(0);
+		compat::SetCardinality(output, 0);
 		return;
 	}
-	output.SetValue(0, 0, Value(bind.spec));
-	output.SetValue(1, 0, BuildLayerSqlsMap(bind.layer_sqls));
-	output.SetCardinality(1);
+	output.data[0].SetValue(0, Value(bind.spec));
+	output.data[1].SetValue(0, BuildLayerSqlsMap(bind.layer_sqls));
+	compat::SetCardinality(output, 1);
 	state.emitted = true;
 }
 

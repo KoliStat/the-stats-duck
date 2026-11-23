@@ -1,0 +1,96 @@
+# name: test/sql/vector_verification.test
+# description: Table functions fill their output chunk so that DuckDB 2.0's
+#              vector verification accepts it (#79)
+# group: [stats_duck]
+
+require stats_duck
+
+# On DuckDB 2.0 every vector carries its own size, and this debug setting
+# makes the engine compare it with the row count of the chunk. The 1.x lines
+# do not have the setting. There the SET fails with the message below, which
+# "statement maybe" accepts, and the rest of the file runs as plain calls.
+statement maybe
+SET debug_verification_mode = 'VERIFY_VECTORS';
+----
+unrecognized configuration parameter
+
+statement ok
+CREATE TABLE vv AS
+SELECT i::DOUBLE AS x, (2 * i + i % 3)::DOUBLE AS y, CASE WHEN i % 2 = 0 THEN 'a' ELSE 'b' END AS g
+FROM range(20) t(i);
+
+query TTTIII
+SELECT column_name, column_type, kind, n_rows, n_missing, n_distinct FROM meta('vv') ORDER BY column_name
+----
+g	VARCHAR	categorical	20	0	2
+x	DOUBLE	numeric	20	0	20
+y	DOUBLE	numeric	20	0	14
+
+query TTI
+SELECT row_var, col_var, n FROM corr_matrix('vv', variables := ['x', 'y']) ORDER BY row_var, col_var
+----
+x	x	20
+x	y	20
+y	x	20
+y	y	20
+
+query T
+SELECT term FROM lm('vv', y := 'y', x := ['x']) ORDER BY term
+----
+(Intercept)
+x
+
+query III
+SELECT df_model, df_residual, n FROM lm_summary('vv', y := 'y', x := ['x'])
+----
+1	18	20
+
+query TTTTT
+SELECT variable, level, statistic, stratum, display FROM table_one('vv', variables := ['g']) ORDER BY level
+----
+g	Missing	n (%)	Overall	0 (0.0%)
+g	a	n (%)	Overall	10 (50.0%)
+g	b	n (%)	Overall	10 (50.0%)
+
+query TT
+SELECT column_name, type FROM read_stat_metadata('./test/data/sample.sas7bdat') ORDER BY column_name
+----
+dtime	DOUBLE
+mychar	STRING
+mydate	DOUBLE
+mylabl	DOUBLE
+mynum	DOUBLE
+myord	DOUBLE
+mytime	DOUBLE
+
+# VISUALIZE returns its one row through a table function.
+statement ok
+VISUALIZE x AS x, y AS y FROM vv DRAW point
+
+# A result of more than one vector (2,048 rows) takes two calls of the output
+# function, the first with a full chunk.
+statement ok
+CREATE TABLE vv_levels AS SELECT 'L' || lpad(i::VARCHAR, 4, '0') AS c FROM range(3000) t(i);
+
+query II
+SELECT count(*), count(DISTINCT level) FROM table_one('vv_levels', variables := ['c'])
+----
+3001	3001
+
+# read_stat stages the rows of a file in a chunk of its own. A file of more
+# than one vector fills that chunk, appends it to the buffer and starts again.
+statement ok
+COPY (SELECT i AS i, 'r' || i AS s FROM range(5000) t(i)) TO '__TEST_DIR__/vv_big.xpt';
+
+query IIIII
+SELECT count(*), CAST(sum(i) AS BIGINT), CAST(min(i) AS BIGINT), CAST(max(i) AS BIGINT), count(DISTINCT s)
+FROM read_stat('__TEST_DIR__/vv_big.xpt')
+----
+5000	12497500	0	4999	5000
+
+# The setting is process-wide on 2.0, so it is switched off again for the
+# test files that run after this one.
+statement maybe
+RESET debug_verification_mode;
+----
+unrecognized configuration parameter

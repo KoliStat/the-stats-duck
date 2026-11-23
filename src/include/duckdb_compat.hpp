@@ -29,6 +29,9 @@
 //   - FlatVector::Validity gained a ValidityMutable counterpart.
 //   - StructVector::GetEntries hands back vector<Vector> instead of
 //     vector<unique_ptr<Vector>>, so `*children[i]` no longer compiles.
+//   - DataChunk::SetCardinality is deprecated. A table function that wrote
+//     rows by index calls SetChildCardinality, which also sets the size of
+//     each vector (#79). See compat::SetCardinality.
 //
 // FlatVector::SetNull and FlatVector::GetData's read form are unchanged, which
 // is why 56 and 205 call sites respectively are untouched by this port.
@@ -127,6 +130,20 @@ inline duckdb::ValidityMask &WriteValidity(duckdb::Vector &vector) {
 	return duckdb::FlatVector::ValidityMutable(vector);
 #else
 	return duckdb::FlatVector::Validity(vector);
+#endif
+}
+
+//! Sets the row count of an output chunk. The caller has written rows
+//! [0, count) into the vectors of the chunk by index. On 1.x the chunk alone
+//! carries the count. On 2.0 each vector carries a size as well. The
+//! deprecated DataChunk::SetCardinality leaves that size at 0, and
+//! SetChildCardinality sets both. The engine's vector verification fails on
+//! a size mismatch (#79).
+inline void SetCardinality(duckdb::DataChunk &chunk, duckdb::idx_t count) {
+#ifdef STATS_DUCK_DUCKDB_VECTOR_V2
+	chunk.SetChildCardinality(count);
+#else
+	chunk.SetCardinality(count);
 #endif
 }
 
