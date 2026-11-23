@@ -47,6 +47,21 @@ that name is preserved across releases for backward compatibility.
   `:type` suffix and a `SCALE linewidth ...` clause apply as on any other
   channel. Every mark that takes the optional channels takes these two. Before
   this change both names were dropped without an error.
+- **`SCALE ... SETTING reverse => true`, `SCALE ... VIA <transform>` and
+  `SCALE BINNED <channel>`** (#98, Tier 1 item 6 of #58). The three follow
+  upstream ggsql's syntax. `reverse` sets the scale's `reverse` property.
+  `VIA` maps upstream's transform names to Vega-Lite scale types: `log`,
+  `log2` and `ln` to a log scale with base 10, 2 and e, `sqrt` to a
+  square-root scale, `square` to a power scale with exponent 2, `asinh` and
+  the three `pseudo_log` names to `symlog`, and `linear`. `BINNED` sets
+  `"bin": true` on the channel and needs no further option. `VIA` and
+  `BINNED` make the channel quantitative unless its mapping carries a
+  `:type` suffix, because Vega-Lite drops a continuous scale on a nominal
+  channel. `shape`, `linetype`, `text` and `tooltip` take no `VIA`. Vega-Lite
+  bins in the data's own units, so a binned channel, a histogram's `x`
+  included, takes no transform other than `linear`. `SETTING` takes the
+  `name => value` form; `reverse` is its only setting so far. One more
+  statement of `test/sql/ggsql_compat_upstream.test` passes: 12 of 55.
 
 ### Changed
 

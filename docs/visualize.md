@@ -344,6 +344,10 @@ SCALE x LABEL 'Bill length (mm)' ZERO false
 SCALE y ZERO false;
 ```
 
+**`SCALE BINNED <channel>`** sets Vega-Lite's `"bin": true` on the channel. It needs no further option, and it takes the others (`SCALE BINNED color TO viridis`). Like `VIA`, it makes the channel quantitative unless the mapping gives a type. A histogram bins its `x` already, so `SCALE BINNED x` adds nothing there.
+
+Vega-Lite makes bins of equal width in the data's own units. So a binned channel takes no `VIA` other than `linear`, and neither does a histogram's `x`. To bin on a log scale, transform the column in the mapping (`log10(body_mass) AS x`). Upstream's other scale types (`CONTINUOUS`, `DISCRETE`, `ORDINAL`, `IDENTITY`) are not supported yet.
+
 `SCALE` on an unmapped channel is a silent no-op.
 
 ---
@@ -427,7 +431,8 @@ VISUALIZE <expr> AS <aesthetic> [: <type>] (, <expr> AS <aesthetic> ...)
 FROM <table>
 DRAW <mark> [STAT <identity|smooth|summary>] (DRAW <mark> [STAT ...])*
 [FACET BY <expr> [ROWS | COLS] | FACET BY <row_expr>, <col_expr>]
-[SCALE <channel> {TO <scheme> | ZERO true|false | DOMAIN <lo> <hi> | LABEL '<text>' | VIA <transform> | SETTING reverse => true|false}+]*
+[SCALE [BINNED] <channel> {TO <scheme> | ZERO true|false | DOMAIN <lo> <hi> | LABEL '<text>'
+                         | VIA <transform> | SETTING reverse => true|false}*]*
 [TITLE '<text>' [SUBTITLE '<text>']]
 ```
 
@@ -438,4 +443,5 @@ DRAW <mark> [STAT <identity|smooth|summary>] (DRAW <mark> [STAT ...])*
 - **Marks:** `point`, `line`, `path`, `bar`, `histogram`, `text`, `area`, `rule`,
   `segment`, `tick`, `errorbar`, `errorband`, `boxplot`, `violin`, `heatmap`,
   `density`, `regression`. Aliases: `range`, `ribbon`, `tile`, `smooth`.
+- **SCALE:** without `BINNED`, a `SCALE` needs at least one option.
 - **Comments:** `--` and `/* … */` anywhere outside string literals.

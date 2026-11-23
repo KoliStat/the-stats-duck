@@ -33,7 +33,6 @@ const ScaleTransform kScaleTransforms[] = {
     {"pseudo_ln", "symlog", nullptr, nullptr},
 };
 
-
 // Tokenizer: at depth 0, splits on whitespace and emits commas and the `=>`
 // arrow as their own tokens. Inside parens or quotes (single or double) all
 // characters are accumulated into the current token so that `coalesce(a, b)`,
@@ -650,6 +649,7 @@ ParseResult ParseGgsql(const string &query) {
 	// Optional `SCALE <aesthetic> <op> <args...> [<op> <args...>]...` clauses.
 	// Zero or more SCALE clauses; each targets one channel and carries one or
 	// more options that merge into a single scale/axis block. Supported ops:
+	//   BINNED <aesthetic>      (a scale type before the aesthetic) sets "bin": true
 	//   TO <scheme>             — color scheme name
 	//   ZERO <true|false>       — include zero in quantitative scale
 	//   DOMAIN <num1> <num2>    — explicit numeric domain
@@ -664,7 +664,31 @@ ParseResult ParseGgsql(const string &query) {
 			result.error = "Expected aesthetic name after 'SCALE'";
 			return result;
 		}
+		// An optional scale type comes before the aesthetic. Only BINNED is
+		// supported. It needs no further option.
+		bool binned = false;
+		if (IEqual(peek(), "BINNED")) {
+			binned = true;
+			i++;
+			if (at_end()) {
+				result.error = "Expected aesthetic name after 'SCALE BINNED'";
+				return result;
+			}
+		} else if (IEqual(peek(), "CONTINUOUS") || IEqual(peek(), "DISCRETE") || IEqual(peek(), "ORDINAL") ||
+		           IEqual(peek(), "IDENTITY")) {
+			result.error = "SCALE " + peek() + " is not supported (supported scale type: BINNED)";
+			return result;
+		}
 		string aesthetic = CanonicalChannel(tokens[i++]);
+		if (binned) {
+			ScaleSpec bin;
+			bin.aesthetic = aesthetic;
+			bin.sub_object = "";
+			bin.property = "bin";
+			bin.value_json = "true";
+			bin.binned = true;
+			result.stmt.scales.push_back(std::move(bin));
+		}
 		// Consume one or more options for this channel until the next clause
 		// (SCALE / FACET / TITLE / SUBTITLE / end).
 		bool any_op = false;
@@ -810,7 +834,7 @@ ParseResult ParseGgsql(const string &query) {
 			result.stmt.scales.push_back(std::move(scale));
 			any_op = true;
 		}
-		if (!any_op) {
+		if (!any_op && !binned) {
 			result.error = "Expected SCALE operator (TO / ZERO / DOMAIN / LABEL / VIA / SETTING) after aesthetic";
 			return result;
 		}

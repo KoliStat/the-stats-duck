@@ -19,10 +19,11 @@ struct DrawLayer {
 
 struct ScaleSpec {
 	string aesthetic;             // channel to scale (x, y, color, ...)
-	string sub_object = "scale";  // channel sub-object: "scale" (TO/ZERO/DOMAIN) or "axis" (LABEL)
+	string sub_object = "scale";  // channel sub-object: "scale" (TO/ZERO/DOMAIN), "axis" (LABEL), or "" for a property of the channel itself ("bin")
 	string property;              // sub-object property: "scheme", "domain", "zero", "title", ...
 	string value_json;            // value formatted as JSON ('"viridis"', '[0,100]', 'false', '"My label"', ...)
 	string via;                   // VIA transform name (lower case) on entries a VIA produced, else empty
+	bool binned = false;          // true on the entry SCALE BINNED <aesthetic> produces
 };
 
 struct TypeOverride {

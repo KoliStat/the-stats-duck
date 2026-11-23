@@ -1021,7 +1021,8 @@ VISUALIZE <expr> AS <aesthetic> [: <type>] (, <expr> AS <aesthetic> ...)
 FROM <table>
 DRAW <mark> [STAT <identity|smooth|summary>] (DRAW <mark> [STAT ...])*
 [FACET BY <expr> [ROWS | COLS] | FACET BY <row_expr>, <col_expr>]
-[SCALE <channel> {TO <scheme> | ZERO true|false | DOMAIN <lo> <hi> | LABEL '<text>'}+]*
+[SCALE [BINNED] <channel> {TO <scheme> | ZERO true|false | DOMAIN <lo> <hi> | LABEL '<text>'
+                         | VIA <transform> | SETTING reverse => true|false}*]*
 [TITLE '<text>' [SUBTITLE '<text>']]
 ```
 
@@ -1030,7 +1031,8 @@ documents; both spellings produce the same result.
 
 Multiple `SCALE` options may be **stacked** on one channel
 (`SCALE x LABEL 'Bill Depth' ZERO false`) or split across repeated `SCALE x`
-clauses — they merge into one scale/axis block either way. SQL comments
+clauses — they merge into one scale/axis block either way.
+`SETTING reverse => true`, `VIA <transform>` and `SCALE BINNED <channel>` follow upstream ggsql; `docs/visualize.md` lists the transforms and the rules. SQL comments
 (`-- …` to end of line, and `/* … */`) may appear anywhere in a `VISUALIZE`
 statement; they're skipped like whitespace (but never treated as comments
 inside a string literal).

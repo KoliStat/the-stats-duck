@@ -161,3 +161,76 @@ statement error
 VISUALIZE bill_len AS x, bill_dep AS y, species AS shape FROM penguins DRAW point SCALE shape VIA log
 ----
 SCALE shape cannot take VIA: Vega-Lite has no continuous scale for shape
+
+# SCALE BINNED sets Vega-Lite's bin on the channel (#98).
+query TT
+VISUALIZE bill_len AS x, bill_dep AS y, body_mass AS color FROM penguins DRAW point SCALE BINNED color
+----
+{"$schema":"https://vega.github.io/schema/vega-lite/v5.json","data":{"name":"layer_0"},"mark":"point","encoding":{"x":{"field":"x","type":"quantitative"},"y":{"field":"y","type":"quantitative"},"color":{"field":"color","type":"quantitative","bin":true}}}	{layer_0='SELECT bill_len AS x, bill_dep AS y, body_mass AS color FROM penguins'}
+
+query TT
+VISUALIZE bill_len AS x, bill_dep AS y, body_mass AS color FROM penguins DRAW point scale binned color TO viridis
+----
+{"$schema":"https://vega.github.io/schema/vega-lite/v5.json","data":{"name":"layer_0"},"mark":"point","encoding":{"x":{"field":"x","type":"quantitative"},"y":{"field":"y","type":"quantitative"},"color":{"field":"color","type":"quantitative","bin":true,"scale":{"scheme":"viridis"}}}}	{layer_0='SELECT bill_len AS x, bill_dep AS y, body_mass AS color FROM penguins'}
+
+query TT
+VISUALIZE bill_len AS x, bill_dep AS y, body_mass AS color FROM penguins DRAW point SCALE BINNED color VIA linear
+----
+{"$schema":"https://vega.github.io/schema/vega-lite/v5.json","data":{"name":"layer_0"},"mark":"point","encoding":{"x":{"field":"x","type":"quantitative"},"y":{"field":"y","type":"quantitative"},"color":{"field":"color","type":"quantitative","bin":true,"scale":{"type":"linear"}}}}	{layer_0='SELECT bill_len AS x, bill_dep AS y, body_mass AS color FROM penguins'}
+
+query TT
+VISUALIZE bill_len AS x, bill_dep AS y, body_mass AS color FROM penguins DRAW point SCALE BINNED color SCALE BINNED color
+----
+{"$schema":"https://vega.github.io/schema/vega-lite/v5.json","data":{"name":"layer_0"},"mark":"point","encoding":{"x":{"field":"x","type":"quantitative"},"y":{"field":"y","type":"quantitative"},"color":{"field":"color","type":"quantitative","bin":true}}}	{layer_0='SELECT bill_len AS x, bill_dep AS y, body_mass AS color FROM penguins'}
+
+query TT
+VISUALIZE bill_len AS x, bill_dep AS y, body_mass AS color:ordinal FROM penguins DRAW point SCALE BINNED color
+----
+{"$schema":"https://vega.github.io/schema/vega-lite/v5.json","data":{"name":"layer_0"},"mark":"point","encoding":{"x":{"field":"x","type":"quantitative"},"y":{"field":"y","type":"quantitative"},"color":{"field":"color","type":"ordinal","bin":true}}}	{layer_0='SELECT bill_len AS x, bill_dep AS y, body_mass AS color FROM penguins'}
+
+# An unmapped channel leaves the spec unchanged.
+query TT
+VISUALIZE bill_len AS x, bill_dep AS y FROM penguins DRAW point SCALE BINNED color
+----
+{"$schema":"https://vega.github.io/schema/vega-lite/v5.json","data":{"name":"layer_0"},"mark":"point","encoding":{"x":{"field":"x","type":"quantitative"},"y":{"field":"y","type":"quantitative"}}}	{layer_0='SELECT bill_len AS x, bill_dep AS y FROM penguins'}
+
+# A histogram bins its x already, so BINNED adds no second key.
+query TT
+VISUALIZE bill_len AS x FROM penguins DRAW histogram SCALE BINNED x
+----
+{"$schema":"https://vega.github.io/schema/vega-lite/v5.json","data":{"name":"layer_0"},"mark":"bar","encoding":{"x":{"field":"x","type":"quantitative","bin":true},"y":{"aggregate":"count","type":"quantitative"}}}	{layer_0=SELECT bill_len AS x FROM penguins}
+
+statement error
+VISUALIZE bill_len AS x, bill_dep AS y FROM penguins DRAW point SCALE BINNED
+----
+Expected aesthetic name after 'SCALE BINNED'
+
+statement error
+VISUALIZE bill_len AS x, bill_dep AS y FROM penguins DRAW point SCALE DISCRETE color
+----
+SCALE DISCRETE is not supported (supported scale type: BINNED)
+
+statement error
+VISUALIZE bill_len AS x, bill_dep AS y FROM penguins DRAW point SCALE ordinal color
+----
+SCALE ordinal is not supported (supported scale type: BINNED)
+
+statement error
+VISUALIZE bill_len AS x, bill_dep AS y FROM penguins DRAW point SCALE y
+----
+Expected SCALE operator (TO / ZERO / DOMAIN / LABEL / VIA / SETTING) after aesthetic
+
+statement error
+VISUALIZE bill_len AS x, bill_dep AS y, body_mass AS color FROM penguins DRAW point SCALE BINNED color VIA log
+----
+SCALE BINNED color cannot take VIA log: Vega-Lite bins on a linear scale
+
+statement error
+VISUALIZE bill_len AS x, bill_dep AS y, body_mass AS color FROM penguins DRAW point SCALE BINNED color SCALE color VIA sqrt
+----
+SCALE BINNED color cannot take VIA sqrt
+
+statement error
+VISUALIZE bill_len AS x FROM penguins DRAW histogram SCALE x VIA log
+----
+SCALE x VIA log cannot apply to the histogram's x

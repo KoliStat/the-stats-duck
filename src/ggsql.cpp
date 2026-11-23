@@ -156,12 +156,22 @@ string ApplyScales(string layer_body, const vector<ScaleSpec> &scales) {
 	std::map<string, std::map<string, string>> by_channel;
 	std::vector<string> channel_order;
 	std::map<string, std::vector<string>> sub_obj_order; // per-channel sub_object insertion order
+	std::map<string, std::vector<string>> direct_keys;   // per-channel direct property names written so far
 	for (const auto &scale : scales) {
 		auto &props = by_channel[scale.aesthetic][scale.sub_object];
+		string entry = "\"" + scale.property + "\":" + scale.value_json;
+		if (scale.sub_object.empty()) {
+			// A direct property of the channel. It is written once per channel.
+			auto &keys = direct_keys[scale.aesthetic];
+			if (std::find(keys.begin(), keys.end(), scale.property) != keys.end()) {
+				continue;
+			}
+			keys.push_back(scale.property);
+		}
 		if (!props.empty()) {
 			props += ",";
 		}
-		props += "\"" + scale.property + "\":" + scale.value_json;
+		props += entry;
 		auto &ch_subs = sub_obj_order[scale.aesthetic];
 		if (std::find(ch_subs.begin(), ch_subs.end(), scale.sub_object) == ch_subs.end()) {
 			ch_subs.push_back(scale.sub_object);
@@ -186,7 +196,20 @@ string ApplyScales(string layer_body, const vector<ScaleSpec> &scales) {
 		}
 		string injection;
 		for (const auto &sub_obj : sub_obj_order[channel]) {
-			injection += ",\"" + sub_obj + "\":{" + by_channel[channel][sub_obj] + "}";
+			if (!sub_obj.empty()) {
+				injection += ",\"" + sub_obj + "\":{" + by_channel[channel][sub_obj] + "}";
+				continue;
+			}
+			// Direct properties. The channel may have a key already, as a
+			// histogram's x has "bin":true. Then the key stays as it is.
+			string channel_text = layer_body.substr(open_brace, close_brace - open_brace);
+			for (const auto &scale : scales) {
+				if (scale.aesthetic == channel && scale.sub_object.empty() &&
+				    channel_text.find("\"" + scale.property + "\":") == string::npos &&
+				    injection.find(",\"" + scale.property + "\":") == string::npos) {
+					injection += ",\"" + scale.property + "\":" + scale.value_json;
+				}
+			}
 		}
 		layer_body.insert(close_brace, injection);
 	}
@@ -248,13 +271,13 @@ string ApplyTypeOverrides(string layer_body, const vector<TypeOverride> &overrid
 }
 
 // The user's `:type` overrides, plus `quantitative` for each channel that has a
-// SCALE ... VIA and no override. Vega-Lite drops an explicit scale type that
+// SCALE ... VIA or SCALE BINNED and no override. Vega-Lite drops an explicit scale type that
 // does not fit the field's type, and color, fill and stroke are nominal in our
 // channel table. A `:type` suffix therefore takes precedence over VIA.
 vector<TypeOverride> EffectiveTypeOverrides(const VisualizeStatement &stmt) {
 	vector<TypeOverride> result = stmt.type_overrides;
 	for (const auto &scale : stmt.scales) {
-		if (scale.via.empty()) {
+		if (scale.via.empty() && !scale.binned) {
 			continue;
 		}
 		bool seen = false;
@@ -271,10 +294,39 @@ vector<TypeOverride> EffectiveTypeOverrides(const VisualizeStatement &stmt) {
 	return result;
 }
 
+// Vega-Lite bins in the data's own units, so a binned channel and a
+// histogram's x take no transform other than linear.
+void CheckBinnedTransforms(const VisualizeStatement &stmt) {
+	for (const auto &binned : stmt.scales) {
+		if (!binned.binned) {
+			continue;
+		}
+		for (const auto &scale : stmt.scales) {
+			if (scale.aesthetic == binned.aesthetic && !scale.via.empty() && scale.via != "linear") {
+				throw InvalidInputException("visualize: SCALE BINNED " + binned.aesthetic + " cannot take VIA " +
+				                            scale.via + ": Vega-Lite bins on a linear scale");
+			}
+		}
+	}
+	for (const auto &layer : stmt.layers) {
+		if (!StringUtil::CIEquals(layer.mark, "histogram")) {
+			continue;
+		}
+		for (const auto &scale : stmt.scales) {
+			if (scale.aesthetic == "x" && !scale.via.empty() && scale.via != "linear") {
+				throw InvalidInputException("visualize: SCALE x VIA " + scale.via +
+				                            " cannot apply to the histogram's x, which Vega-Lite bins on a linear "
+				                            "scale; transform the column in the mapping instead");
+			}
+		}
+	}
+}
+
 CompiledResult Compile(ClientContext &context, const VisualizeStatement &stmt) {
 	if (stmt.layers.empty()) {
 		throw InvalidInputException("visualize: at least one DRAW clause is required");
 	}
+	CheckBinnedTransforms(stmt);
 	string projected_sql = BuildProjectedSql(stmt);
 	bool faceted = HasFacet(stmt);
 	bool faceted_2d = Has2DFacet(stmt);
@@ -526,7 +578,7 @@ static bool IsClauseKeyword(const string &text) {
 	    "LIKE",      "ILIKE",    "IS",     "WITH",   "HAVING", "LIMIT",     "OFFSET", "UNION",    "EXCEPT",
 	    "INTERSECT", "ALL",      "DISTINCT", "CASE", "END",    "USING",     "ANY",   "SOME",      "INTO",
 	    "GROUP",     "ORDER",    "RETURNING", "SET", "DRAW",   "FACET",     "SCALE", "TITLE", "MATERIALIZED",
-	    "SUBTITLE",  "DOMAIN",   "LABEL",  "TO",     "ROWS",   "COLUMNS",   "ZERO",  "RETURN",    "SETTING",  "VIA"};
+	    "SUBTITLE",  "DOMAIN",   "LABEL",  "TO",     "ROWS",   "COLUMNS",   "ZERO",  "RETURN",    "SETTING",  "VIA",    "BINNED"};
 	auto upper = StringUtil::Upper(text);
 	for (auto word : kWords) {
 		if (upper == word) {
