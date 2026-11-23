@@ -131,7 +131,8 @@ LABEL
 Unknown SCALE operator 'RENAMING'
 
 # get_started/anatomy.qmd: waits for per-layer MAPPING and SETTING (not
-# scheduled) and SCALE BINNED with SETTING breaks (1a, partly)
+# scheduled), SETTING breaks (not scheduled) and TO with a list (4, 15)
+# (not scheduled)
 statement error
 VISUALISE bill_len AS x, bill_dep AS y, species AS stroke FROM penguins
 DRAW point

@@ -1031,11 +1031,12 @@ documents; both spellings produce the same result.
 
 Multiple `SCALE` options may be **stacked** on one channel
 (`SCALE x LABEL 'Bill Depth' ZERO false`) or split across repeated `SCALE x`
-clauses — they merge into one scale/axis block either way.
-`SETTING reverse => true`, `VIA <transform>` and `SCALE BINNED <channel>` follow upstream ggsql; `docs/visualize.md` lists the transforms and the rules. SQL comments
+clauses — they merge into one scale/axis block either way. SQL comments
 (`-- …` to end of line, and `/* … */`) may appear anywhere in a `VISUALIZE`
 statement; they're skipped like whitespace (but never treated as comments
-inside a string literal).
+inside a string literal). `SETTING reverse => true`, `VIA <transform>` and
+`SCALE BINNED <channel>` follow upstream ggsql. `docs/visualize.md` lists
+the transforms and the rules.
 
 A leading `WITH` clause is supported; CTEs are scoped to each layer's
 projected SQL so they compose with wrapping marks (`line`, `bar`, `area`,

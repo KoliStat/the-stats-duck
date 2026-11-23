@@ -1,4 +1,5 @@
 #include "ggsql_grammar.hpp"
+#include "ggsql_marks_internal.hpp"
 
 #include "duckdb/common/string_util.hpp"
 
@@ -649,7 +650,7 @@ ParseResult ParseGgsql(const string &query) {
 	// Optional `SCALE <aesthetic> <op> <args...> [<op> <args...>]...` clauses.
 	// Zero or more SCALE clauses; each targets one channel and carries one or
 	// more options that merge into a single scale/axis block. Supported ops:
-	//   BINNED <aesthetic>      (a scale type before the aesthetic) sets "bin": true
+	//   BINNED <aesthetic>      — scale type before the aesthetic; sets "bin": true
 	//   TO <scheme>             — color scheme name
 	//   ZERO <true|false>       — include zero in quantitative scale
 	//   DOMAIN <num1> <num2>    — explicit numeric domain
@@ -680,6 +681,8 @@ ParseResult ParseGgsql(const string &query) {
 			return result;
 		}
 		string aesthetic = CanonicalChannel(tokens[i++]);
+		// One spelling for every rule below: the channel table's own name.
+		aesthetic = ggsql::CanonicalAestheticName(aesthetic);
 		if (binned) {
 			ScaleSpec bin;
 			bin.aesthetic = aesthetic;
@@ -747,6 +750,12 @@ ParseResult ParseGgsql(const string &query) {
 					return result;
 				}
 				string name = tokens[i++];
+				if (aesthetic == "shape" || aesthetic == "linetype" || aesthetic == "text" ||
+				    aesthetic == "tooltip") {
+					result.error = "SCALE " + aesthetic + " cannot take VIA: Vega-Lite has no continuous scale for " +
+					               aesthetic;
+					return result;
+				}
 				const ScaleTransform *transform = nullptr;
 				for (const auto &t : kScaleTransforms) {
 					if (IEqual(name, t.name)) {
@@ -760,13 +769,7 @@ ParseResult ParseGgsql(const string &query) {
 					               "pseudo_log2, pseudo_ln)";
 					return result;
 				}
-				if (aesthetic == "shape" || aesthetic == "linetype" || aesthetic == "text" ||
-				    aesthetic == "tooltip") {
-					result.error = "SCALE " + aesthetic + " cannot take VIA: Vega-Lite has no continuous scale for " +
-					               aesthetic;
-					return result;
-				}
-				string via = StringUtil::Lower(transform->name);
+				string via = transform->name;
 				ScaleSpec type_spec;
 				type_spec.aesthetic = aesthetic;
 				type_spec.property = "type";

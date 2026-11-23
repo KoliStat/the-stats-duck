@@ -364,6 +364,15 @@ string VegaChannelName(const string &aesthetic) {
 	return aesthetic;
 }
 
+string CanonicalAestheticName(const string &aesthetic) {
+	for (const auto &ch : kStandardChannels) {
+		if (StringUtil::CIEquals(aesthetic, ch.name)) {
+			return ch.name;
+		}
+	}
+	return aesthetic;
+}
+
 void RegisterMark(ExtensionLoader &loader, const string &name,
                   vector<string> required_aesthetics, mark_render_t render) {
 	ScalarFunction func(compat::Ident(CatalogName(name)), {}, LogicalType::VARCHAR, MarkIntrospectionStub);

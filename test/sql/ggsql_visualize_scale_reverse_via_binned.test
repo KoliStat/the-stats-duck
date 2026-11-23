@@ -234,3 +234,57 @@ statement error
 VISUALIZE bill_len AS x FROM penguins DRAW histogram SCALE x VIA log
 ----
 SCALE x VIA log cannot apply to the histogram's x
+
+# Channel names in any case
+
+statement error
+VISUALIZE bill_len AS x FROM penguins DRAW histogram SCALE X VIA log
+----
+SCALE x VIA log cannot apply to the histogram's x
+
+query TT
+VISUALIZE bill_len AS x, bill_dep AS y, body_mass AS color FROM penguins DRAW point SCALE COLOR VIA log
+----
+{"$schema":"https://vega.github.io/schema/vega-lite/v5.json","data":{"name":"layer_0"},"mark":"point","encoding":{"x":{"field":"x","type":"quantitative"},"y":{"field":"y","type":"quantitative"},"color":{"field":"color","type":"quantitative","scale":{"type":"log"}}}}	{layer_0='SELECT bill_len AS x, bill_dep AS y, body_mass AS color FROM penguins'}
+
+query TT
+VISUALIZE bill_len AS x, bill_dep AS y, body_mass AS color FROM penguins DRAW point SCALE BINNED COLOR
+----
+{"$schema":"https://vega.github.io/schema/vega-lite/v5.json","data":{"name":"layer_0"},"mark":"point","encoding":{"x":{"field":"x","type":"quantitative"},"y":{"field":"y","type":"quantitative"},"color":{"field":"color","type":"quantitative","bin":true}}}	{layer_0='SELECT bill_len AS x, bill_dep AS y, body_mass AS color FROM penguins'}
+
+statement error
+VISUALIZE bill_len AS x, bill_dep AS y, species AS shape FROM penguins DRAW point SCALE SHAPE VIA log
+----
+SCALE shape cannot take VIA: Vega-Lite has no continuous scale for shape
+
+query TT
+VISUALIZE bill_len AS x, bill_dep AS y, species AS color FROM penguins DRAW point SCALE COLOR TO viridis SCALE color ZERO false
+----
+{"$schema":"https://vega.github.io/schema/vega-lite/v5.json","data":{"name":"layer_0"},"mark":"point","encoding":{"x":{"field":"x","type":"quantitative"},"y":{"field":"y","type":"quantitative"},"color":{"field":"color","type":"nominal","scale":{"scheme":"viridis","zero":false}}}}	{layer_0='SELECT bill_len AS x, bill_dep AS y, species AS color FROM penguins'}
+
+# More cases from the final review
+
+query TT
+VISUALIZE bill_len AS x, bill_dep AS y FROM penguins DRAW point SCALE y SETTING reverse => true ZERO false
+----
+{"$schema":"https://vega.github.io/schema/vega-lite/v5.json","data":{"name":"layer_0"},"mark":"point","encoding":{"x":{"field":"x","type":"quantitative"},"y":{"field":"y","type":"quantitative","scale":{"reverse":true,"zero":false}}}}	{layer_0='SELECT bill_len AS x, bill_dep AS y FROM penguins'}
+
+statement error
+VISUALIZE bill_len AS x, bill_dep AS y, species AS linetype FROM penguins DRAW line SCALE linetype VIA log
+----
+SCALE linetype cannot take VIA: Vega-Lite has no continuous scale for linetype
+
+statement error
+VISUALIZE bill_len AS x, bill_dep AS y, species AS shape FROM penguins DRAW point SCALE shape VIA exp
+----
+SCALE shape cannot take VIA: Vega-Lite has no continuous scale for shape
+
+query TT
+VISUALIZE bill_len AS x FROM penguins DRAW histogram SCALE x VIA linear
+----
+{"$schema":"https://vega.github.io/schema/vega-lite/v5.json","data":{"name":"layer_0"},"mark":"bar","encoding":{"x":{"field":"x","type":"quantitative","bin":true,"scale":{"type":"linear"}},"y":{"aggregate":"count","type":"quantitative"}}}	{layer_0=SELECT bill_len AS x FROM penguins}
+
+query TT
+VISUALIZE bill_len AS x, bill_dep AS y, body_mass AS fill FROM penguins DRAW point SCALE fill VIA log
+----
+{"$schema":"https://vega.github.io/schema/vega-lite/v5.json","data":{"name":"layer_0"},"mark":"point","encoding":{"x":{"field":"x","type":"quantitative"},"y":{"field":"y","type":"quantitative"},"fill":{"field":"fill","type":"quantitative","scale":{"type":"log"}}}}	{layer_0='SELECT bill_len AS x, bill_dep AS y, body_mass AS fill FROM penguins'}

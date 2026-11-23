@@ -151,14 +151,17 @@ bool Has2DFacet(const VisualizeStatement &stmt) {
 // after the channel's opening '{' is its closing brace. Multiple ScaleSpec
 // entries on the same (channel, sub_object) merge into one block; multiple
 // sub_objects on the same channel each produce their own block.
+// An entry with sub_object == "" is a property of the channel object itself,
+// such as "bin":true. It is written at most once per channel. It is skipped
+// when the channel object already has that key.
 string ApplyScales(string layer_body, const vector<ScaleSpec> &scales) {
 	// channel → sub_object → "k1":v1,"k2":v2  (within-block insertion order preserved)
 	std::map<string, std::map<string, string>> by_channel;
 	std::vector<string> channel_order;
 	std::map<string, std::vector<string>> sub_obj_order; // per-channel sub_object insertion order
 	std::map<string, std::vector<string>> direct_keys;   // per-channel direct property names written so far
+	std::map<string, std::vector<string>> direct_entries; // the same properties as "key":value text
 	for (const auto &scale : scales) {
-		auto &props = by_channel[scale.aesthetic][scale.sub_object];
 		string entry = "\"" + scale.property + "\":" + scale.value_json;
 		if (scale.sub_object.empty()) {
 			// A direct property of the channel. It is written once per channel.
@@ -167,11 +170,14 @@ string ApplyScales(string layer_body, const vector<ScaleSpec> &scales) {
 				continue;
 			}
 			keys.push_back(scale.property);
+			direct_entries[scale.aesthetic].push_back(entry);
+		} else {
+			auto &props = by_channel[scale.aesthetic][scale.sub_object];
+			if (!props.empty()) {
+				props += ",";
+			}
+			props += entry;
 		}
-		if (!props.empty()) {
-			props += ",";
-		}
-		props += entry;
 		auto &ch_subs = sub_obj_order[scale.aesthetic];
 		if (std::find(ch_subs.begin(), ch_subs.end(), scale.sub_object) == ch_subs.end()) {
 			ch_subs.push_back(scale.sub_object);
@@ -203,11 +209,10 @@ string ApplyScales(string layer_body, const vector<ScaleSpec> &scales) {
 			// Direct properties. The channel may have a key already, as a
 			// histogram's x has "bin":true. Then the key stays as it is.
 			string channel_text = layer_body.substr(open_brace, close_brace - open_brace);
-			for (const auto &scale : scales) {
-				if (scale.aesthetic == channel && scale.sub_object.empty() &&
-				    channel_text.find("\"" + scale.property + "\":") == string::npos &&
-				    injection.find(",\"" + scale.property + "\":") == string::npos) {
-					injection += ",\"" + scale.property + "\":" + scale.value_json;
+			for (const auto &entry : direct_entries[channel]) {
+				string key = entry.substr(0, entry.find(':') + 1);
+				if (channel_text.find(key) == string::npos) {
+					injection += "," + entry;
 				}
 			}
 		}
@@ -270,10 +275,11 @@ string ApplyTypeOverrides(string layer_body, const vector<TypeOverride> &overrid
 	return layer_body;
 }
 
-// The user's `:type` overrides, plus `quantitative` for each channel that has a
-// SCALE ... VIA or SCALE BINNED and no override. Vega-Lite drops an explicit scale type that
-// does not fit the field's type, and color, fill and stroke are nominal in our
-// channel table. A `:type` suffix therefore takes precedence over VIA.
+// The user's `:type` overrides, plus `quantitative` for each channel that has
+// a SCALE ... VIA or SCALE BINNED and no override. Vega-Lite drops an explicit
+// scale type that does not fit the field's type, and color, fill and stroke
+// are nominal in our channel table. A `:type` suffix therefore takes
+// precedence over VIA.
 vector<TypeOverride> EffectiveTypeOverrides(const VisualizeStatement &stmt) {
 	vector<TypeOverride> result = stmt.type_overrides;
 	for (const auto &scale : stmt.scales) {
@@ -327,6 +333,7 @@ CompiledResult Compile(ClientContext &context, const VisualizeStatement &stmt) {
 		throw InvalidInputException("visualize: at least one DRAW clause is required");
 	}
 	CheckBinnedTransforms(stmt);
+	const vector<TypeOverride> type_overrides = EffectiveTypeOverrides(stmt);
 	string projected_sql = BuildProjectedSql(stmt);
 	bool faceted = HasFacet(stmt);
 	bool faceted_2d = Has2DFacet(stmt);
@@ -356,7 +363,7 @@ CompiledResult Compile(ClientContext &context, const VisualizeStatement &stmt) {
 		// `spec` sibling of `facet`.
 		const string layer_name = "layer_0";
 		MarkResult rendered = RenderLayer(context, stmt, stmt.layers[0], projected_sql);
-		rendered.layer_body = ApplyTypeOverrides(std::move(rendered.layer_body), EffectiveTypeOverrides(stmt));
+		rendered.layer_body = ApplyTypeOverrides(std::move(rendered.layer_body), type_overrides);
 		rendered.layer_body = ApplyScales(std::move(rendered.layer_body), stmt.scales);
 
 		string spec =
@@ -388,7 +395,7 @@ CompiledResult Compile(ClientContext &context, const VisualizeStatement &stmt) {
 		}
 		string layer_name = "layer_" + std::to_string(i);
 		MarkResult rendered = RenderLayer(context, stmt, stmt.layers[i], projected_sql);
-		rendered.layer_body = ApplyTypeOverrides(std::move(rendered.layer_body), EffectiveTypeOverrides(stmt));
+		rendered.layer_body = ApplyTypeOverrides(std::move(rendered.layer_body), type_overrides);
 		rendered.layer_body = ApplyScales(std::move(rendered.layer_body), stmt.scales);
 		layer_array += R"({"data":{"name":")";
 		layer_array += layer_name;
@@ -578,7 +585,8 @@ static bool IsClauseKeyword(const string &text) {
 	    "LIKE",      "ILIKE",    "IS",     "WITH",   "HAVING", "LIMIT",     "OFFSET", "UNION",    "EXCEPT",
 	    "INTERSECT", "ALL",      "DISTINCT", "CASE", "END",    "USING",     "ANY",   "SOME",      "INTO",
 	    "GROUP",     "ORDER",    "RETURNING", "SET", "DRAW",   "FACET",     "SCALE", "TITLE", "MATERIALIZED",
-	    "SUBTITLE",  "DOMAIN",   "LABEL",  "TO",     "ROWS",   "COLUMNS",   "ZERO",  "RETURN",    "SETTING",  "VIA",    "BINNED"};
+	    "SUBTITLE",  "DOMAIN",   "LABEL",  "TO",     "ROWS",   "COLUMNS",   "ZERO",  "RETURN",    "SETTING",  "VIA",
+	    "BINNED"};
 	auto upper = StringUtil::Upper(text);
 	for (auto word : kWords) {
 		if (upper == word) {

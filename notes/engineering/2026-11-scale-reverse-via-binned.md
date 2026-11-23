@@ -30,11 +30,13 @@ user wrote it.
 
 ## 3. Vega-Lite bins in data units, upstream bins in transformed units
 
-Upstream ggsql applies the transform first and bins the result, so
-`SCALE x VIA log` gives bins of equal width on the log scale. Vega-Lite's
-bin transform runs on the raw values and gives bins of equal width in data
-units. The `log` scale then only changes how those bins are drawn. The
-result differs from upstream's, and it is easy to misread. So a binned
+Upstream's docs describe `VIA` as a transform applied before the data is
+mapped (`doc/syntax/scale/type/continuous.qmd`). They do not say whether
+binning comes before or after the transform. The rule here rests on
+Vega-Lite alone. Its bin transform runs on the raw values and gives bins of
+equal width in data units. The `log` scale then only changes how those bins
+are drawn, so on a log axis the bars have unequal widths. A reader can
+easily take them for bins of equal width on the log scale. So a binned
 channel takes no `VIA` other than `linear`, and neither does a histogram's
 `x`. Both cases fail with a message that says why. To bin on a log scale,
 transform the column in the mapping, for example `log10(body_mass) AS x`.
@@ -45,3 +47,14 @@ Vega's `symlog` is `sign(x) * log1p(|x| / C)` with `C = 1`. `asinh` and
 upstream's three pseudo-log transforms share its two regimes: linear near
 zero and logarithmic far from it. The curve between the two regimes differs.
 The four names all map to `symlog`, and `docs/visualize.md` says so.
+
+## 5. `VIA` changes the scale, not the computed values
+
+Vega-Lite computes the density, the violin's density, the regression and
+the loess on the raw values. The summary stat averages raw values in the
+layer SQL. `VIA` changes only the scale that draws the result. ggplot2
+transforms before it computes. `docs/visualize.md` and the CHANGELOG say so.
+To get the ggplot2 result, transform the column in the mapping.
+
+Open question: should the density's `x` and the violin's `y` reject a
+non-linear `VIA`, as the histogram's `x` does? Nothing rejects it today.
