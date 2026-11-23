@@ -312,6 +312,34 @@ VISUALIZE bill_len AS x, bill_dep AS y FROM penguins DRAW point FACET BY species
 | `ZERO true\|false` | include / exclude zero on a quantitative scale |
 | `DOMAIN <lo> <hi>` | fixed numeric domain |
 | `LABEL '<text>'` | axis title |
+| `VIA <transform>` | transform the scale (table below) |
+| `SETTING reverse => true\|false` | reverse the direction of the scale |
+
+`SETTING` takes upstream ggsql's `name => value` form. Separate several
+settings with commas. `reverse` is the only setting so far, and any other name
+is an error. You may write `=>` with or without spaces around it.
+
+| `VIA` | Vega-Lite scale |
+|-------|-----------------|
+| `linear` | `linear` |
+| `log`, `log2`, `ln` | `log` with base 10, 2 and e |
+| `sqrt` | `sqrt` |
+| `square` | `pow` with exponent 2 |
+| `asinh`, `pseudo_log`, `pseudo_log2`, `pseudo_ln` | `symlog` |
+
+- The curve of `symlog` is close to upstream's but not the same.
+- Upstream's `exp`, `exp2`, `exp10`, `integer`, `date`, `datetime` and `time` are not supported yet.
+- `VIA` makes the channel quantitative, because Vega-Lite applies a
+  continuous scale only to a quantitative channel. A `:type` suffix on the
+  mapping takes precedence.
+- `shape`, `linetype`, `text` and `tooltip` take no `VIA`.
+
+`VIA` changes only the Vega-Lite scale that draws the values. Marks that
+compute something from the data compute it on the untransformed values:
+density, violin, regression, the smooth and summary stats, bar sums and
+boxplot whiskers. ggplot2 computes these on the transformed values. To get
+that result here, transform the column in the mapping (`log10(body_mass) AS
+x`).
 
 **Stack multiple options** on one `SCALE`, or repeat `SCALE <channel>` — they
 merge into one scale/axis block either way:
@@ -324,6 +352,18 @@ SCALE color TO viridis
 SCALE x LABEL 'Bill length (mm)' ZERO false
 SCALE y ZERO false;
 ```
+
+**`SCALE BINNED <channel>`** sets Vega-Lite's `"bin": true` on the channel.
+It needs no further option, and it takes the others
+(`SCALE BINNED color TO viridis`). Like `VIA`, it makes the channel
+quantitative unless the mapping gives a type. A histogram bins its `x`
+already, so `SCALE BINNED x` adds nothing there.
+
+Vega-Lite makes bins of equal width in the data's own units. So a binned
+channel takes no `VIA` other than `linear`, and neither does a histogram's
+`x`. To bin on a log scale, transform the column in the mapping
+(`log10(body_mass) AS x`). Upstream's other scale types (`CONTINUOUS`,
+`DISCRETE`, `ORDINAL`, `IDENTITY`) are not supported yet.
 
 `SCALE` on an unmapped channel is a silent no-op.
 
@@ -408,7 +448,8 @@ VISUALIZE <expr> AS <aesthetic> [: <type>] (, <expr> AS <aesthetic> ...)
 FROM <table>
 DRAW <mark> [STAT <identity|smooth|summary>] (DRAW <mark> [STAT ...])*
 [FACET BY <expr> [ROWS | COLS] | FACET BY <row_expr>, <col_expr>]
-[SCALE <channel> {TO <scheme> | ZERO true|false | DOMAIN <lo> <hi> | LABEL '<text>'}+]*
+[SCALE [BINNED] <channel> {TO <scheme> | ZERO true|false | DOMAIN <lo> <hi> | LABEL '<text>'
+                         | VIA <transform> | SETTING reverse => true|false}*]*
 [TITLE '<text>' [SUBTITLE '<text>']]
 ```
 
@@ -419,4 +460,5 @@ DRAW <mark> [STAT <identity|smooth|summary>] (DRAW <mark> [STAT ...])*
 - **Marks:** `point`, `line`, `path`, `bar`, `histogram`, `text`, `area`, `rule`,
   `segment`, `tick`, `errorbar`, `errorband`, `boxplot`, `violin`, `heatmap`,
   `density`, `regression`. Aliases: `range`, `ribbon`, `tile`, `smooth`.
+- **SCALE:** without `BINNED`, a `SCALE` needs at least one option.
 - **Comments:** `--` and `/* … */` anywhere outside string literals.

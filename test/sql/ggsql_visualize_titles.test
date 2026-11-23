@@ -116,4 +116,4 @@ Expected axis label after 'SCALE <aesthetic> LABEL'
 statement error
 VISUALIZE bill_len AS x, bill_dep AS y FROM penguins DRAW point SCALE x BOGUS foo
 ----
-Unknown SCALE operator 'BOGUS' (expected TO / ZERO / DOMAIN / LABEL)
+Unknown SCALE operator 'BOGUS' (expected TO / ZERO / DOMAIN / LABEL / VIA / SETTING)

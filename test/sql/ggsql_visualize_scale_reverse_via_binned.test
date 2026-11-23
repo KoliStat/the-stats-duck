@@ -1,0 +1,290 @@
+# name: test/sql/ggsql_visualize_scale_reverse_via_binned.test
+# description: SCALE ... SETTING reverse, SCALE ... VIA <transform> and SCALE BINNED, from upstream ggsql (#98, #58 item 6)
+# group: [stats_duck]
+
+require stats_duck
+
+statement ok
+CREATE TABLE penguins AS SELECT * FROM (VALUES (39.1, 18.7, 3750, 'Adelie'), (39.5, 17.4, 3800, 'Adelie'), (44.0, 18.0, 5000, 'Gentoo')) AS t(bill_len, bill_dep, body_mass, species);
+
+# ---------------------------------------------------------------------------
+# SETTING reverse
+# ---------------------------------------------------------------------------
+
+query TT
+VISUALIZE bill_len AS x, bill_dep AS y FROM penguins DRAW point SCALE y SETTING reverse => true
+----
+{"$schema":"https://vega.github.io/schema/vega-lite/v5.json","data":{"name":"layer_0"},"mark":"point","encoding":{"x":{"field":"x","type":"quantitative"},"y":{"field":"y","type":"quantitative","scale":{"reverse":true}}}}	{layer_0='SELECT bill_len AS x, bill_dep AS y FROM penguins'}
+
+# The arrow written without spaces gives the same spec on both DuckDB lines.
+query TT
+VISUALIZE bill_len AS x, bill_dep AS y FROM penguins DRAW point SCALE y SETTING reverse=>true
+----
+{"$schema":"https://vega.github.io/schema/vega-lite/v5.json","data":{"name":"layer_0"},"mark":"point","encoding":{"x":{"field":"x","type":"quantitative"},"y":{"field":"y","type":"quantitative","scale":{"reverse":true}}}}	{layer_0='SELECT bill_len AS x, bill_dep AS y FROM penguins'}
+
+# Setting names and values are case-insensitive.
+query TT
+VISUALIZE bill_len AS x, bill_dep AS y FROM penguins DRAW point SCALE y SETTING REVERSE => FALSE
+----
+{"$schema":"https://vega.github.io/schema/vega-lite/v5.json","data":{"name":"layer_0"},"mark":"point","encoding":{"x":{"field":"x","type":"quantitative"},"y":{"field":"y","type":"quantitative","scale":{"reverse":false}}}}	{layer_0='SELECT bill_len AS x, bill_dep AS y FROM penguins'}
+
+# SETTING merges with the other options of the same channel, in order.
+query TT
+VISUALIZE bill_len AS x, bill_dep AS y, species AS color FROM penguins DRAW point SCALE color TO viridis SETTING reverse => true
+----
+{"$schema":"https://vega.github.io/schema/vega-lite/v5.json","data":{"name":"layer_0"},"mark":"point","encoding":{"x":{"field":"x","type":"quantitative"},"y":{"field":"y","type":"quantitative"},"color":{"field":"color","type":"nominal","scale":{"scheme":"viridis","reverse":true}}}}	{layer_0='SELECT bill_len AS x, bill_dep AS y, species AS color FROM penguins'}
+
+statement error
+VISUALIZE bill_len AS x, bill_dep AS y FROM penguins DRAW point SCALE y SETTING breaks => 5
+----
+Unsupported SCALE setting 'breaks' (supported: reverse)
+
+statement error
+VISUALIZE bill_len AS x, bill_dep AS y FROM penguins DRAW point SCALE y SETTING reverse => true, breaks => 5
+----
+Unsupported SCALE setting 'breaks' (supported: reverse)
+
+statement error
+VISUALIZE bill_len AS x, bill_dep AS y FROM penguins DRAW point SCALE y SETTING reverse => maybe
+----
+Expected true or false after 'SETTING reverse =>', got 'maybe'
+
+statement error
+VISUALIZE bill_len AS x, bill_dep AS y FROM penguins DRAW point SCALE y SETTING reverse true
+----
+Expected '=>' after 'SETTING reverse'
+
+statement error
+VISUALIZE bill_len AS x, bill_dep AS y FROM penguins DRAW point SCALE y SETTING reverse =>
+----
+Expected a value after 'SETTING reverse =>'
+
+statement error
+VISUALIZE bill_len AS x, bill_dep AS y FROM penguins DRAW point SCALE y SETTING
+----
+Expected a setting name after 'SETTING'
+
+statement error
+VISUALIZE bill_len AS x, bill_dep AS y FROM penguins DRAW point SCALE y SETTING reverse => true,
+----
+Expected a setting name after ','
+
+# ---------------------------------------------------------------------------
+# VIA <transform>
+# ---------------------------------------------------------------------------
+
+query TT
+VISUALIZE bill_len AS x, bill_dep AS y FROM penguins DRAW point SCALE y VIA log
+----
+{"$schema":"https://vega.github.io/schema/vega-lite/v5.json","data":{"name":"layer_0"},"mark":"point","encoding":{"x":{"field":"x","type":"quantitative"},"y":{"field":"y","type":"quantitative","scale":{"type":"log"}}}}	{layer_0='SELECT bill_len AS x, bill_dep AS y FROM penguins'}
+
+query TT
+VISUALIZE bill_len AS x, bill_dep AS y FROM penguins DRAW point SCALE y VIA log2
+----
+{"$schema":"https://vega.github.io/schema/vega-lite/v5.json","data":{"name":"layer_0"},"mark":"point","encoding":{"x":{"field":"x","type":"quantitative"},"y":{"field":"y","type":"quantitative","scale":{"type":"log","base":2}}}}	{layer_0='SELECT bill_len AS x, bill_dep AS y FROM penguins'}
+
+query TT
+VISUALIZE bill_len AS x, bill_dep AS y FROM penguins DRAW point SCALE y VIA ln
+----
+{"$schema":"https://vega.github.io/schema/vega-lite/v5.json","data":{"name":"layer_0"},"mark":"point","encoding":{"x":{"field":"x","type":"quantitative"},"y":{"field":"y","type":"quantitative","scale":{"type":"log","base":2.718281828459045}}}}	{layer_0='SELECT bill_len AS x, bill_dep AS y FROM penguins'}
+
+query TT
+VISUALIZE bill_len AS x, bill_dep AS y FROM penguins DRAW point SCALE y VIA sqrt
+----
+{"$schema":"https://vega.github.io/schema/vega-lite/v5.json","data":{"name":"layer_0"},"mark":"point","encoding":{"x":{"field":"x","type":"quantitative"},"y":{"field":"y","type":"quantitative","scale":{"type":"sqrt"}}}}	{layer_0='SELECT bill_len AS x, bill_dep AS y FROM penguins'}
+
+query TT
+VISUALIZE bill_len AS x, bill_dep AS y FROM penguins DRAW point SCALE y VIA square
+----
+{"$schema":"https://vega.github.io/schema/vega-lite/v5.json","data":{"name":"layer_0"},"mark":"point","encoding":{"x":{"field":"x","type":"quantitative"},"y":{"field":"y","type":"quantitative","scale":{"type":"pow","exponent":2}}}}	{layer_0='SELECT bill_len AS x, bill_dep AS y FROM penguins'}
+
+query TT
+VISUALIZE bill_len AS x, bill_dep AS y FROM penguins DRAW point SCALE y VIA asinh
+----
+{"$schema":"https://vega.github.io/schema/vega-lite/v5.json","data":{"name":"layer_0"},"mark":"point","encoding":{"x":{"field":"x","type":"quantitative"},"y":{"field":"y","type":"quantitative","scale":{"type":"symlog"}}}}	{layer_0='SELECT bill_len AS x, bill_dep AS y FROM penguins'}
+
+query TT
+VISUALIZE bill_len AS x, bill_dep AS y FROM penguins DRAW point SCALE y VIA pseudo_ln
+----
+{"$schema":"https://vega.github.io/schema/vega-lite/v5.json","data":{"name":"layer_0"},"mark":"point","encoding":{"x":{"field":"x","type":"quantitative"},"y":{"field":"y","type":"quantitative","scale":{"type":"symlog"}}}}	{layer_0='SELECT bill_len AS x, bill_dep AS y FROM penguins'}
+
+query TT
+VISUALIZE bill_len AS x, bill_dep AS y FROM penguins DRAW point SCALE y via LINEAR
+----
+{"$schema":"https://vega.github.io/schema/vega-lite/v5.json","data":{"name":"layer_0"},"mark":"point","encoding":{"x":{"field":"x","type":"quantitative"},"y":{"field":"y","type":"quantitative","scale":{"type":"linear"}}}}	{layer_0='SELECT bill_len AS x, bill_dep AS y FROM penguins'}
+
+query TT
+VISUALIZE bill_len AS x, bill_dep AS y FROM penguins DRAW point SCALE y VIA log ZERO false SETTING reverse => true
+----
+{"$schema":"https://vega.github.io/schema/vega-lite/v5.json","data":{"name":"layer_0"},"mark":"point","encoding":{"x":{"field":"x","type":"quantitative"},"y":{"field":"y","type":"quantitative","scale":{"type":"log","zero":false,"reverse":true}}}}	{layer_0='SELECT bill_len AS x, bill_dep AS y FROM penguins'}
+
+# color is nominal by default. VIA makes it quantitative so Vega-Lite keeps the scale.
+query TT
+VISUALIZE bill_len AS x, bill_dep AS y, body_mass AS color FROM penguins DRAW point SCALE color VIA log
+----
+{"$schema":"https://vega.github.io/schema/vega-lite/v5.json","data":{"name":"layer_0"},"mark":"point","encoding":{"x":{"field":"x","type":"quantitative"},"y":{"field":"y","type":"quantitative"},"color":{"field":"color","type":"quantitative","scale":{"type":"log"}}}}	{layer_0='SELECT bill_len AS x, bill_dep AS y, body_mass AS color FROM penguins'}
+
+# A :type suffix takes precedence over VIA.
+query TT
+VISUALIZE bill_len AS x, bill_dep AS y, body_mass AS color:nominal FROM penguins DRAW point SCALE color VIA log
+----
+{"$schema":"https://vega.github.io/schema/vega-lite/v5.json","data":{"name":"layer_0"},"mark":"point","encoding":{"x":{"field":"x","type":"quantitative"},"y":{"field":"y","type":"quantitative"},"color":{"field":"color","type":"nominal","scale":{"type":"log"}}}}	{layer_0='SELECT bill_len AS x, bill_dep AS y, body_mass AS color FROM penguins'}
+
+# Every layer that maps the channel gets the same scale and type.
+query TT
+VISUALIZE bill_len AS x, bill_dep AS y, body_mass AS color FROM penguins DRAW point DRAW line SCALE color VIA sqrt
+----
+{"$schema":"https://vega.github.io/schema/vega-lite/v5.json","layer":[{"data":{"name":"layer_0"},"mark":"point","encoding":{"x":{"field":"x","type":"quantitative"},"y":{"field":"y","type":"quantitative"},"color":{"field":"color","type":"quantitative","scale":{"type":"sqrt"}}}},{"data":{"name":"layer_1"},"mark":"line","encoding":{"x":{"field":"x","type":"quantitative"},"y":{"field":"y","type":"quantitative"},"color":{"field":"color","type":"quantitative","scale":{"type":"sqrt"}}}}]}	{layer_0='SELECT bill_len AS x, bill_dep AS y, body_mass AS color FROM penguins', layer_1='SELECT * FROM (SELECT bill_len AS x, bill_dep AS y, body_mass AS color FROM penguins) ORDER BY x'}
+
+# The histogram's count axis takes a transform.
+query TT
+VISUALIZE bill_len AS x FROM penguins DRAW histogram SCALE y VIA log
+----
+{"$schema":"https://vega.github.io/schema/vega-lite/v5.json","data":{"name":"layer_0"},"mark":"bar","encoding":{"x":{"field":"x","type":"quantitative","bin":true},"y":{"aggregate":"count","type":"quantitative","scale":{"type":"log"}}}}	{layer_0=SELECT bill_len AS x FROM penguins}
+
+statement error
+VISUALIZE bill_len AS x, bill_dep AS y FROM penguins DRAW point SCALE y VIA
+----
+Expected a transform name after 'VIA'
+
+statement error
+VISUALIZE bill_len AS x, bill_dep AS y FROM penguins DRAW point SCALE y VIA exp
+----
+Unsupported SCALE transform 'exp' (supported: linear, log, log2, ln, sqrt, square, asinh, pseudo_log, pseudo_log2, pseudo_ln)
+
+statement error
+VISUALIZE bill_len AS x, bill_dep AS y FROM penguins DRAW point SCALE y VIA symlog
+----
+Unsupported SCALE transform 'symlog' (supported: linear, log, log2, ln, sqrt, square, asinh, pseudo_log, pseudo_log2, pseudo_ln)
+
+statement error
+VISUALIZE bill_len AS x, bill_dep AS y, species AS shape FROM penguins DRAW point SCALE shape VIA log
+----
+SCALE shape cannot take VIA: Vega-Lite has no continuous scale for shape
+
+# SCALE BINNED sets Vega-Lite's bin on the channel (#98).
+query TT
+VISUALIZE bill_len AS x, bill_dep AS y, body_mass AS color FROM penguins DRAW point SCALE BINNED color
+----
+{"$schema":"https://vega.github.io/schema/vega-lite/v5.json","data":{"name":"layer_0"},"mark":"point","encoding":{"x":{"field":"x","type":"quantitative"},"y":{"field":"y","type":"quantitative"},"color":{"field":"color","type":"quantitative","bin":true}}}	{layer_0='SELECT bill_len AS x, bill_dep AS y, body_mass AS color FROM penguins'}
+
+query TT
+VISUALIZE bill_len AS x, bill_dep AS y, body_mass AS color FROM penguins DRAW point scale binned color TO viridis
+----
+{"$schema":"https://vega.github.io/schema/vega-lite/v5.json","data":{"name":"layer_0"},"mark":"point","encoding":{"x":{"field":"x","type":"quantitative"},"y":{"field":"y","type":"quantitative"},"color":{"field":"color","type":"quantitative","bin":true,"scale":{"scheme":"viridis"}}}}	{layer_0='SELECT bill_len AS x, bill_dep AS y, body_mass AS color FROM penguins'}
+
+query TT
+VISUALIZE bill_len AS x, bill_dep AS y, body_mass AS color FROM penguins DRAW point SCALE BINNED color VIA linear
+----
+{"$schema":"https://vega.github.io/schema/vega-lite/v5.json","data":{"name":"layer_0"},"mark":"point","encoding":{"x":{"field":"x","type":"quantitative"},"y":{"field":"y","type":"quantitative"},"color":{"field":"color","type":"quantitative","bin":true,"scale":{"type":"linear"}}}}	{layer_0='SELECT bill_len AS x, bill_dep AS y, body_mass AS color FROM penguins'}
+
+query TT
+VISUALIZE bill_len AS x, bill_dep AS y, body_mass AS color FROM penguins DRAW point SCALE BINNED color SCALE BINNED color
+----
+{"$schema":"https://vega.github.io/schema/vega-lite/v5.json","data":{"name":"layer_0"},"mark":"point","encoding":{"x":{"field":"x","type":"quantitative"},"y":{"field":"y","type":"quantitative"},"color":{"field":"color","type":"quantitative","bin":true}}}	{layer_0='SELECT bill_len AS x, bill_dep AS y, body_mass AS color FROM penguins'}
+
+query TT
+VISUALIZE bill_len AS x, bill_dep AS y, body_mass AS color:ordinal FROM penguins DRAW point SCALE BINNED color
+----
+{"$schema":"https://vega.github.io/schema/vega-lite/v5.json","data":{"name":"layer_0"},"mark":"point","encoding":{"x":{"field":"x","type":"quantitative"},"y":{"field":"y","type":"quantitative"},"color":{"field":"color","type":"ordinal","bin":true}}}	{layer_0='SELECT bill_len AS x, bill_dep AS y, body_mass AS color FROM penguins'}
+
+# An unmapped channel leaves the spec unchanged.
+query TT
+VISUALIZE bill_len AS x, bill_dep AS y FROM penguins DRAW point SCALE BINNED color
+----
+{"$schema":"https://vega.github.io/schema/vega-lite/v5.json","data":{"name":"layer_0"},"mark":"point","encoding":{"x":{"field":"x","type":"quantitative"},"y":{"field":"y","type":"quantitative"}}}	{layer_0='SELECT bill_len AS x, bill_dep AS y FROM penguins'}
+
+# A histogram bins its x already, so BINNED adds no second key.
+query TT
+VISUALIZE bill_len AS x FROM penguins DRAW histogram SCALE BINNED x
+----
+{"$schema":"https://vega.github.io/schema/vega-lite/v5.json","data":{"name":"layer_0"},"mark":"bar","encoding":{"x":{"field":"x","type":"quantitative","bin":true},"y":{"aggregate":"count","type":"quantitative"}}}	{layer_0=SELECT bill_len AS x FROM penguins}
+
+statement error
+VISUALIZE bill_len AS x, bill_dep AS y FROM penguins DRAW point SCALE BINNED
+----
+Expected aesthetic name after 'SCALE BINNED'
+
+statement error
+VISUALIZE bill_len AS x, bill_dep AS y FROM penguins DRAW point SCALE DISCRETE color
+----
+SCALE DISCRETE is not supported (supported scale type: BINNED)
+
+statement error
+VISUALIZE bill_len AS x, bill_dep AS y FROM penguins DRAW point SCALE ordinal color
+----
+SCALE ordinal is not supported (supported scale type: BINNED)
+
+statement error
+VISUALIZE bill_len AS x, bill_dep AS y FROM penguins DRAW point SCALE y
+----
+Expected SCALE operator (TO / ZERO / DOMAIN / LABEL / VIA / SETTING) after aesthetic
+
+statement error
+VISUALIZE bill_len AS x, bill_dep AS y, body_mass AS color FROM penguins DRAW point SCALE BINNED color VIA log
+----
+SCALE BINNED color cannot take VIA log: Vega-Lite bins on a linear scale
+
+statement error
+VISUALIZE bill_len AS x, bill_dep AS y, body_mass AS color FROM penguins DRAW point SCALE BINNED color SCALE color VIA sqrt
+----
+SCALE BINNED color cannot take VIA sqrt
+
+statement error
+VISUALIZE bill_len AS x FROM penguins DRAW histogram SCALE x VIA log
+----
+SCALE x VIA log cannot apply to the histogram's x
+
+# Channel names in any case
+
+statement error
+VISUALIZE bill_len AS x FROM penguins DRAW histogram SCALE X VIA log
+----
+SCALE x VIA log cannot apply to the histogram's x
+
+query TT
+VISUALIZE bill_len AS x, bill_dep AS y, body_mass AS color FROM penguins DRAW point SCALE COLOR VIA log
+----
+{"$schema":"https://vega.github.io/schema/vega-lite/v5.json","data":{"name":"layer_0"},"mark":"point","encoding":{"x":{"field":"x","type":"quantitative"},"y":{"field":"y","type":"quantitative"},"color":{"field":"color","type":"quantitative","scale":{"type":"log"}}}}	{layer_0='SELECT bill_len AS x, bill_dep AS y, body_mass AS color FROM penguins'}
+
+query TT
+VISUALIZE bill_len AS x, bill_dep AS y, body_mass AS color FROM penguins DRAW point SCALE BINNED COLOR
+----
+{"$schema":"https://vega.github.io/schema/vega-lite/v5.json","data":{"name":"layer_0"},"mark":"point","encoding":{"x":{"field":"x","type":"quantitative"},"y":{"field":"y","type":"quantitative"},"color":{"field":"color","type":"quantitative","bin":true}}}	{layer_0='SELECT bill_len AS x, bill_dep AS y, body_mass AS color FROM penguins'}
+
+statement error
+VISUALIZE bill_len AS x, bill_dep AS y, species AS shape FROM penguins DRAW point SCALE SHAPE VIA log
+----
+SCALE shape cannot take VIA: Vega-Lite has no continuous scale for shape
+
+query TT
+VISUALIZE bill_len AS x, bill_dep AS y, species AS color FROM penguins DRAW point SCALE COLOR TO viridis SCALE color ZERO false
+----
+{"$schema":"https://vega.github.io/schema/vega-lite/v5.json","data":{"name":"layer_0"},"mark":"point","encoding":{"x":{"field":"x","type":"quantitative"},"y":{"field":"y","type":"quantitative"},"color":{"field":"color","type":"nominal","scale":{"scheme":"viridis","zero":false}}}}	{layer_0='SELECT bill_len AS x, bill_dep AS y, species AS color FROM penguins'}
+
+# More cases from the final review
+
+query TT
+VISUALIZE bill_len AS x, bill_dep AS y FROM penguins DRAW point SCALE y SETTING reverse => true ZERO false
+----
+{"$schema":"https://vega.github.io/schema/vega-lite/v5.json","data":{"name":"layer_0"},"mark":"point","encoding":{"x":{"field":"x","type":"quantitative"},"y":{"field":"y","type":"quantitative","scale":{"reverse":true,"zero":false}}}}	{layer_0='SELECT bill_len AS x, bill_dep AS y FROM penguins'}
+
+statement error
+VISUALIZE bill_len AS x, bill_dep AS y, species AS linetype FROM penguins DRAW line SCALE linetype VIA log
+----
+SCALE linetype cannot take VIA: Vega-Lite has no continuous scale for linetype
+
+statement error
+VISUALIZE bill_len AS x, bill_dep AS y, species AS shape FROM penguins DRAW point SCALE shape VIA exp
+----
+SCALE shape cannot take VIA: Vega-Lite has no continuous scale for shape
+
+query TT
+VISUALIZE bill_len AS x FROM penguins DRAW histogram SCALE x VIA linear
+----
+{"$schema":"https://vega.github.io/schema/vega-lite/v5.json","data":{"name":"layer_0"},"mark":"bar","encoding":{"x":{"field":"x","type":"quantitative","bin":true,"scale":{"type":"linear"}},"y":{"aggregate":"count","type":"quantitative"}}}	{layer_0=SELECT bill_len AS x FROM penguins}
+
+query TT
+VISUALIZE bill_len AS x, bill_dep AS y, body_mass AS fill FROM penguins DRAW point SCALE fill VIA log
+----
+{"$schema":"https://vega.github.io/schema/vega-lite/v5.json","data":{"name":"layer_0"},"mark":"point","encoding":{"x":{"field":"x","type":"quantitative"},"y":{"field":"y","type":"quantitative"},"fill":{"field":"fill","type":"quantitative","scale":{"type":"log"}}}}	{layer_0='SELECT bill_len AS x, bill_dep AS y, body_mass AS fill FROM penguins'}

@@ -1,4 +1,5 @@
 #include "ggsql_grammar.hpp"
+#include "ggsql_marks_internal.hpp"
 
 #include "duckdb/common/string_util.hpp"
 
@@ -12,12 +13,33 @@ struct TokenizeResult {
 	string error;
 };
 
-// Tokenizer: at depth 0, splits on whitespace and emits commas as their own
-// token. Inside parens or quotes (single or double) all characters are
-// accumulated into the current token so that `coalesce(a, b)`, `"my col"`,
-// `'don''t'`, and `(SELECT max(x) FROM t)` all become single tokens. SQL
-// doubled-quote escapes (`''` and `""`) are handled. Trailing semicolons are
-// dropped.
+// SCALE ... VIA transforms. Each maps to a Vega-Lite scale type and an
+// optional second property (base or exponent), scanned in order.
+struct ScaleTransform {
+	const char *name;
+	const char *type;
+	const char *extra_property; // nullptr when the transform sets only the type
+	const char *extra_value;    // JSON text
+};
+const ScaleTransform kScaleTransforms[] = {
+    {"linear", "linear", nullptr, nullptr},
+    {"log", "log", nullptr, nullptr},
+    {"log2", "log", "base", "2"},
+    {"ln", "log", "base", "2.718281828459045"},
+    {"sqrt", "sqrt", nullptr, nullptr},
+    {"square", "pow", "exponent", "2"},
+    {"asinh", "symlog", nullptr, nullptr},
+    {"pseudo_log", "symlog", nullptr, nullptr},
+    {"pseudo_log2", "symlog", nullptr, nullptr},
+    {"pseudo_ln", "symlog", nullptr, nullptr},
+};
+
+// Tokenizer: at depth 0, splits on whitespace and emits commas and the `=>`
+// arrow as their own tokens. Inside parens or quotes (single or double) all
+// characters are accumulated into the current token so that `coalesce(a, b)`,
+// `"my col"`, `'don''t'`, and `(SELECT max(x) FROM t)` all become single
+// tokens. SQL doubled-quote escapes (`''` and `""`) are handled. Trailing
+// semicolons are dropped.
 TokenizeResult Tokenize(const string &input) {
 	TokenizeResult out;
 	auto &tokens = out.tokens;
@@ -92,6 +114,10 @@ TokenizeResult Tokenize(const string &input) {
 		} else if (c == ',') {
 			flush();
 			tokens.emplace_back(",");
+		} else if (c == '=' && i + 1 < input.size() && input[i + 1] == '>') {
+			flush();
+			tokens.emplace_back("=>");
+			i++;
 		} else if (c == ';') {
 			flush();
 		} else {
@@ -624,17 +650,48 @@ ParseResult ParseGgsql(const string &query) {
 	// Optional `SCALE <aesthetic> <op> <args...> [<op> <args...>]...` clauses.
 	// Zero or more SCALE clauses; each targets one channel and carries one or
 	// more options that merge into a single scale/axis block. Supported ops:
+	//   BINNED <aesthetic>      — scale type before the aesthetic; sets "bin": true
 	//   TO <scheme>             — color scheme name
 	//   ZERO <true|false>       — include zero in quantitative scale
 	//   DOMAIN <num1> <num2>    — explicit numeric domain
 	//   LABEL '<text>'          — axis title
+	//   VIA <transform>         — scale transform: linear, log, log2, ln, sqrt,
+	//                             square, asinh, pseudo_log, pseudo_log2, pseudo_ln
+	//   SETTING <name> => <value> [, <name> => <value>]...
+	//                           — upstream ggsql settings; only `reverse` so far
 	while (!at_end() && IEqual(peek(), "SCALE")) {
 		i++;
 		if (at_end()) {
 			result.error = "Expected aesthetic name after 'SCALE'";
 			return result;
 		}
+		// An optional scale type comes before the aesthetic. Only BINNED is
+		// supported. It needs no further option.
+		bool binned = false;
+		if (IEqual(peek(), "BINNED")) {
+			binned = true;
+			i++;
+			if (at_end()) {
+				result.error = "Expected aesthetic name after 'SCALE BINNED'";
+				return result;
+			}
+		} else if (IEqual(peek(), "CONTINUOUS") || IEqual(peek(), "DISCRETE") || IEqual(peek(), "ORDINAL") ||
+		           IEqual(peek(), "IDENTITY")) {
+			result.error = "SCALE " + peek() + " is not supported (supported scale type: BINNED)";
+			return result;
+		}
 		string aesthetic = CanonicalChannel(tokens[i++]);
+		// One spelling for every rule below: the channel table's own name.
+		aesthetic = ggsql::CanonicalAestheticName(aesthetic);
+		if (binned) {
+			ScaleSpec bin;
+			bin.aesthetic = aesthetic;
+			bin.sub_object = "";
+			bin.property = "bin";
+			bin.value_json = "true";
+			bin.binned = true;
+			result.stmt.scales.push_back(std::move(bin));
+		}
 		// Consume one or more options for this channel until the next clause
 		// (SCALE / FACET / TITLE / SUBTITLE / end).
 		bool any_op = false;
@@ -687,16 +744,101 @@ ParseResult ParseGgsql(const string &query) {
 				scale.sub_object = "axis";
 				scale.property = "title";
 				scale.value_json = "\"" + JsonEscape(UnquoteSqlString(tokens[i++])) + "\"";
+			} else if (IEqual(op, "VIA")) {
+				if (at_end()) {
+					result.error = "Expected a transform name after 'VIA'";
+					return result;
+				}
+				string name = tokens[i++];
+				if (aesthetic == "shape" || aesthetic == "linetype" || aesthetic == "text" ||
+				    aesthetic == "tooltip") {
+					result.error = "SCALE " + aesthetic + " cannot take VIA: Vega-Lite has no continuous scale for " +
+					               aesthetic;
+					return result;
+				}
+				const ScaleTransform *transform = nullptr;
+				for (const auto &t : kScaleTransforms) {
+					if (IEqual(name, t.name)) {
+						transform = &t;
+						break;
+					}
+				}
+				if (!transform) {
+					result.error = "Unsupported SCALE transform '" + name +
+					               "' (supported: linear, log, log2, ln, sqrt, square, asinh, pseudo_log, "
+					               "pseudo_log2, pseudo_ln)";
+					return result;
+				}
+				string via = transform->name;
+				ScaleSpec type_spec;
+				type_spec.aesthetic = aesthetic;
+				type_spec.property = "type";
+				type_spec.value_json = string("\"") + transform->type + "\"";
+				type_spec.via = via;
+				result.stmt.scales.push_back(std::move(type_spec));
+				if (transform->extra_property) {
+					ScaleSpec extra;
+					extra.aesthetic = aesthetic;
+					extra.property = transform->extra_property;
+					extra.value_json = transform->extra_value;
+					extra.via = via;
+					result.stmt.scales.push_back(std::move(extra));
+				}
+				any_op = true;
+				continue;
+			} else if (IEqual(op, "SETTING")) {
+				// One ScaleSpec per setting. The list goes on while a ',' follows.
+				bool first = true;
+				while (true) {
+					if (at_end()) {
+						result.error = string("Expected a setting name after ") + (first ? "'SETTING'" : "','");
+						return result;
+					}
+					string name = tokens[i++];
+					if (!IEqual(name, "reverse")) {
+						result.error = "Unsupported SCALE setting '" + name + "' (supported: reverse)";
+						return result;
+					}
+					if (at_end() || tokens[i] != "=>") {
+						result.error = "Expected '=>' after 'SETTING " + name + "'";
+						return result;
+					}
+					i++;
+					if (at_end()) {
+						result.error = "Expected a value after 'SETTING " + name + " =>'";
+						return result;
+					}
+					string v = tokens[i++];
+					ScaleSpec setting;
+					setting.aesthetic = aesthetic;
+					setting.property = "reverse";
+					if (IEqual(v, "true")) {
+						setting.value_json = "true";
+					} else if (IEqual(v, "false")) {
+						setting.value_json = "false";
+					} else {
+						result.error = "Expected true or false after 'SETTING " + name + " =>', got '" + v + "'";
+						return result;
+					}
+					result.stmt.scales.push_back(std::move(setting));
+					if (at_end() || peek() != ",") {
+						break;
+					}
+					i++;
+					first = false;
+				}
+				any_op = true;
+				continue;
 			} else {
 				result.error = "Unknown SCALE operator '" + op +
-				               "' (expected TO / ZERO / DOMAIN / LABEL)";
+				               "' (expected TO / ZERO / DOMAIN / LABEL / VIA / SETTING)";
 				return result;
 			}
 			result.stmt.scales.push_back(std::move(scale));
 			any_op = true;
 		}
-		if (!any_op) {
-			result.error = "Expected SCALE operator (TO / ZERO / DOMAIN / LABEL) after aesthetic";
+		if (!any_op && !binned) {
+			result.error = "Expected SCALE operator (TO / ZERO / DOMAIN / LABEL / VIA / SETTING) after aesthetic";
 			return result;
 		}
 	}

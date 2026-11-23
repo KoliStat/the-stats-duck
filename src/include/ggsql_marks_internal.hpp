@@ -33,5 +33,10 @@ void RegisterBuiltinMarks(ExtensionLoader &loader);
 // into the Vega-Lite channel.
 string VegaChannelName(const string &aesthetic);
 
+// The channel table's spelling of an aesthetic, matched in any case. A name
+// that is not in the table comes back unchanged. A SCALE clause uses it so
+// that `COLOR`, `Color` and `color` are one channel.
+string CanonicalAestheticName(const string &aesthetic);
+
 } // namespace ggsql
 } // namespace duckdb

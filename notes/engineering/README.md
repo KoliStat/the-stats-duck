@@ -138,3 +138,10 @@ that has been written down than to re-derive it.
   triples: 2.8 s on the same rows, unchanged when every row brings its own
   `df`. Why `thread_local` rather than a mutex, and why a timing outlier is
   measured twice before it is quoted.
+
+- [`2026-11-scale-reverse-via-binned.md`](2026-11-scale-reverse-via-binned.md) —
+  `SCALE ... SETTING reverse => true`, `VIA <transform>` and `SCALE BINNED`
+  (#98). Four findings: the `=>` arrow is one token or three depending on the
+  DuckDB line, Vega-Lite drops a scale type that does not fit the field's
+  type, Vega-Lite bins in data units where upstream bins in transformed units,
+  and `symlog` is only close to upstream's pseudo-log curves.
