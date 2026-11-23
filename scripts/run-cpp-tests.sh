@@ -14,6 +14,8 @@
 #     (header-only)
 #   - the studentized range distribution, behind Tukey (#21): test_tukey.cpp
 #     (header-only)
+#   - the NaN rule of the distribution functions (#102): test_distributions.cpp
+#     (header-only)
 #   - emmeans, the estimated marginal means (#21): test_emmeans.cpp +
 #     emmeans.cpp + linalg.cpp
 #   - glm_core, the GLM families, links and their parsers (#22):
@@ -91,6 +93,9 @@ build_and_run test_p_adjust \
 
 build_and_run test_tukey \
   "$ROOT/test/cpp/test_tukey.cpp"
+
+build_and_run test_distributions \
+  "$ROOT/test/cpp/test_distributions.cpp"
 
 build_and_run test_emmeans \
   "$ROOT/test/cpp/test_emmeans.cpp" \
