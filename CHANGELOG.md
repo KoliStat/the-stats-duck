@@ -63,6 +63,15 @@ that name is preserved across releases for backward compatibility.
 
 ### Fixed
 
+- **`anova_oneway`, `chisq_independence` and `chisq_goodness_of_fit` sum
+  over their groups in ascending key order** (#54). They summed in the
+  iteration order of a hash map. That order follows the order in which the
+  groups first appear, and it differs between standard libraries. So the
+  order of the groups, or the platform, could change a result in its last
+  bits. Rounded results do not change. New tests in `anova_oneway.test` and the
+  two chi-square test files feed the same rows in two orders and check one
+  exact value.
+
 - **Every aggregate works as a window function** (#69). `lm_fit(...) OVER ()`,
   `glm_fit(...) OVER ()`, `ttest_1samp(...) OVER ()` and every other
   aggregate of the extension under `OVER ()` or `OVER (PARTITION BY ...)`

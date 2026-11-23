@@ -2,6 +2,7 @@
 #include "register_documented.hpp"
 #include "distributions.hpp"
 #include "portable_string_hash.hpp"
+#include "sorted_entries.hpp"
 
 #include "duckdb/function/aggregate_function.hpp"
 #include "duckdb/function/function_set.hpp"
@@ -40,6 +41,10 @@ using StrMap = std::unordered_map<std::string, V, stats_duck::PortableStringHash
 //   the data are drawn uniformly at random over the k observed categories.
 //       chi^2 = sum_k (O_k - n/k)^2 / (n/k)
 //   df = k - 1.
+//
+// Both chi-square sums run in ascending key order (#54), not in the iteration
+// order of the hash maps. The counts and totals are integers, which add up
+// exactly in any order, so the order of the rows cannot change the result.
 //
 // Both tests are weak for very small expected frequencies (< 5); Bedevere
 // Wise's UI can surface a warning based on the `n` and counts fields returned.
@@ -204,12 +209,13 @@ static void ChiSqIndFinalize(Vector &state_vector, compat::FinalizeInput &aggr_i
 		bool apply_yates = continuity && n_rows == 2 && n_cols == 2;
 		double chi_square = 0.0;
 		double n_d = static_cast<double>(n);
-		for (auto &row_kv : *state.table) {
-			double row_tot = static_cast<double>(row_totals[row_kv.first]);
-			for (auto &col_kv : col_totals) {
-				auto it = row_kv.second.find(col_kv.first);
-				double observed = it != row_kv.second.end() ? static_cast<double>(it->second) : 0.0;
-				double expected = row_tot * static_cast<double>(col_kv.second) / n_d;
+		const auto cols = stats_duck::SortedEntries(col_totals);
+		for (const auto *row : stats_duck::SortedEntries(*state.table)) {
+			double row_tot = static_cast<double>(row_totals[row->first]);
+			for (const auto *col : cols) {
+				auto it = row->second.find(col->first);
+				double observed = it != row->second.end() ? static_cast<double>(it->second) : 0.0;
+				double expected = row_tot * static_cast<double>(col->second) / n_d;
 				if (expected > 0.0) {
 					double abs_diff = std::abs(observed - expected);
 					if (apply_yates) {
@@ -328,8 +334,8 @@ static void ChiSqGoFFinalize(Vector &state_vector, compat::FinalizeInput &, Vect
 		}
 		double expected = static_cast<double>(n) / static_cast<double>(k);
 		double chi_square = 0.0;
-		for (auto &kv : *state.counts) {
-			double diff = static_cast<double>(kv.second) - expected;
+		for (const auto *category : stats_duck::SortedEntries(*state.counts)) {
+			double diff = static_cast<double>(category->second) - expected;
 			chi_square += diff * diff / expected;
 		}
 		double df = static_cast<double>(k - 1);

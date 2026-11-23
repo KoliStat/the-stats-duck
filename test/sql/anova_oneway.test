@@ -120,3 +120,29 @@ FROM stratified GROUP BY stratum ORDER BY stratum
 ----
 s1	true
 s2	false
+
+# The sums over groups run in ascending key order (#54), so the order in which
+# the groups arrive cannot change the result. The four groups near 0 add 8 to
+# ss_between, and the two groups at 2^26 and -2^26 add 2^54. Summed in key
+# order (a, b, c, d, y, z), the result is 2^54 + 8 exactly. Adding the two
+# large groups first rounds the 8 away. Both tables hold the same rows, with
+# the groups in opposite orders and each group's values in the same order.
+statement ok
+CREATE TABLE keys_ascending AS SELECT * FROM (VALUES
+    (0.0, 'a'), (2.0, 'a'), (-2.0, 'b'), (0.0, 'b'),
+    (0.0, 'c'), (2.0, 'c'), (-2.0, 'd'), (0.0, 'd'),
+    (67108863.0, 'y'), (67108865.0, 'y'), (-67108865.0, 'z'), (-67108863.0, 'z')
+) AS t(v, g);
+
+statement ok
+CREATE TABLE keys_descending AS SELECT * FROM (VALUES
+    (-67108865.0, 'z'), (-67108863.0, 'z'), (67108863.0, 'y'), (67108865.0, 'y'),
+    (-2.0, 'd'), (0.0, 'd'), (0.0, 'c'), (2.0, 'c'),
+    (-2.0, 'b'), (0.0, 'b'), (0.0, 'a'), (2.0, 'a')
+) AS t(v, g);
+
+query TT
+SELECT (SELECT (anova_oneway(v, g)).ss_between FROM keys_ascending) = 18014398509481992::DOUBLE,
+       (SELECT (anova_oneway(v, g)).ss_between FROM keys_descending) = 18014398509481992::DOUBLE
+----
+true	true
