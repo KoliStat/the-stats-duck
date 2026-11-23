@@ -1,0 +1,443 @@
+# name: test/sql/distribution_nan_args.test
+# description: A NaN argument to a distribution function gives NULL (#102)
+# group: [stats_duck]
+
+require stats_duck
+
+# Every overload of every density, distribution and quantile function. The
+# first column calls it with valid arguments, which must give a value. Each
+# other column puts NaN into one DOUBLE argument, which must give NULL.
+# Weibull takes x equal to the scale, because pow(1, NaN) is 1.
+
+query TTTT
+SELECT dbeta(0.3, 2.0, 3.0) IS NOT NULL,
+       dbeta('nan'::DOUBLE, 2.0, 3.0) IS NULL,
+       dbeta(0.3, 'nan'::DOUBLE, 3.0) IS NULL,
+       dbeta(0.3, 2.0, 'nan'::DOUBLE) IS NULL
+----
+true	true	true	true
+
+query TTT
+SELECT dchisq(2.0, 3.0) IS NOT NULL,
+       dchisq('nan'::DOUBLE, 3.0) IS NULL,
+       dchisq(2.0, 'nan'::DOUBLE) IS NULL
+----
+true	true	true
+
+query TT
+SELECT dexp(1.0) IS NOT NULL,
+       dexp('nan'::DOUBLE) IS NULL
+----
+true	true
+
+query TTT
+SELECT dexp(1.0, 2.0) IS NOT NULL,
+       dexp('nan'::DOUBLE, 2.0) IS NULL,
+       dexp(1.0, 'nan'::DOUBLE) IS NULL
+----
+true	true	true
+
+query TTTT
+SELECT df(1.5, 2.0, 3.0) IS NOT NULL,
+       df('nan'::DOUBLE, 2.0, 3.0) IS NULL,
+       df(1.5, 'nan'::DOUBLE, 3.0) IS NULL,
+       df(1.5, 2.0, 'nan'::DOUBLE) IS NULL
+----
+true	true	true	true
+
+query TTT
+SELECT dgamma(1.0, 2.0) IS NOT NULL,
+       dgamma('nan'::DOUBLE, 2.0) IS NULL,
+       dgamma(1.0, 'nan'::DOUBLE) IS NULL
+----
+true	true	true
+
+query TTTT
+SELECT dgamma(1.0, 2.0, 1.5) IS NOT NULL,
+       dgamma('nan'::DOUBLE, 2.0, 1.5) IS NULL,
+       dgamma(1.0, 'nan'::DOUBLE, 1.5) IS NULL,
+       dgamma(1.0, 2.0, 'nan'::DOUBLE) IS NULL
+----
+true	true	true	true
+
+query TTTTT
+SELECT dhyper(1, 5, 5, 3) IS NOT NULL,
+       dhyper('nan'::DOUBLE, 5, 5, 3) IS NULL,
+       dhyper(1, 'nan'::DOUBLE, 5, 3) IS NULL,
+       dhyper(1, 5, 'nan'::DOUBLE, 3) IS NULL,
+       dhyper(1, 5, 5, 'nan'::DOUBLE) IS NULL
+----
+true	true	true	true	true
+
+query TT
+SELECT dlnorm(1.0) IS NOT NULL,
+       dlnorm('nan'::DOUBLE) IS NULL
+----
+true	true
+
+query TTT
+SELECT dlnorm(1.0, 0.0) IS NOT NULL,
+       dlnorm('nan'::DOUBLE, 0.0) IS NULL,
+       dlnorm(1.0, 'nan'::DOUBLE) IS NULL
+----
+true	true	true
+
+query TTTT
+SELECT dlnorm(1.0, 0.0, 1.0) IS NOT NULL,
+       dlnorm('nan'::DOUBLE, 0.0, 1.0) IS NULL,
+       dlnorm(1.0, 'nan'::DOUBLE, 1.0) IS NULL,
+       dlnorm(1.0, 0.0, 'nan'::DOUBLE) IS NULL
+----
+true	true	true	true
+
+query TTTT
+SELECT dnbinom(2, 3.0, 0.5) IS NOT NULL,
+       dnbinom('nan'::DOUBLE, 3.0, 0.5) IS NULL,
+       dnbinom(2, 'nan'::DOUBLE, 0.5) IS NULL,
+       dnbinom(2, 3.0, 'nan'::DOUBLE) IS NULL
+----
+true	true	true	true
+
+query TT
+SELECT dnorm(0.3) IS NOT NULL,
+       dnorm('nan'::DOUBLE) IS NULL
+----
+true	true
+
+query TTT
+SELECT dnorm(0.3, 0.0) IS NOT NULL,
+       dnorm('nan'::DOUBLE, 0.0) IS NULL,
+       dnorm(0.3, 'nan'::DOUBLE) IS NULL
+----
+true	true	true
+
+query TTTT
+SELECT dnorm(0.3, 0.0, 1.0) IS NOT NULL,
+       dnorm('nan'::DOUBLE, 0.0, 1.0) IS NULL,
+       dnorm(0.3, 'nan'::DOUBLE, 1.0) IS NULL,
+       dnorm(0.3, 0.0, 'nan'::DOUBLE) IS NULL
+----
+true	true	true	true
+
+query TTT
+SELECT dpois(2, 3.0) IS NOT NULL,
+       dpois('nan'::DOUBLE, 3.0) IS NULL,
+       dpois(2, 'nan'::DOUBLE) IS NULL
+----
+true	true	true
+
+query TTT
+SELECT dt(1.0, 5.0) IS NOT NULL,
+       dt('nan'::DOUBLE, 5.0) IS NULL,
+       dt(1.0, 'nan'::DOUBLE) IS NULL
+----
+true	true	true
+
+query TTT
+SELECT dweibull(1.0, 2.0) IS NOT NULL,
+       dweibull('nan'::DOUBLE, 2.0) IS NULL,
+       dweibull(1.0, 'nan'::DOUBLE) IS NULL
+----
+true	true	true
+
+query TTTT
+SELECT dweibull(1.5, 2.0, 1.5) IS NOT NULL,
+       dweibull('nan'::DOUBLE, 2.0, 1.5) IS NULL,
+       dweibull(1.5, 'nan'::DOUBLE, 1.5) IS NULL,
+       dweibull(1.5, 2.0, 'nan'::DOUBLE) IS NULL
+----
+true	true	true	true
+
+query TTTT
+SELECT pbeta(0.3, 2.0, 3.0) IS NOT NULL,
+       pbeta('nan'::DOUBLE, 2.0, 3.0) IS NULL,
+       pbeta(0.3, 'nan'::DOUBLE, 3.0) IS NULL,
+       pbeta(0.3, 2.0, 'nan'::DOUBLE) IS NULL
+----
+true	true	true	true
+
+query TTT
+SELECT pchisq(2.0, 3.0) IS NOT NULL,
+       pchisq('nan'::DOUBLE, 3.0) IS NULL,
+       pchisq(2.0, 'nan'::DOUBLE) IS NULL
+----
+true	true	true
+
+query TT
+SELECT pexp(1.0) IS NOT NULL,
+       pexp('nan'::DOUBLE) IS NULL
+----
+true	true
+
+query TTT
+SELECT pexp(1.0, 2.0) IS NOT NULL,
+       pexp('nan'::DOUBLE, 2.0) IS NULL,
+       pexp(1.0, 'nan'::DOUBLE) IS NULL
+----
+true	true	true
+
+query TTTT
+SELECT pf(1.5, 2.0, 3.0) IS NOT NULL,
+       pf('nan'::DOUBLE, 2.0, 3.0) IS NULL,
+       pf(1.5, 'nan'::DOUBLE, 3.0) IS NULL,
+       pf(1.5, 2.0, 'nan'::DOUBLE) IS NULL
+----
+true	true	true	true
+
+query TTT
+SELECT pgamma(1.0, 2.0) IS NOT NULL,
+       pgamma('nan'::DOUBLE, 2.0) IS NULL,
+       pgamma(1.0, 'nan'::DOUBLE) IS NULL
+----
+true	true	true
+
+query TTTT
+SELECT pgamma(1.0, 2.0, 1.5) IS NOT NULL,
+       pgamma('nan'::DOUBLE, 2.0, 1.5) IS NULL,
+       pgamma(1.0, 'nan'::DOUBLE, 1.5) IS NULL,
+       pgamma(1.0, 2.0, 'nan'::DOUBLE) IS NULL
+----
+true	true	true	true
+
+query TTTTT
+SELECT phyper(1, 5, 5, 3) IS NOT NULL,
+       phyper('nan'::DOUBLE, 5, 5, 3) IS NULL,
+       phyper(1, 'nan'::DOUBLE, 5, 3) IS NULL,
+       phyper(1, 5, 'nan'::DOUBLE, 3) IS NULL,
+       phyper(1, 5, 5, 'nan'::DOUBLE) IS NULL
+----
+true	true	true	true	true
+
+query TT
+SELECT plnorm(1.0) IS NOT NULL,
+       plnorm('nan'::DOUBLE) IS NULL
+----
+true	true
+
+query TTT
+SELECT plnorm(1.0, 0.0) IS NOT NULL,
+       plnorm('nan'::DOUBLE, 0.0) IS NULL,
+       plnorm(1.0, 'nan'::DOUBLE) IS NULL
+----
+true	true	true
+
+query TTTT
+SELECT plnorm(1.0, 0.0, 1.0) IS NOT NULL,
+       plnorm('nan'::DOUBLE, 0.0, 1.0) IS NULL,
+       plnorm(1.0, 'nan'::DOUBLE, 1.0) IS NULL,
+       plnorm(1.0, 0.0, 'nan'::DOUBLE) IS NULL
+----
+true	true	true	true
+
+query TTTT
+SELECT pnbinom(2, 3.0, 0.5) IS NOT NULL,
+       pnbinom('nan'::DOUBLE, 3.0, 0.5) IS NULL,
+       pnbinom(2, 'nan'::DOUBLE, 0.5) IS NULL,
+       pnbinom(2, 3.0, 'nan'::DOUBLE) IS NULL
+----
+true	true	true	true
+
+query TT
+SELECT pnorm(0.3) IS NOT NULL,
+       pnorm('nan'::DOUBLE) IS NULL
+----
+true	true
+
+query TTT
+SELECT pnorm(0.3, 0.0) IS NOT NULL,
+       pnorm('nan'::DOUBLE, 0.0) IS NULL,
+       pnorm(0.3, 'nan'::DOUBLE) IS NULL
+----
+true	true	true
+
+query TTTT
+SELECT pnorm(0.3, 0.0, 1.0) IS NOT NULL,
+       pnorm('nan'::DOUBLE, 0.0, 1.0) IS NULL,
+       pnorm(0.3, 'nan'::DOUBLE, 1.0) IS NULL,
+       pnorm(0.3, 0.0, 'nan'::DOUBLE) IS NULL
+----
+true	true	true	true
+
+query TTT
+SELECT ppois(2, 3.0) IS NOT NULL,
+       ppois('nan'::DOUBLE, 3.0) IS NULL,
+       ppois(2, 'nan'::DOUBLE) IS NULL
+----
+true	true	true
+
+query TTT
+SELECT pt(1.0, 5.0) IS NOT NULL,
+       pt('nan'::DOUBLE, 5.0) IS NULL,
+       pt(1.0, 'nan'::DOUBLE) IS NULL
+----
+true	true	true
+
+query TTTT
+SELECT ptukey(3.0, 3.0, 10.0) IS NOT NULL,
+       ptukey('nan'::DOUBLE, 3.0, 10.0) IS NULL,
+       ptukey(3.0, 'nan'::DOUBLE, 10.0) IS NULL,
+       ptukey(3.0, 3.0, 'nan'::DOUBLE) IS NULL
+----
+true	true	true	true
+
+query TTT
+SELECT pweibull(1.0, 2.0) IS NOT NULL,
+       pweibull('nan'::DOUBLE, 2.0) IS NULL,
+       pweibull(1.0, 'nan'::DOUBLE) IS NULL
+----
+true	true	true
+
+query TTTT
+SELECT pweibull(1.5, 2.0, 1.5) IS NOT NULL,
+       pweibull('nan'::DOUBLE, 2.0, 1.5) IS NULL,
+       pweibull(1.5, 'nan'::DOUBLE, 1.5) IS NULL,
+       pweibull(1.5, 2.0, 'nan'::DOUBLE) IS NULL
+----
+true	true	true	true
+
+query TTTT
+SELECT qbeta(0.5, 2.0, 3.0) IS NOT NULL,
+       qbeta('nan'::DOUBLE, 2.0, 3.0) IS NULL,
+       qbeta(0.5, 'nan'::DOUBLE, 3.0) IS NULL,
+       qbeta(0.5, 2.0, 'nan'::DOUBLE) IS NULL
+----
+true	true	true	true
+
+query TTT
+SELECT qchisq(0.5, 3.0) IS NOT NULL,
+       qchisq('nan'::DOUBLE, 3.0) IS NULL,
+       qchisq(0.5, 'nan'::DOUBLE) IS NULL
+----
+true	true	true
+
+query TT
+SELECT qexp(0.5) IS NOT NULL,
+       qexp('nan'::DOUBLE) IS NULL
+----
+true	true
+
+query TTT
+SELECT qexp(0.5, 2.0) IS NOT NULL,
+       qexp('nan'::DOUBLE, 2.0) IS NULL,
+       qexp(0.5, 'nan'::DOUBLE) IS NULL
+----
+true	true	true
+
+query TTTT
+SELECT qf(0.5, 2.0, 3.0) IS NOT NULL,
+       qf('nan'::DOUBLE, 2.0, 3.0) IS NULL,
+       qf(0.5, 'nan'::DOUBLE, 3.0) IS NULL,
+       qf(0.5, 2.0, 'nan'::DOUBLE) IS NULL
+----
+true	true	true	true
+
+query TTT
+SELECT qgamma(0.5, 2.0) IS NOT NULL,
+       qgamma('nan'::DOUBLE, 2.0) IS NULL,
+       qgamma(0.5, 'nan'::DOUBLE) IS NULL
+----
+true	true	true
+
+query TTTT
+SELECT qgamma(0.5, 2.0, 1.5) IS NOT NULL,
+       qgamma('nan'::DOUBLE, 2.0, 1.5) IS NULL,
+       qgamma(0.5, 'nan'::DOUBLE, 1.5) IS NULL,
+       qgamma(0.5, 2.0, 'nan'::DOUBLE) IS NULL
+----
+true	true	true	true
+
+query TTTTT
+SELECT qhyper(0.5, 5, 5, 3) IS NOT NULL,
+       qhyper('nan'::DOUBLE, 5, 5, 3) IS NULL,
+       qhyper(0.5, 'nan'::DOUBLE, 5, 3) IS NULL,
+       qhyper(0.5, 5, 'nan'::DOUBLE, 3) IS NULL,
+       qhyper(0.5, 5, 5, 'nan'::DOUBLE) IS NULL
+----
+true	true	true	true	true
+
+query TT
+SELECT qlnorm(0.5) IS NOT NULL,
+       qlnorm('nan'::DOUBLE) IS NULL
+----
+true	true
+
+query TTT
+SELECT qlnorm(0.5, 0.0) IS NOT NULL,
+       qlnorm('nan'::DOUBLE, 0.0) IS NULL,
+       qlnorm(0.5, 'nan'::DOUBLE) IS NULL
+----
+true	true	true
+
+query TTTT
+SELECT qlnorm(0.5, 0.0, 1.0) IS NOT NULL,
+       qlnorm('nan'::DOUBLE, 0.0, 1.0) IS NULL,
+       qlnorm(0.5, 'nan'::DOUBLE, 1.0) IS NULL,
+       qlnorm(0.5, 0.0, 'nan'::DOUBLE) IS NULL
+----
+true	true	true	true
+
+query TTTT
+SELECT qnbinom(0.5, 3.0, 0.5) IS NOT NULL,
+       qnbinom('nan'::DOUBLE, 3.0, 0.5) IS NULL,
+       qnbinom(0.5, 'nan'::DOUBLE, 0.5) IS NULL,
+       qnbinom(0.5, 3.0, 'nan'::DOUBLE) IS NULL
+----
+true	true	true	true
+
+query TT
+SELECT qnorm(0.5) IS NOT NULL,
+       qnorm('nan'::DOUBLE) IS NULL
+----
+true	true
+
+query TTT
+SELECT qnorm(0.5, 0.0) IS NOT NULL,
+       qnorm('nan'::DOUBLE, 0.0) IS NULL,
+       qnorm(0.5, 'nan'::DOUBLE) IS NULL
+----
+true	true	true
+
+query TTTT
+SELECT qnorm(0.5, 0.0, 1.0) IS NOT NULL,
+       qnorm('nan'::DOUBLE, 0.0, 1.0) IS NULL,
+       qnorm(0.5, 'nan'::DOUBLE, 1.0) IS NULL,
+       qnorm(0.5, 0.0, 'nan'::DOUBLE) IS NULL
+----
+true	true	true	true
+
+query TTT
+SELECT qpois(0.5, 3.0) IS NOT NULL,
+       qpois('nan'::DOUBLE, 3.0) IS NULL,
+       qpois(0.5, 'nan'::DOUBLE) IS NULL
+----
+true	true	true
+
+query TTT
+SELECT qt(0.5, 5.0) IS NOT NULL,
+       qt('nan'::DOUBLE, 5.0) IS NULL,
+       qt(0.5, 'nan'::DOUBLE) IS NULL
+----
+true	true	true
+
+query TTTT
+SELECT qtukey(0.5, 3.0, 10.0) IS NOT NULL,
+       qtukey('nan'::DOUBLE, 3.0, 10.0) IS NULL,
+       qtukey(0.5, 'nan'::DOUBLE, 10.0) IS NULL,
+       qtukey(0.5, 3.0, 'nan'::DOUBLE) IS NULL
+----
+true	true	true	true
+
+query TTT
+SELECT qweibull(0.5, 2.0) IS NOT NULL,
+       qweibull('nan'::DOUBLE, 2.0) IS NULL,
+       qweibull(0.5, 'nan'::DOUBLE) IS NULL
+----
+true	true	true
+
+query TTTT
+SELECT qweibull(0.5, 2.0, 1.5) IS NOT NULL,
+       qweibull('nan'::DOUBLE, 2.0, 1.5) IS NULL,
+       qweibull(0.5, 'nan'::DOUBLE, 1.5) IS NULL,
+       qweibull(0.5, 2.0, 'nan'::DOUBLE) IS NULL
+----
+true	true	true	true

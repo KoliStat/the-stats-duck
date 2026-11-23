@@ -17,6 +17,12 @@
 // the CDF rounds to 1 once the tail is below about 1e-16, and the subtraction
 // then returns exactly 0 where the tail function still holds the value (#81).
 //
+// A NaN argument gives a NaN result, and no exception (#102). Most functions
+// get there by IEEE arithmetic alone. The ones that compare, search or bisect
+// test for NaN first: every comparison with NaN is false, so a NaN would pass
+// their domain checks and stop a search at its starting value. The SQL
+// scalars turn the NaN into NULL.
+//
 // Numerical references:
 //   - Numerical Recipes in C, 3rd ed., ch. 6 (gamma/beta functions and their
 //     incomplete companions).
@@ -326,6 +332,9 @@ inline double StudentTUpperTail(double t, double df) {
 
 //! Quantile (inverse CDF) of Student's t via bisection.
 inline double StudentTQuantile(double p, double df) {
+	if (std::isnan(p) || std::isnan(df)) {
+		return std::numeric_limits<double>::quiet_NaN();
+	}
 	if (df <= 0.0) {
 		throw std::invalid_argument("df must be > 0");
 	}
@@ -406,6 +415,9 @@ inline double ChiSquareUpperTail(double x, double df) {
 }
 
 inline double ChiSquareQuantile(double p, double df) {
+	if (std::isnan(p) || std::isnan(df)) {
+		return std::numeric_limits<double>::quiet_NaN();
+	}
 	if (df <= 0.0) {
 		throw std::invalid_argument("df must be > 0");
 	}
@@ -476,6 +488,9 @@ inline double FUpperTail(double x, double df1, double df2) {
 }
 
 inline double FQuantile(double p, double df1, double df2) {
+	if (std::isnan(p) || std::isnan(df1) || std::isnan(df2)) {
+		return std::numeric_limits<double>::quiet_NaN();
+	}
 	if (df1 <= 0.0 || df2 <= 0.0) {
 		throw std::invalid_argument("df must be > 0");
 	}
@@ -541,6 +556,9 @@ inline double GammaCDF(double x, double shape, double rate = 1.0) {
 }
 
 inline double GammaQuantile(double p, double shape, double rate = 1.0) {
+	if (std::isnan(p) || std::isnan(shape) || std::isnan(rate)) {
+		return std::numeric_limits<double>::quiet_NaN();
+	}
 	if (shape <= 0.0 || rate <= 0.0) {
 		throw std::invalid_argument("shape and rate must be > 0");
 	}
@@ -618,6 +636,9 @@ inline double BetaCDF(double x, double alpha, double beta) {
 }
 
 inline double BetaQuantile(double p, double alpha, double beta) {
+	if (std::isnan(p) || std::isnan(alpha) || std::isnan(beta)) {
+		return std::numeric_limits<double>::quiet_NaN();
+	}
 	if (alpha <= 0.0 || beta <= 0.0) {
 		throw std::invalid_argument("alpha and beta must be > 0");
 	}
@@ -712,6 +733,11 @@ inline double WeibullPDF(double x, double shape, double scale = 1.0) {
 }
 
 inline double WeibullCDF(double x, double shape, double scale = 1.0) {
+	// pow(1, NaN) is 1 under IEEE rules, so a NaN shape at x = scale would
+	// give a number without this check.
+	if (std::isnan(x) || std::isnan(shape) || std::isnan(scale)) {
+		return std::numeric_limits<double>::quiet_NaN();
+	}
 	if (shape <= 0.0 || scale <= 0.0) {
 		throw std::invalid_argument("shape and scale must be > 0");
 	}
@@ -786,6 +812,9 @@ inline double LogNormalQuantile(double p, double meanlog = 0.0, double sdlog = 1
 // k ≈ λ + Φ^-1(p)·sqrt(λ).
 
 inline double PoissonPMF(double k, double lambda) {
+	if (std::isnan(k) || std::isnan(lambda)) {
+		return std::numeric_limits<double>::quiet_NaN();
+	}
 	if (lambda <= 0.0) {
 		throw std::invalid_argument("lambda must be > 0");
 	}
@@ -815,6 +844,9 @@ inline double PoissonCDF(double k, double lambda) {
 }
 
 inline double PoissonQuantile(double p, double lambda) {
+	if (std::isnan(p) || std::isnan(lambda)) {
+		return std::numeric_limits<double>::quiet_NaN();
+	}
 	if (lambda <= 0.0) {
 		throw std::invalid_argument("lambda must be > 0");
 	}
@@ -856,6 +888,9 @@ inline double PoissonQuantile(double p, double lambda) {
 // approximation.
 
 inline double NegBinomPMF(double k, double size, double prob) {
+	if (std::isnan(k) || std::isnan(size) || std::isnan(prob)) {
+		return std::numeric_limits<double>::quiet_NaN();
+	}
 	if (size <= 0.0 || prob <= 0.0 || prob > 1.0) {
 		throw std::invalid_argument("size must be > 0 and prob in (0, 1]");
 	}
@@ -886,6 +921,9 @@ inline double NegBinomCDF(double k, double size, double prob) {
 }
 
 inline double NegBinomQuantile(double p, double size, double prob) {
+	if (std::isnan(p) || std::isnan(size) || std::isnan(prob)) {
+		return std::numeric_limits<double>::quiet_NaN();
+	}
 	if (size <= 0.0 || prob <= 0.0 || prob > 1.0) {
 		throw std::invalid_argument("size must be > 0 and prob in (0, 1]");
 	}
@@ -934,6 +972,9 @@ inline double LogChoose(double a, double b) {
 } // namespace detail
 
 inline double HyperGeomPMF(double x, double m, double n, double k) {
+	if (std::isnan(x) || std::isnan(m) || std::isnan(n) || std::isnan(k)) {
+		return std::numeric_limits<double>::quiet_NaN();
+	}
 	if (m < 0.0 || n < 0.0 || k < 0.0 || k > m + n) {
 		throw std::invalid_argument("hyper: m, n, k must be >= 0 and k <= m + n");
 	}
@@ -952,6 +993,9 @@ inline double HyperGeomPMF(double x, double m, double n, double k) {
 }
 
 inline double HyperGeomCDF(double q, double m, double n, double k) {
+	if (std::isnan(q) || std::isnan(m) || std::isnan(n) || std::isnan(k)) {
+		return std::numeric_limits<double>::quiet_NaN();
+	}
 	if (m < 0.0 || n < 0.0 || k < 0.0 || k > m + n) {
 		throw std::invalid_argument("hyper: m, n, k must be >= 0 and k <= m + n");
 	}
@@ -978,6 +1022,9 @@ inline double HyperGeomCDF(double q, double m, double n, double k) {
 }
 
 inline double HyperGeomQuantile(double p, double m, double n, double k) {
+	if (std::isnan(p) || std::isnan(m) || std::isnan(n) || std::isnan(k)) {
+		return std::numeric_limits<double>::quiet_NaN();
+	}
 	if (m < 0.0 || n < 0.0 || k < 0.0 || k > m + n) {
 		throw std::invalid_argument("hyper: m, n, k must be >= 0 and k <= m + n");
 	}

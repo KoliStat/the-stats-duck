@@ -78,6 +78,17 @@ that name is preserved across releases for backward compatibility.
   compares `OVER ()` with the plain aggregate and `OVER (PARTITION BY)` with
   `GROUP BY`, struct by struct, for 22 aggregates, and runs `bootstrap` under
   a window.
+- **Distribution functions give NULL for a NaN argument** (#102). Thirteen
+  of them returned a number instead. `qt('nan', 5)` gave -1000.0, the end of
+  its bisection bracket. `qchisq`, `qf`, `qgamma`, `qbeta`, `qpois`,
+  `qnbinom` and `qhyper` stopped their searches at a starting value in the
+  same way. `dpois`, `dnbinom`, `dhyper` and `phyper` gave 0 for a NaN
+  count. `pweibull(1.0, 'nan')` gave 0.632, because `pow(1, NaN)` is 1. Each
+  of these functions in `src/include/distributions.hpp` now returns NaN for
+  a NaN argument, and the SQL scalars turn it into NULL.
+  `test/sql/distribution_nan_args.test` calls every overload with NaN in
+  each argument, and `test/cpp/test_distributions.cpp` does the same for
+  the kernel functions.
 - **Which statements are ours is decided by the grammar's tokenizer** (#86).
   The parser extension used a private byte scan to decide whether a
   statement was a `VISUALIZE` statement. The scan and the grammar's

@@ -342,7 +342,10 @@ a call across that boundary needs qualifying, as `lin_hyp.cpp` already does.
 This is where every fitter's p-values and confidence intervals come from,
 per `docs/fitter_conventions.md`: there is never a second CDF implementation.
 Most of the header backs the `d*`/`p*`/`q*` SQL scalars in the README's
-distribution-functions table one for one. The two functions below are the
+distribution-functions table one for one. In every function, a NaN argument
+gives a NaN result and no exception, and the SQL scalars turn that NaN into
+NULL (#102). An argument outside its domain, such as `df <= 0`, throws
+`std::invalid_argument`, except in the two functions below. The two are the
 newest, and worth a closer look here, because `emmeans`'s `tukey` adjustment
 depends on them and they carry their own accuracy limit.
 
@@ -360,9 +363,10 @@ Exposed as the SQL scalars `ptukey` and `qtukey`.
   `ptukey(q, 2, df) = 2 · pt(q / sqrt(2), df) − 1`. This is the fastest way to
   convince yourself the two-integral quadrature is right, because it reduces
   the whole thing to a distribution this header already validates elsewhere.
-- **Both return NaN instead of throwing when `k < 2`, `k` is infinite,
-  `df <= 0`, or any argument is NaN**, unlike the rest of this header,
-  which throws `std::invalid_argument`. An infinite `k` is rejected on
+- **Both return NaN instead of throwing when `k < 2`, `k` is infinite or
+  `df <= 0`**, unlike the rest of this header, which throws
+  `std::invalid_argument` for an argument outside its domain. A NaN argument
+  gives NaN here, as everywhere in the header. An infinite `k` is rejected on
   purpose rather than left to run: without the check, the inner integral's
   `[Phi(z) - Phi(z-w)]^(k-1)` factor underflows to zero at every node for a
   large enough `k`, and `k` (infinity) times that zero is `NaN` under IEEE
