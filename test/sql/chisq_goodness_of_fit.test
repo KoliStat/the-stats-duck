@@ -94,3 +94,23 @@ FROM per_group GROUP BY g ORDER BY g
 ----
 s1	false
 s2	true
+
+# The chi-square sum runs in ascending category order (#54), so the order of
+# the rows cannot change the result. Counts a = 6, b = 1 and c = 1 give 6.25
+# when summed in key order. Adding the two small terms first gives
+# 6.250000000000001. Both tables hold the same rows, in a different order.
+statement ok
+CREATE TABLE keys_ascending AS SELECT * FROM (VALUES
+    ('a'), ('a'), ('a'), ('a'), ('a'), ('a'), ('b'), ('c')
+) AS t(c);
+
+statement ok
+CREATE TABLE keys_descending AS SELECT * FROM (VALUES
+    ('c'), ('b'), ('a'), ('a'), ('a'), ('a'), ('a'), ('a')
+) AS t(c);
+
+query TT
+SELECT (SELECT (chisq_goodness_of_fit(c)).chi_square FROM keys_ascending) = 6.25::DOUBLE,
+       (SELECT (chisq_goodness_of_fit(c)).chi_square FROM keys_descending) = 6.25::DOUBLE
+----
+true	true

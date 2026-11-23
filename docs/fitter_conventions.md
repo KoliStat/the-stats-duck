@@ -242,8 +242,8 @@ result STRUCT.
 | `sign_test_1samp`, `sign_test_paired` | STRUCT | not needed (`p` is always finite) | NULL and NaN skipped; paired drops the pair | no signed difference (`n_pos + n_neg < 1`) → NULL | none |
 | `pearson_test`, `spearman_test` | STRUCT | no | pair dropped when either side is NULL or NaN | `n < 3` or zero variance → NULL; at `n = 3` the CI fields are NaN; `t_statistic` is ±Inf at `\|r\| = 1` | CI NaN #53; ±Inf passes through under the standard |
 | `kendall_test` | STRUCT | no | as Pearson | `n < 3` or a zero denominator → NULL; degenerate variance → `z = 0`, `p = 1` | grandfathered |
-| `anova_oneway` | STRUCT | no | row dropped when the value or the group is NULL, or the value is NaN | fewer than 2 groups, or `n − k ≤ 0` → NULL; zero within-group variance → `f = +Inf`, `p = 0` | sums in hash-table order #54 |
-| `chisq_independence`, `chisq_goodness_of_fit` | STRUCT | no NaN path (VARCHAR inputs) | row dropped when a label is NULL | empty table, `1 × N`, or fewer than 2 categories → NULL | sums in hash-table order #54 |
+| `anova_oneway` | STRUCT | no | row dropped when the value or the group is NULL, or the value is NaN | fewer than 2 groups, or `n − k ≤ 0` → NULL; zero within-group variance → `f = +Inf`, `p = 0` | hash-table sum order fixed in #54 |
+| `chisq_independence`, `chisq_goodness_of_fit` | STRUCT | no NaN path (VARCHAR inputs) | row dropped when a label is NULL | empty table, `1 × N`, or fewer than 2 categories → NULL | hash-table sum order fixed in #54 |
 | `jarque_bera` | STRUCT | not needed | NULL and NaN skipped | `n < 4` or zero variance → NULL | none |
 | `shapiro_wilk` | STRUCT | clamps `w` and `p` into [0, 1] | NULL and NaN skipped | `n < 3` or `n > 5000` → NULL; all-equal input → `w = 1`, `p = 1` | all-equal input differs from Anderson–Darling and KS, which return NULL; grandfathered |
 | `anderson_darling` | STRUCT | clamps `p` | NULL and NaN skipped | `n < 8` or zero variance → NULL | none |

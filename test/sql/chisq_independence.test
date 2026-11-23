@@ -158,3 +158,26 @@ FROM per_group GROUP BY g ORDER BY g
 ----
 s1	true
 s2	false
+
+# The chi-square sum runs over rows and columns in ascending key order (#54),
+# so the order of the rows cannot change the result. The exact statistic of
+# this table is 0.9. Summed in key order (rows p, q; columns x, y, z), the
+# double is 0.8999999999999999. The reverse order gives 0.9000000000000001.
+# Both tables hold the same rows, in a different order.
+statement ok
+CREATE TABLE keys_ascending AS SELECT * FROM (VALUES
+    ('p', 'x'), ('p', 'y'), ('p', 'z'),
+    ('q', 'x'), ('q', 'y'), ('q', 'z'), ('q', 'z'), ('q', 'z'), ('q', 'z')
+) AS t(r, c);
+
+statement ok
+CREATE TABLE keys_descending AS SELECT * FROM (VALUES
+    ('q', 'z'), ('q', 'z'), ('q', 'z'), ('q', 'z'), ('q', 'y'), ('q', 'x'),
+    ('p', 'z'), ('p', 'y'), ('p', 'x')
+) AS t(r, c);
+
+query TT
+SELECT (SELECT (chisq_independence(r, c)).chi_square FROM keys_ascending) = 0.8999999999999999::DOUBLE,
+       (SELECT (chisq_independence(r, c)).chi_square FROM keys_descending) = 0.8999999999999999::DOUBLE
+----
+true	true

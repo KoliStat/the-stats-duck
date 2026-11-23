@@ -2,6 +2,7 @@
 #include "register_documented.hpp"
 #include "distributions.hpp"
 #include "portable_string_hash.hpp"
+#include "sorted_entries.hpp"
 
 #include "duckdb/function/aggregate_function.hpp"
 #include "duckdb/function/function_set.hpp"
@@ -30,6 +31,10 @@ namespace compat = statsduck::compat;
 //   F          = MS_between / MS_within
 //   p_value    = the F upper tail at F on (df_between, df_within), #81
 //   eta^2      = SS_between / (SS_between + SS_within)
+//
+// The sums over groups run in ascending key order (#54), not in the iteration
+// order of the hash map, which depends on its bucket layout and on the order
+// in which the groups first appear.
 //
 // Groups are keyed by VARCHAR (the most common case in practice). Users with
 // numeric group IDs can always CAST them to VARCHAR.
@@ -174,12 +179,13 @@ static void AnovaFinalize(Vector &state_vector, compat::FinalizeInput &, Vector 
 			continue;
 		}
 
-		int64_t k = static_cast<int64_t>(state.groups->size());
+		const auto groups = stats_duck::SortedEntries(*state.groups);
+		int64_t k = static_cast<int64_t>(groups.size());
 		int64_t n_total = 0;
 		double weighted_mean_sum = 0.0;
-		for (auto &kv : *state.groups) {
-			n_total += kv.second.n;
-			weighted_mean_sum += static_cast<double>(kv.second.n) * kv.second.mean;
+		for (const auto *group : groups) {
+			n_total += group->second.n;
+			weighted_mean_sum += static_cast<double>(group->second.n) * group->second.mean;
 		}
 		if (n_total - k <= 0) {
 			// Not enough observations to estimate within-group variance.
@@ -190,11 +196,11 @@ static void AnovaFinalize(Vector &state_vector, compat::FinalizeInput &, Vector 
 
 		double ss_between = 0.0;
 		double ss_within = 0.0;
-		for (auto &kv : *state.groups) {
-			double n_g = static_cast<double>(kv.second.n);
-			double diff = kv.second.mean - grand_mean;
+		for (const auto *group : groups) {
+			double n_g = static_cast<double>(group->second.n);
+			double diff = group->second.mean - grand_mean;
 			ss_between += n_g * diff * diff;
-			ss_within += kv.second.m2;
+			ss_within += group->second.m2;
 		}
 
 		double df_between = static_cast<double>(k - 1);
