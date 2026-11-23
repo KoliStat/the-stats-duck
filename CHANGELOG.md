@@ -80,7 +80,7 @@ that name is preserved across releases for backward compatibility.
   check rows with differing keys against the quantile computed directly.
 - **No deprecated DuckDB call is left in the binding layer** (#79). DuckDB 2.0
   deprecates `Vector::ToUnifiedFormat` with a row count, `DataChunk::SetValue`
-  and `DataChunk::SetCardinality`. GCC and Clang warned at 126 call sites.
+  and `DataChunk::SetCardinality`. GCC warned at 126 call sites.
   MSVC builds showed none of them. The calls now go through
   `compat::ToUnified` and `compat::SetCardinality` in
   `src/include/duckdb_compat.hpp`, and through `Vector::SetValue`.

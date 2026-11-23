@@ -56,7 +56,7 @@ The fix does not use `CheckCardinality`, the replacement that the deprecation
 message names first. It only compares the sizes, so it throws for a chunk that
 was filled by index.
 
-DuckDB's own code made the same choice. 2.0 calls `SetChildCardinality` in 114
+DuckDB's own code made the same choice. 2.0 calls `SetChildCardinality` in 111
 places in `src/` and 15 in `extension/`. One of them is `read_text`
 (`src/function/table/direct_file_reader.cpp:194`), which writes by index.
 DuckDB 1.5.6 carries `SetChildCardinality`, `SetCardinalityUnsafe` and
@@ -71,7 +71,7 @@ parameter is a non-const `Vector &` because 1.x's `ToUnifiedFormat` is not
 `const`.
 
 `DataChunk::SetValue(col, row, value)` became `chunk.data[col].SetValue(row,
-value)`. That is the body of the deprecated function, on every line. There is
+value)`. That is the body of the deprecated function on 1.x and on 2.0. There is
 no shim.
 
 ## How to check
@@ -97,7 +97,7 @@ or an error that contains the given text. On 1.x the `SET` fails with
 setting is a static on 2.0, so it holds for the whole process. The file resets
 it at its end.
 
-MSVC builds do not show these deprecation warnings. GCC and Clang do. On
+MSVC builds do not show these deprecation warnings. GCC does. On
 Windows the script is the only local way to see them.
 
 ## What this does not do
