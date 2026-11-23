@@ -22,6 +22,7 @@ struct ScaleSpec {
 	string sub_object = "scale";  // channel sub-object: "scale" (TO/ZERO/DOMAIN) or "axis" (LABEL)
 	string property;              // sub-object property: "scheme", "domain", "zero", "title", ...
 	string value_json;            // value formatted as JSON ('"viridis"', '[0,100]', 'false', '"My label"', ...)
+	string via;                   // VIA transform name (lower case) on entries a VIA produced, else empty
 };
 
 struct TypeOverride {

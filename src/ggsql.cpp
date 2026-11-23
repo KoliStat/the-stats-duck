@@ -247,6 +247,30 @@ string ApplyTypeOverrides(string layer_body, const vector<TypeOverride> &overrid
 	return layer_body;
 }
 
+// The user's `:type` overrides, plus `quantitative` for each channel that has a
+// SCALE ... VIA and no override. Vega-Lite drops an explicit scale type that
+// does not fit the field's type, and color, fill and stroke are nominal in our
+// channel table. A `:type` suffix therefore takes precedence over VIA.
+vector<TypeOverride> EffectiveTypeOverrides(const VisualizeStatement &stmt) {
+	vector<TypeOverride> result = stmt.type_overrides;
+	for (const auto &scale : stmt.scales) {
+		if (scale.via.empty()) {
+			continue;
+		}
+		bool seen = false;
+		for (const auto &ov : result) {
+			if (ov.aesthetic == scale.aesthetic) {
+				seen = true;
+				break;
+			}
+		}
+		if (!seen) {
+			result.push_back({scale.aesthetic, "quantitative"});
+		}
+	}
+	return result;
+}
+
 CompiledResult Compile(ClientContext &context, const VisualizeStatement &stmt) {
 	if (stmt.layers.empty()) {
 		throw InvalidInputException("visualize: at least one DRAW clause is required");
@@ -280,7 +304,7 @@ CompiledResult Compile(ClientContext &context, const VisualizeStatement &stmt) {
 		// `spec` sibling of `facet`.
 		const string layer_name = "layer_0";
 		MarkResult rendered = RenderLayer(context, stmt, stmt.layers[0], projected_sql);
-		rendered.layer_body = ApplyTypeOverrides(std::move(rendered.layer_body), stmt.type_overrides);
+		rendered.layer_body = ApplyTypeOverrides(std::move(rendered.layer_body), EffectiveTypeOverrides(stmt));
 		rendered.layer_body = ApplyScales(std::move(rendered.layer_body), stmt.scales);
 
 		string spec =
@@ -312,7 +336,7 @@ CompiledResult Compile(ClientContext &context, const VisualizeStatement &stmt) {
 		}
 		string layer_name = "layer_" + std::to_string(i);
 		MarkResult rendered = RenderLayer(context, stmt, stmt.layers[i], projected_sql);
-		rendered.layer_body = ApplyTypeOverrides(std::move(rendered.layer_body), stmt.type_overrides);
+		rendered.layer_body = ApplyTypeOverrides(std::move(rendered.layer_body), EffectiveTypeOverrides(stmt));
 		rendered.layer_body = ApplyScales(std::move(rendered.layer_body), stmt.scales);
 		layer_array += R"({"data":{"name":")";
 		layer_array += layer_name;
@@ -502,7 +526,7 @@ static bool IsClauseKeyword(const string &text) {
 	    "LIKE",      "ILIKE",    "IS",     "WITH",   "HAVING", "LIMIT",     "OFFSET", "UNION",    "EXCEPT",
 	    "INTERSECT", "ALL",      "DISTINCT", "CASE", "END",    "USING",     "ANY",   "SOME",      "INTO",
 	    "GROUP",     "ORDER",    "RETURNING", "SET", "DRAW",   "FACET",     "SCALE", "TITLE", "MATERIALIZED",
-	    "SUBTITLE",  "DOMAIN",   "LABEL",  "TO",     "ROWS",   "COLUMNS",   "ZERO",  "RETURN",    "SETTING"};
+	    "SUBTITLE",  "DOMAIN",   "LABEL",  "TO",     "ROWS",   "COLUMNS",   "ZERO",  "RETURN",    "SETTING",  "VIA"};
 	auto upper = StringUtil::Upper(text);
 	for (auto word : kWords) {
 		if (upper == word) {

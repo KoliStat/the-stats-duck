@@ -312,11 +312,25 @@ VISUALIZE bill_len AS x, bill_dep AS y FROM penguins DRAW point FACET BY species
 | `ZERO true\|false` | include / exclude zero on a quantitative scale |
 | `DOMAIN <lo> <hi>` | fixed numeric domain |
 | `LABEL '<text>'` | axis title |
+| `VIA <transform>` | transform the scale (table below) |
 | `SETTING reverse => true\|false` | reverse the direction of the scale |
 
 `SETTING` takes upstream ggsql's `name => value` form. Separate several
 settings with commas. `reverse` is the only setting so far, and any other name
 is an error. You may write `=>` with or without spaces around it.
+
+| `VIA` | Vega-Lite scale |
+|-------|-----------------|
+| `linear` | `linear` |
+| `log`, `log2`, `ln` | `log` with base 10, 2 and e |
+| `sqrt` | `sqrt` |
+| `square` | `pow` with exponent 2 |
+| `asinh`, `pseudo_log`, `pseudo_log2`, `pseudo_ln` | `symlog` |
+
+- The curve of `symlog` is close to upstream's but not the same.
+- Upstream's `exp`, `exp2`, `exp10`, `integer`, `date`, `datetime` and `time` are not supported yet.
+- `VIA` makes the channel quantitative, because Vega-Lite applies a continuous scale only to a quantitative channel. A `:type` suffix on the mapping takes precedence.
+- `shape`, `linetype`, `text` and `tooltip` take no `VIA`.
 
 **Stack multiple options** on one `SCALE`, or repeat `SCALE <channel>` — they
 merge into one scale/axis block either way:
@@ -413,7 +427,7 @@ VISUALIZE <expr> AS <aesthetic> [: <type>] (, <expr> AS <aesthetic> ...)
 FROM <table>
 DRAW <mark> [STAT <identity|smooth|summary>] (DRAW <mark> [STAT ...])*
 [FACET BY <expr> [ROWS | COLS] | FACET BY <row_expr>, <col_expr>]
-[SCALE <channel> {TO <scheme> | ZERO true|false | DOMAIN <lo> <hi> | LABEL '<text>' | SETTING reverse => true|false}+]*
+[SCALE <channel> {TO <scheme> | ZERO true|false | DOMAIN <lo> <hi> | LABEL '<text>' | VIA <transform> | SETTING reverse => true|false}+]*
 [TITLE '<text>' [SUBTITLE '<text>']]
 ```
 
