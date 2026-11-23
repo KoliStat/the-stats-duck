@@ -2,11 +2,13 @@
 #
 # List the calls in src/ that a DuckDB header tree marks as deprecated.
 #
-# DuckDB 2.0 marks some calls as deprecated. GCC and Clang print a warning for
-# each use. MSVC builds do not show these warnings, so on Windows nobody sees
+# DuckDB 2.0 marks some calls as deprecated. GCC prints a warning for each
+# use. MSVC builds do not show these warnings, so on Windows nobody sees
 # them. DuckDB's CMakeLists.txt removes the /W level from the MSVC flags (line
 # 1091 at v2.0.0, line 641 at v1.4.3). MSVC then compiles at its default
-# level 1. Its deprecation warning, C4996, is a level 3 warning. This script compiles every src/*.cpp with -fsyntax-only and
+# level 1. Its deprecation warning, C4996, is a level 3 warning.
+#
+# This script compiles every src/*.cpp with -fsyntax-only and
 # -Wdeprecated-declarations, and collects the warnings located in src/.
 # Warnings located in DuckDB's own headers are not counted.
 #
