@@ -9,6 +9,7 @@ require stats_duck
 # makes the engine compare it with the row count of the chunk. The 1.x lines
 # do not have the setting. There the SET fails with the message below, which
 # "statement maybe" accepts, and the rest of the file runs as plain calls.
+# A new table function gets a statement in this file.
 statement maybe
 SET debug_verification_mode = 'VERIFY_VECTORS';
 ----
@@ -79,8 +80,11 @@ SELECT count(*), count(DISTINCT level) FROM table_one('vv_levels', variables := 
 
 # read_stat stages the rows of a file in a chunk of its own. A file of more
 # than one vector fills that chunk, appends it to the buffer and starts again.
+# The strings are 17 characters long. DuckDB keeps a string of more than 12
+# characters in the vector's string heap, which the staging chunk drops when
+# it starts again.
 statement ok
-COPY (SELECT i AS i, 'r' || i AS s FROM range(5000) t(i)) TO '__TEST_DIR__/vv_big.xpt';
+COPY (SELECT i AS i, 'row number ' || lpad(i::VARCHAR, 6, '0') AS s FROM range(5000) t(i)) TO '__TEST_DIR__/vv_big.xpt';
 
 query IIIII
 SELECT count(*), CAST(sum(i) AS BIGINT), CAST(min(i) AS BIGINT), CAST(max(i) AS BIGINT), count(DISTINCT s)
@@ -89,7 +93,8 @@ FROM read_stat('__TEST_DIR__/vv_big.xpt')
 5000	12497500	0	4999	5000
 
 # The setting is process-wide on 2.0, so it is switched off again for the
-# test files that run after this one.
+# test files that run after this one. If this file fails before this point,
+# the setting stays on for them.
 statement maybe
 RESET debug_verification_mode;
 ----

@@ -135,12 +135,17 @@ inline duckdb::ValidityMask &WriteValidity(duckdb::Vector &vector) {
 #endif
 }
 
-//! Sets the row count of an output chunk. The caller has written rows
-//! [0, count) into the vectors of the chunk by index. On 1.x the chunk alone
-//! carries the count. On 2.0 each vector carries a size as well. The
-//! deprecated DataChunk::SetCardinality leaves that size at 0, and
-//! SetChildCardinality sets both. The engine's vector verification fails on
-//! a size mismatch (#79).
+//! Sets the row count of a chunk after the caller has written rows
+//! [0, count) into its vectors by index. On 1.x the chunk alone carries the
+//! count. On 2.0 each vector carries a size as well. The deprecated
+//! DataChunk::SetCardinality leaves that size at 0, and SetChildCardinality
+//! sets both. The engine compares the two only under
+//! SET debug_verification_mode = 'VERIFY_VECTORS' (#79).
+//!
+//! Use it for a chunk whose own flat vectors were filled. On 2.0
+//! SetChildCardinality resizes flat and constant vectors only, and throws for
+//! any other vector of a different size. The size lives on the vector's
+//! buffer, so a vector that shares the buffer gets it too.
 inline void SetCardinality(duckdb::DataChunk &chunk, duckdb::idx_t count) {
 #ifdef STATS_DUCK_DUCKDB_VECTOR_V2
 	chunk.SetChildCardinality(count);

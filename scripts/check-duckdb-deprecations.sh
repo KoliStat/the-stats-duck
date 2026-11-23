@@ -4,7 +4,9 @@
 #
 # DuckDB 2.0 marks some calls as deprecated. GCC and Clang print a warning for
 # each use. MSVC builds do not show these warnings, so on Windows nobody sees
-# them. This script compiles every src/*.cpp with -fsyntax-only and
+# them. DuckDB's CMakeLists.txt removes the /W level from the MSVC flags (line
+# 1091 at v2.0.0, line 641 at v1.4.3). MSVC then compiles at its default
+# level 1. Its deprecation warning, C4996, is a level 3 warning. This script compiles every src/*.cpp with -fsyntax-only and
 # -Wdeprecated-declarations, and collects the warnings located in src/.
 # Warnings located in DuckDB's own headers are not counted.
 #
@@ -84,6 +86,9 @@ if [[ ${#files[@]} -eq 0 ]]; then
 fi
 
 export CXX STD inc_dir win_inc tmp
+# The compiler needs this too, not only sort. In a UTF-8 locale GCC quotes a
+# name with the typographic quotes U+2018 and U+2019. The sed pattern below
+# looks for the ASCII apostrophe.
 export LC_ALL=C
 
 compile_one() {
@@ -121,7 +126,10 @@ if [[ ${#failed[@]} -gt 0 ]]; then
   for name in "${failed[@]}"; do
     echo
     echo "src/$name:"
-    grep -E 'error:' "$tmp/out/$name.log" || true
+    # A missing or crashed compiler leaves no error: line. Show the log then.
+    if ! grep -E 'error:' "$tmp/out/$name.log" 2>/dev/null; then
+      head -n 3 "$tmp/out/$name.log" 2>/dev/null || true
+    fi
   done
   status=1
 fi
@@ -129,8 +137,27 @@ fi
 # Deprecated calls. Each line becomes "<name><TAB><path>:<line>".
 # sort -u counts a name at one location once, even when a template repeats it.
 cat "$tmp"/out/*.log 2>/dev/null |
-  sed -n -E "s/^(src\/[^:]+):([0-9]+):[0-9]+: warning: ('.*') is deprecated.*\$/\3	\1:\2/p" |
-  sort -u >"$tmp/calls.txt"
+  sed -n -E "s/^(src\/[^:]+):([0-9]+):[0-9]+: warning: ('.*') is deprecated.*\$/\3	\1:\2/p" \
+    >"$tmp/parsed.txt"
+sort -u "$tmp/parsed.txt" >"$tmp/calls.txt"
+
+# Every deprecation warning in src/ must be parsed. A change in the wording of
+# the compiler's message would otherwise end in a silent pass.
+cat "$tmp"/out/*.log 2>/dev/null |
+  grep -E '^src/[^:]+:[0-9]+:[0-9]+: warning: .*\[-Wdeprecated-declarations\]' \
+    >"$tmp/tagged.txt" || true
+tagged="$(wc -l <"$tmp/tagged.txt" | tr -d ' ')"
+parsed="$(sed -n -E "s/^(src\/[^:]+):([0-9]+):[0-9]+: warning: ('.*') is deprecated.*\$/\3/p" "$tmp/tagged.txt" | wc -l | tr -d ' ')"
+if [[ "$tagged" -gt "$parsed" ]]; then
+  if [[ $status -ne 0 ]]; then
+    echo
+  fi
+  echo "FAIL: $((tagged - parsed)) deprecation warnings in src/ could not be parsed ($header)"
+  # Show the tagged lines that the sed pattern does not parse.
+  grep -v -E "^(src/[^:]+):([0-9]+):[0-9]+: warning: ('.*') is deprecated" "$tmp/tagged.txt" |
+    head -n 5 | sed 's/^/  /'
+  status=1
+fi
 
 if [[ -s "$tmp/calls.txt" ]]; then
   total="$(wc -l <"$tmp/calls.txt" | tr -d ' ')"

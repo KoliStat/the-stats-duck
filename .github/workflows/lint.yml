@@ -46,3 +46,12 @@ jobs:
       # call written on Windows goes unnoticed without this.
       - name: No deprecated DuckDB call in src/
         run: bash scripts/check-duckdb-deprecations.sh "$RUNNER_TEMP/duckdb-v2"
+      # The guard has to be able to fail on this runner. This step adds one
+      # deprecated call to this checkout only, and the script must report it.
+      - name: The guard reports a deprecated call
+        run: |
+          printf '%s\n' '#include "duckdb.hpp"' 'void stats_duck_guard_probe(duckdb::DataChunk &chunk) { chunk.SetCardinality(0); }' > src/zz_guard_probe.cpp
+          out="$(bash scripts/check-duckdb-deprecations.sh "$RUNNER_TEMP/duckdb-v2" || true)"
+          echo "$out"
+          grep -q '^FAIL: 1 deprecated DuckDB call sites in src/' <<<"$out"
+          grep -q '^  src/zz_guard_probe.cpp:2$' <<<"$out"

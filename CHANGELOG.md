@@ -88,7 +88,8 @@ that name is preserved across releases for backward compatibility.
   call in `src/` against a DuckDB header tree. It compiles each file with
   `g++ -fsyntax-only`, so it needs no DuckDB build, and it also shows whether
   the sources compile on that DuckDB line. A CI job runs it against the v2.0.0
-  headers on every pull request.
+  headers on every pull request. The job also adds one deprecated call to its
+  own checkout and checks that the script reports it.
 
 ### Fixed
 
@@ -180,7 +181,7 @@ that name is preserved across releases for backward compatibility.
   2.0 every vector carries its own size, next to the row count of its chunk.
   `corr_matrix`, `lm`, `lm_summary`, `meta`, `read_stat_metadata`, `table_one`
   and `VISUALIZE` set the row count of their output and left the vectors at
-  size 0. Query results were right. With `SET debug_verification_mode =
+  size 0. No test showed a wrong result. With `SET debug_verification_mode =
   'VERIFY_VECTORS'` each of them failed with `INTERNAL Error:
   DataChunk::Verify - size mismatch`, and so did 34 of the 76 test files when
   the suite ran with that setting. They now set both through

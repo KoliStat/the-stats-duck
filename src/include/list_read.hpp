@@ -90,7 +90,8 @@ struct ListMatrixReader {
 		statsduck::compat::ToUnified(rows_vec, ListVector::GetListSize(v), row_fmt);
 		row_entries = UnifiedVectorFormat::GetData<list_entry_t>(row_fmt);
 
-		statsduck::compat::ToUnified(statsduck::compat::ListChild(rows_vec), ListVector::GetListSize(rows_vec), val_fmt);
+		auto &vals_vec = statsduck::compat::ListChild(rows_vec);
+		statsduck::compat::ToUnified(vals_vec, ListVector::GetListSize(rows_vec), val_fmt);
 	}
 
 	// False when row's own list argument is NULL. Rows() and Read() are not
