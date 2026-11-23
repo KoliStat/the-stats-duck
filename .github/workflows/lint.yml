@@ -26,3 +26,23 @@ jobs:
         run: git submodule update --init --depth 1 third_party/eigen
       - name: Build + run C++ unit tests
         run: bash scripts/run-cpp-tests.sh
+
+  duckdb-deprecation-guard:
+    name: DuckDB 2.0 deprecated-call guard
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # The sources include Eigen and ReadStat headers. The duckdb submodule
+      # is not needed: it is pinned to v1.4.3, and this check wants the v2.0.0
+      # headers.
+      - name: Check out Eigen and ReadStat
+        run: git submodule update --init --depth 1 third_party/eigen third_party/readstat
+      # A sparse, blobless clone of the one directory the check reads.
+      - name: Fetch the DuckDB v2.0.0 headers
+        run: |
+          git clone --depth 1 --branch v2.0.0 --filter=blob:none --sparse https://github.com/duckdb/duckdb.git "$RUNNER_TEMP/duckdb-v2"
+          git -C "$RUNNER_TEMP/duckdb-v2" sparse-checkout set src/include
+      # MSVC builds do not show DuckDB's deprecation warnings, so a deprecated
+      # call written on Windows goes unnoticed without this.
+      - name: No deprecated DuckDB call in src/
+        run: bash scripts/check-duckdb-deprecations.sh "$RUNNER_TEMP/duckdb-v2"
