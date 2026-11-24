@@ -149,6 +149,97 @@ FROM meta('one_row')
 ----
 7	7	7	7	7	7	NULL
 
+# ─── Wide tables ────────────────────────────────────────────────────────────
+
+# meta() asks for one count(DISTINCT col) per column. DuckDB 2.0 plans each
+# DISTINCT aggregate as one more level of a nested plan. With one query for
+# all columns, a table of about 350 columns ended the process on DuckDB 2.0.0
+# while the query was planned (#105). The counts are asked for in batches of
+# 32 columns now.
+#
+# The tables below have 12 rows, a row number r and n value columns. Value
+# column i holds r % (1 + i % 5), and it is NULL in its first i % 4 rows. So
+# it has i % 4 missing values, 1 + i % 5 distinct values, the minimum 0 and
+# the maximum i % 5.
+statement ok
+CREATE MACRO wide_long(n) AS TABLE
+SELECT r, 'c' || lpad(i::VARCHAR, 4, '0') AS k,
+       CASE WHEN r < i % 4 THEN NULL ELSE (r % (1 + i % 5))::DOUBLE END AS v
+FROM range(12) a(r), range(n) b(i)
+
+# 32 columns: exactly one batch.
+statement ok
+CREATE TABLE wide32 AS PIVOT (SELECT * FROM wide_long(31)) ON k USING first(v) GROUP BY r
+
+query I
+SELECT count(*) FROM meta('wide32')
+----
+32
+
+# Every value column has the counts and the range computed above.
+query II
+SELECT count(*),
+       count(*) FILTER (WHERE m.n_rows = 12 AND m.n_missing = i % 4 AND m.n_distinct = 1 + i % 5
+                          AND m.min = 0 AND m.max = i % 5)
+FROM meta('wide32') m JOIN range(31) t(i) ON m.column_name = 'c' || lpad(i::VARCHAR, 4, '0')
+----
+31	31
+
+# 33 columns: one batch and one column more.
+statement ok
+CREATE TABLE wide33 AS PIVOT (SELECT * FROM wide_long(32)) ON k USING first(v) GROUP BY r
+
+query I
+SELECT count(*) FROM meta('wide33')
+----
+33
+
+query II
+SELECT count(*),
+       count(*) FILTER (WHERE m.n_rows = 12 AND m.n_missing = i % 4 AND m.n_distinct = 1 + i % 5
+                          AND m.min = 0 AND m.max = i % 5)
+FROM meta('wide33') m JOIN range(32) t(i) ON m.column_name = 'c' || lpad(i::VARCHAR, 4, '0')
+----
+32	32
+
+# 65 columns: two batches and one column more.
+statement ok
+CREATE TABLE wide65 AS PIVOT (SELECT * FROM wide_long(64)) ON k USING first(v) GROUP BY r
+
+query II
+SELECT count(*),
+       count(*) FILTER (WHERE m.n_rows = 12 AND m.n_missing = i % 4 AND m.n_distinct = 1 + i % 5
+                          AND m.min = 0 AND m.max = i % 5)
+FROM meta('wide65') m JOIN range(64) t(i) ON m.column_name = 'c' || lpad(i::VARCHAR, 4, '0')
+----
+64	64
+
+# 501 columns: the table of #105. On DuckDB 2.0.0 the test runner ended here
+# with "SIGSEGV - Stack overflow".
+statement ok
+CREATE TABLE wide501 AS PIVOT (SELECT * FROM wide_long(500)) ON k USING first(v) GROUP BY r
+
+query I
+SELECT count(*) FROM meta('wide501')
+----
+501
+
+query II
+SELECT count(*),
+       count(*) FILTER (WHERE m.n_rows = 12 AND m.n_missing = i % 4 AND m.n_distinct = 1 + i % 5
+                          AND m.min = 0 AND m.max = i % 5)
+FROM meta('wide501') m JOIN range(500) t(i) ON m.column_name = 'c' || lpad(i::VARCHAR, 4, '0')
+----
+500	500
+
+# The row number is the first column and sits in the first batch.
+query IIIRR
+SELECT n_rows, n_missing, n_distinct, min, max
+FROM meta('wide501')
+WHERE column_name = 'r'
+----
+12	0	12	0	11
+
 # Unknown source table — bind error.
 statement error
 SELECT * FROM meta('not_a_real_table')

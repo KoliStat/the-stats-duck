@@ -12,6 +12,7 @@
 #include "duckdb/main/database.hpp"
 #include "duckdb/main/extension/extension_loader.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <limits>
 #include <sstream>
@@ -27,9 +28,10 @@ namespace compat = statsduck::compat;
 // At bind time we resolve the source table in the catalog and capture each
 // declared column's name, type-as-text, and a semantic kind (numeric /
 // categorical / temporal / boolean / other). At init-global time we open an
-// internal Connection and run three batches:
-//   1. one combined query with count(*), count(col_i), count(DISTINCT col_i)
-//      across all columns — the cheap metadata that applies to every kind;
+// internal Connection and run three kinds of query:
+//   1. count(*), count(col_i) and count(DISTINCT col_i), the counts that
+//      apply to every kind. One query per batch of COUNT_BATCH_COLUMNS
+//      columns; the comment on that constant says why;
 //   2. one combined query computing min / p25 / median / p75 / max / avg /
 //      stddev_samp for the numeric columns only (cast to DOUBLE);
 //   3. one mode query per categorical / boolean column, giving (top, top_freq)
@@ -186,6 +188,15 @@ static unique_ptr<FunctionData> MetaBind(ClientContext &context, TableFunctionBi
 
 // ── Init / fetch ──────────────────────────────────────────────────────────
 
+//! Columns per counts query. The counts need one count(DISTINCT col) per
+//! column. DuckDB 2.0 plans each DISTINCT aggregate as one more level of a
+//! nested plan (its distinct_aggregate_rewrite step). With one query for all
+//! columns, a table of about 350 columns ran out of stack while the query was
+//! planned, and the process ended (#105). A batch keeps the plan shallow on
+//! every DuckDB line. On 2.0.0, batches of 25 to 50 columns were also the
+//! fastest. See notes/engineering/2026-11-meta-wide-tables.md.
+static constexpr idx_t COUNT_BATCH_COLUMNS = 32;
+
 static unique_ptr<GlobalTableFunctionState> MetaInitGlobal(ClientContext &context,
                                                            TableFunctionInitInput &input) {
 	auto &bd = input.bind_data->Cast<MetaBindData>();
@@ -209,10 +220,12 @@ static unique_ptr<GlobalTableFunctionState> MetaInitGlobal(ClientContext &contex
 	auto quoted_table = QuoteIdent(bd.data_table);
 
 	// 1. count(*) + per-column (non-null, distinct) — applies to every kind.
-	{
+	//    One query per batch of columns, see COUNT_BATCH_COLUMNS.
+	for (idx_t begin = 0; begin < K; begin += COUNT_BATCH_COLUMNS) {
+		const idx_t end = std::min<idx_t>(begin + COUNT_BATCH_COLUMNS, K);
 		std::stringstream sql;
 		sql << "SELECT count(*)";
-		for (idx_t i = 0; i < K; i++) {
+		for (idx_t i = begin; i < end; i++) {
 			auto qname = QuoteIdent(bd.column_names[i]);
 			sql << ", count(" << qname << ")";
 			sql << ", count(DISTINCT " << qname << ")";
@@ -227,12 +240,16 @@ static unique_ptr<GlobalTableFunctionState> MetaInitGlobal(ClientContext &contex
 		if (!chunk || chunk->size() == 0) {
 			throw InvalidInputException("meta: empty result from counts query");
 		}
+		// Each batch is a query of its own. A column takes its row count from
+		// the query that counted it, so n_missing agrees with n_rows even when
+		// another connection changes the table between two batches.
 		auto n_rows = chunk->GetValue(0, 0).GetValue<int64_t>();
-		for (idx_t i = 0; i < K; i++) {
+		for (idx_t i = begin; i < end; i++) {
+			const idx_t col = 1 + 2 * (i - begin);
 			state->rows[i].n_rows = n_rows;
-			auto non_null = chunk->GetValue(1 + 2 * i, 0).GetValue<int64_t>();
+			auto non_null = chunk->GetValue(col, 0).GetValue<int64_t>();
 			state->rows[i].n_missing = n_rows - non_null;
-			state->rows[i].n_distinct = chunk->GetValue(2 + 2 * i, 0).GetValue<int64_t>();
+			state->rows[i].n_distinct = chunk->GetValue(col + 1, 0).GetValue<int64_t>();
 		}
 	}
 
