@@ -17,6 +17,10 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # scripts/duckdb-lines.sh reads the duckdb_version keys of this file. The
+  # compile check in lint.yml runs once for each version it finds. Keep each
+  # key on its own line, in the form "duckdb_version: vX.Y.Z".
+  #
   # Pins follow the DuckDB stable that the community registry builds against.
   # The duckdb/ submodule stays on v1.4.3 for the browser builds in docs/,
   # because @duckdb/duckdb-wasm (1.32.0 and 1.33.0) still bundles v1.4.3.

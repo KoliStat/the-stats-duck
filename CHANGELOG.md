@@ -90,6 +90,15 @@ that name is preserved across releases for backward compatibility.
   the sources compile on that DuckDB line. A CI job runs it against the v2.0.0
   headers on every pull request. The job also adds one deprecated call to its
   own checkout and checks that the script reports it.
+- **CI compiles the binding layer against every DuckDB version of the
+  distribution pipeline** (#106). A pull request into `v0.*` had no compile
+  check on the 1.x lines. The distribution pipeline runs for a push or a pull
+  request to `main`, and when started by hand. The check of #79 covered the
+  v2.0.0 headers. It now runs once for each version that the pipeline builds:
+  today v1.4.5, v1.5.6 and v2.0.0. `scripts/duckdb-lines.sh` reads the
+  versions from `MainDistributionPipeline.yml`, so the two workflows cannot
+  name different versions. On each version the job also adds a file that does
+  not compile to its own checkout and checks that the script reports it.
 
 ### Fixed
 

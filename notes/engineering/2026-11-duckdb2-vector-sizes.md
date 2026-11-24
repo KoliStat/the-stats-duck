@@ -95,6 +95,12 @@ build/duckdb-v1.5.6-include`, then `git -C duckdb archive v1.5.6 src/include |
 tar -x -C build/duckdb-v1.5.6-include`. The submodule clone needs the `v1.5.6`
 tag for that.
 
+Since #106 the CI job runs once for each DuckDB version that the distribution
+pipeline builds. `scripts/duckdb-lines.sh` reads the versions from
+`MainDistributionPipeline.yml`. The second step also adds a file that does not
+compile, and the script must report it. The deprecated call is added on 2.0
+and later only, because 1.x does not deprecate it.
+
 The whole suite with vector verification on, on a 2.0 build:
 `unittest.exe --on-init "SET debug_verification_mode='VERIFY_VECTORS';"
 "<absolute path>/test/sql/*"`. It passes since this change. Run it after
@@ -120,5 +126,6 @@ It does not move the binding layer to 2.0's iterators and writers
 them over `ToUnifiedFormat`. They do not exist on 1.x. That change waits until
 the 1.x lines are dropped.
 
-The CI job pins v2.0.0. A later DuckDB release that deprecates more is seen
-when the pin moves.
+The CI job checks the versions that the distribution pipeline builds (#106). A
+later DuckDB release that deprecates more is seen when the pipeline moves to
+it.
