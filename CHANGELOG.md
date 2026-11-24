@@ -139,6 +139,16 @@ that name is preserved across releases for backward compatibility.
   infinite `t_statistic` or `cohens_d` stays infinite. The rule lives in one
   helper, `compat::WriteDoubleOrNull` in `src/include/duckdb_compat.hpp`.
 
+- **`meta()` works on wide tables on DuckDB 2.0** (#105). On DuckDB 2.0.0 a
+  table of about 350 columns or more ended the process, with no error
+  message. `meta()` asked for its counts in one query, with one
+  `count(DISTINCT col)` per column. DuckDB 2.0 plans each DISTINCT aggregate
+  as one more level of a nested plan, and that plan was too deep for the
+  stack. The counts are now asked for in batches of 32 columns. On a table of
+  12 rows and 300 columns, `meta()` took 3.5 s on DuckDB 2.0.0 and takes
+  1.3 s. With 2,000 columns it takes 5.9 s there. DuckDB 1.4.3 never failed;
+  2,000 columns went from 4.5 s to 1.8 s on it. `test/sql/meta.test` profiles
+  tables of 32, 33, 65 and 501 columns.
 - **Far-tail p-values, and `pnorm`'s lower tail** (#81). `pnorm(-8.5)`
   returned 0 and `pnorm(-5)` had lost five digits, because the normal CDF was
   `0.5 * (1 + erf(z / sqrt 2))` and that sum cancels for a negative `z`. It is

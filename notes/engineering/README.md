@@ -100,6 +100,14 @@ that has been written down than to re-derive it.
   the ungrouped path never showed it, and why a crash test's evidence is the
   runner's exit code.
 
+- [`2026-11-meta-wide-tables.md`](2026-11-meta-wide-tables.md) — `meta()`
+  ended the process on DuckDB 2.0.0 for a table of about 350 columns (#105).
+  It asked for one `count(DISTINCT col)` per column in one query, and DuckDB
+  2.0 plans each DISTINCT aggregate as one more level of a nested plan. Fix:
+  the counts are asked for in batches of 32 columns. Why the optimizer
+  setting is not an option for an extension, why each batch keeps its own row
+  count, and the timings behind 32.
+
 - [`2026-10-duckdb-v2-port.md`](2026-10-duckdb-v2-port.md) — one source
   tree builds on DuckDB 1.4, 1.5 and 2.0 through `src/include/duckdb_compat.hpp`,
   detected with `__has_include`. What 2.0 changed in shape (the aggregate bind
