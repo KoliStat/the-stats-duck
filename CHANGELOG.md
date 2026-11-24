@@ -78,6 +78,27 @@ that name is preserved across releases for backward compatibility.
   full search, and the adjusted p-values still cost one integral per pair.
   Results are unchanged; `test/sql/emmeans.test` and `test/cpp/test_emmeans.cpp`
   check rows with differing keys against the quantile computed directly.
+- **No deprecated DuckDB call is left in the binding layer** (#79). DuckDB 2.0
+  deprecates `Vector::ToUnifiedFormat` with a row count, `DataChunk::SetValue`
+  and `DataChunk::SetCardinality`. GCC warned at 126 call sites.
+  MSVC builds showed none of them. The calls now go through
+  `compat::ToUnified` and `compat::SetCardinality` in
+  `src/include/duckdb_compat.hpp`, and through `Vector::SetValue`.
+  `scripts/check-duckdb-deprecations.sh <duckdb-dir>` lists every deprecated
+  call in `src/` against a DuckDB header tree. It compiles each file with
+  `g++ -fsyntax-only`, so it needs no DuckDB build, and it also shows whether
+  the sources compile on that DuckDB line. A CI job runs it against the v2.0.0
+  headers on every pull request. The job also adds one deprecated call to its
+  own checkout and checks that the script reports it.
+- **CI compiles the binding layer against every DuckDB version of the
+  distribution pipeline** (#106). A pull request into `v0.*` had no compile
+  check on the 1.x lines. The distribution pipeline runs for a push or a pull
+  request to `main`, and when started by hand. The check of #79 covered the
+  v2.0.0 headers. It now runs once for each version that the pipeline builds:
+  today v1.4.5, v1.5.6 and v2.0.0. `scripts/duckdb-lines.sh` reads the
+  versions from `MainDistributionPipeline.yml`, so the two workflows cannot
+  name different versions. On each version the job also adds a file that does
+  not compile to its own checkout and checks that the script reports it.
 
 ### Fixed
 
@@ -165,6 +186,18 @@ that name is preserved across releases for backward compatibility.
   slot is never a cluster key. When DuckDB itself would read the string as a
   boolean, the error now says that `add_intercept` is a BOOLEAN and shows the
   call without the quotes.
+- **Table functions pass DuckDB 2.0's vector verification** (#79). On DuckDB
+  2.0 every vector carries its own size, next to the row count of its chunk.
+  `corr_matrix`, `lm`, `lm_summary`, `meta`, `read_stat_metadata`, `table_one`
+  and `VISUALIZE` set the row count of their output and left the vectors at
+  size 0. No test showed a wrong result. With `SET debug_verification_mode =
+  'VERIFY_VECTORS'` each of them failed with `INTERNAL Error:
+  DataChunk::Verify - size mismatch`, and so did 34 of the 76 test files when
+  the suite ran with that setting. They now set both through
+  `DataChunk::SetChildCardinality`, as DuckDB's own table functions do. The
+  1.x lines are unchanged, because a vector has no size of its own there. The
+  new `test/sql/vector_verification.test` runs every table function with the
+  verification on, and the whole suite passes with it on DuckDB 2.0.
 - **A SCALE channel named in two cases** (#98). `SCALE COLOR TO viridis
   SCALE color ZERO false` wrote one scale object inside another. SCALE now
   matches channel names in any case.

@@ -279,11 +279,10 @@ last run on the tree before those fixes; no kernel file changed since.
 
 ## Left for later
 
-- v2.0 deprecates the counted `ToUnifiedFormat(count, data)`, which this
-  tree calls at 66 sites, and `DataChunk::SetValue` and
-  `DataChunk::SetCardinality`. MSVC is silent; GCC warns. A
-  `compat::ToUnified` shim would remove the first with no behaviour
-  change; the other two need a look per site. Tracked in #79.
+- Done in #79: v2.0 deprecates the counted `ToUnifiedFormat(count, data)`,
+  `DataChunk::SetValue` and `DataChunk::SetCardinality`. The calls were
+  replaced at 126 sites. The last of the three was more than a warning: see
+  `2026-11-duckdb2-vector-sizes.md`.
 - `ListVector::GetEntry` is deprecated on 2.0 but still present; the
   compat header does not call it on that line.
 - The layer SQL on 2.0 carries reconstructed spacing. Exact text would

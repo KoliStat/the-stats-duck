@@ -29,15 +29,15 @@ static void AdjustPExec(DataChunk &args, ExpressionState &, Vector &result) {
 	auto &method_input = args.data[1];
 
 	UnifiedVectorFormat list_fmt, method_fmt;
-	list_input.ToUnifiedFormat(row_count, list_fmt);
-	method_input.ToUnifiedFormat(row_count, method_fmt);
+	compat::ToUnified(list_input, row_count, list_fmt);
+	compat::ToUnified(method_input, row_count, method_fmt);
 	auto list_entries = UnifiedVectorFormat::GetData<list_entry_t>(list_fmt);
 	auto method_data = UnifiedVectorFormat::GetData<string_t>(method_fmt);
 
 	// Child vector of the input list (the flat array of doubles).
 	auto &input_child = compat::ListChild(list_input);
 	UnifiedVectorFormat child_fmt;
-	input_child.ToUnifiedFormat(ListVector::GetListSize(list_input), child_fmt);
+	compat::ToUnified(input_child, ListVector::GetListSize(list_input), child_fmt);
 	auto child_data = UnifiedVectorFormat::GetData<double>(child_fmt);
 
 	// Compute total output size = total input size (NULLs preserved as NULLs).

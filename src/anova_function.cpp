@@ -110,8 +110,8 @@ static inline void GroupCombine(GroupMoments &a, const GroupMoments &b) {
 
 static void AnovaUpdate(Vector inputs[], AggregateInputData &, idx_t, Vector &state_vector, idx_t count) {
 	UnifiedVectorFormat vdata, gdata;
-	inputs[0].ToUnifiedFormat(count, vdata);
-	inputs[1].ToUnifiedFormat(count, gdata);
+	compat::ToUnified(inputs[0], count, vdata);
+	compat::ToUnified(inputs[1], count, gdata);
 
 	compat::AggregateStates<AnovaState> states(state_vector, count);
 	auto values = UnifiedVectorFormat::GetData<double>(vdata);

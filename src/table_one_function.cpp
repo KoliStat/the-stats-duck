@@ -649,29 +649,29 @@ static void TableOneExecute(ClientContext &context, TableFunctionInput &input, D
 	idx_t emitted = 0;
 	while (state.cursor < state.rows.size() && emitted < STANDARD_VECTOR_SIZE) {
 		auto &row = state.rows[state.cursor++];
-		output.SetValue(0, emitted, Value(row.variable));
+		output.data[0].SetValue(emitted, Value(row.variable));
 		// level: empty string → NULL (numeric variables have no level)
 		if (row.level.empty()) {
 			FlatVector::SetNull(output.data[1], emitted, true);
 		} else {
-			output.SetValue(1, emitted, Value(row.level));
+			output.data[1].SetValue(emitted, Value(row.level));
 		}
-		output.SetValue(2, emitted, Value(row.statistic));
-		output.SetValue(3, emitted, Value(row.stratum));
-		output.SetValue(4, emitted, Value(row.display));
+		output.data[2].SetValue(emitted, Value(row.statistic));
+		output.data[3].SetValue(emitted, Value(row.stratum));
+		output.data[4].SetValue(emitted, Value(row.display));
 		if (std::isnan(row.p_value)) {
 			FlatVector::SetNull(output.data[5], emitted, true);
 		} else {
-			output.SetValue(5, emitted, Value::DOUBLE(row.p_value));
+			output.data[5].SetValue(emitted, Value::DOUBLE(row.p_value));
 		}
 		if (std::isnan(row.effect_size)) {
 			FlatVector::SetNull(output.data[6], emitted, true);
 		} else {
-			output.SetValue(6, emitted, Value::DOUBLE(row.effect_size));
+			output.data[6].SetValue(emitted, Value::DOUBLE(row.effect_size));
 		}
 		emitted++;
 	}
-	output.SetCardinality(emitted);
+	compat::SetCardinality(output, emitted);
 }
 
 } // namespace

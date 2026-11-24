@@ -330,7 +330,7 @@ static inline void SetDoubleOrNull(DataChunk &output, idx_t col, idx_t row, doub
 	if (std::isnan(v)) {
 		FlatVector::SetNull(output.data[col], row, true);
 	} else {
-		output.SetValue(col, row, Value::DOUBLE(v));
+		output.data[col].SetValue(row, Value::DOUBLE(v));
 	}
 }
 
@@ -339,12 +339,12 @@ static void MetaExecute(ClientContext &, TableFunctionInput &input, DataChunk &o
 	idx_t emitted = 0;
 	while (state.cursor < state.rows.size() && emitted < STANDARD_VECTOR_SIZE) {
 		const auto &r = state.rows[state.cursor++];
-		output.SetValue(0, emitted, Value(r.column_name));
-		output.SetValue(1, emitted, Value(r.column_type));
-		output.SetValue(2, emitted, Value(KindToString(r.kind)));
-		output.SetValue(3, emitted, Value::BIGINT(r.n_rows));
-		output.SetValue(4, emitted, Value::BIGINT(r.n_missing));
-		output.SetValue(5, emitted, Value::BIGINT(r.n_distinct));
+		output.data[0].SetValue(emitted, Value(r.column_name));
+		output.data[1].SetValue(emitted, Value(r.column_type));
+		output.data[2].SetValue(emitted, Value(KindToString(r.kind)));
+		output.data[3].SetValue(emitted, Value::BIGINT(r.n_rows));
+		output.data[4].SetValue(emitted, Value::BIGINT(r.n_missing));
+		output.data[5].SetValue(emitted, Value::BIGINT(r.n_distinct));
 		SetDoubleOrNull(output, 6, emitted, r.min);
 		SetDoubleOrNull(output, 7, emitted, r.p25);
 		SetDoubleOrNull(output, 8, emitted, r.median);
@@ -353,15 +353,15 @@ static void MetaExecute(ClientContext &, TableFunctionInput &input, DataChunk &o
 		SetDoubleOrNull(output, 11, emitted, r.mean);
 		SetDoubleOrNull(output, 12, emitted, r.stddev);
 		if (r.has_top) {
-			output.SetValue(13, emitted, Value(r.top));
-			output.SetValue(14, emitted, Value::BIGINT(r.top_freq));
+			output.data[13].SetValue(emitted, Value(r.top));
+			output.data[14].SetValue(emitted, Value::BIGINT(r.top_freq));
 		} else {
 			FlatVector::SetNull(output.data[13], emitted, true);
 			FlatVector::SetNull(output.data[14], emitted, true);
 		}
 		emitted++;
 	}
-	output.SetCardinality(emitted);
+	compat::SetCardinality(output, emitted);
 }
 
 } // namespace

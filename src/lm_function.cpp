@@ -570,7 +570,7 @@ static inline void SetDoubleOrNull(DataChunk &output, idx_t col, idx_t row, doub
 	if (std::isnan(v)) {
 		FlatVector::SetNull(output.data[col], row, true);
 	} else {
-		output.SetValue(col, row, Value::DOUBLE(v));
+		output.data[col].SetValue(row, Value::DOUBLE(v));
 	}
 }
 
@@ -579,20 +579,20 @@ static void LmExecute(ClientContext &, TableFunctionInput &input, DataChunk &out
 	idx_t emitted = 0;
 	while (state.cursor < state.fit.terms.size() && emitted < STANDARD_VECTOR_SIZE) {
 		idx_t i = state.cursor++;
-		output.SetValue(0, emitted, Value(state.fit.terms[i]));
+		output.data[0].SetValue(emitted, Value(state.fit.terms[i]));
 		SetDoubleOrNull(output, 1, emitted, state.fit.beta[i]);
 		SetDoubleOrNull(output, 2, emitted, state.fit.std_error[i]);
 		SetDoubleOrNull(output, 3, emitted, state.fit.t_statistic[i]);
 		SetDoubleOrNull(output, 4, emitted, state.fit.p_value[i]);
 		emitted++;
 	}
-	output.SetCardinality(emitted);
+	compat::SetCardinality(output, emitted);
 }
 
 static void LmSummaryExecute(ClientContext &, TableFunctionInput &input, DataChunk &output) {
 	auto &state = input.global_state->Cast<LmGlobalState>();
 	if (state.cursor > 0) {
-		output.SetCardinality(0);
+		compat::SetCardinality(output, 0);
 		return;
 	}
 	state.cursor = 1;
@@ -600,11 +600,11 @@ static void LmSummaryExecute(ClientContext &, TableFunctionInput &input, DataChu
 	SetDoubleOrNull(output, 1, 0, state.fit.adj_r_squared);
 	SetDoubleOrNull(output, 2, 0, state.fit.f_statistic);
 	SetDoubleOrNull(output, 3, 0, state.fit.f_p_value);
-	output.SetValue(4, 0, Value::BIGINT(static_cast<int64_t>(state.fit.df_model)));
-	output.SetValue(5, 0, Value::BIGINT(static_cast<int64_t>(state.fit.df_residual)));
+	output.data[4].SetValue(0, Value::BIGINT(static_cast<int64_t>(state.fit.df_model)));
+	output.data[5].SetValue(0, Value::BIGINT(static_cast<int64_t>(state.fit.df_residual)));
 	SetDoubleOrNull(output, 6, 0, state.fit.sigma);
-	output.SetValue(7, 0, Value::BIGINT(static_cast<int64_t>(state.fit.n)));
-	output.SetCardinality(1);
+	output.data[7].SetValue(0, Value::BIGINT(static_cast<int64_t>(state.fit.n)));
+	compat::SetCardinality(output, 1);
 }
 
 } // namespace

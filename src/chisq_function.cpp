@@ -95,8 +95,8 @@ STATS_DUCK_AGGREGATE_INIT(ChiSqIndInit) {
 
 static void ChiSqIndUpdate(Vector inputs[], AggregateInputData &, idx_t, Vector &state_vector, idx_t count) {
 	UnifiedVectorFormat rdata, cdata;
-	inputs[0].ToUnifiedFormat(count, rdata);
-	inputs[1].ToUnifiedFormat(count, cdata);
+	compat::ToUnified(inputs[0], count, rdata);
+	compat::ToUnified(inputs[1], count, cdata);
 
 	compat::AggregateStates<ChiSqIndependenceState> states(state_vector, count);
 	auto rvals = UnifiedVectorFormat::GetData<string_t>(rdata);
@@ -264,7 +264,7 @@ STATS_DUCK_AGGREGATE_INIT(ChiSqGoFInit) {
 
 static void ChiSqGoFUpdate(Vector inputs[], AggregateInputData &, idx_t, Vector &state_vector, idx_t count) {
 	UnifiedVectorFormat cdata;
-	inputs[0].ToUnifiedFormat(count, cdata);
+	compat::ToUnified(inputs[0], count, cdata);
 
 	compat::AggregateStates<ChiSqGoFState> states(state_vector, count);
 	auto cvals = UnifiedVectorFormat::GetData<string_t>(cdata);

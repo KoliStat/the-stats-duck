@@ -225,22 +225,22 @@ static void LmFitUpdate(Vector inputs[], AggregateInputData &aggr_input, idx_t, 
 	    aggr_input.bind_data && aggr_input.bind_data->Cast<LmFitBindData>().has_cluster;
 
 	UnifiedVectorFormat y_fmt, x_fmt;
-	y_in.ToUnifiedFormat(count, y_fmt);
-	x_in.ToUnifiedFormat(count, x_fmt);
+	compat::ToUnified(y_in, count, y_fmt);
+	compat::ToUnified(x_in, count, x_fmt);
 	auto y_vals = UnifiedVectorFormat::GetData<double>(y_fmt);
 	auto list_entries = UnifiedVectorFormat::GetData<list_entry_t>(x_fmt);
 
 	auto &child = compat::ListChild(x_in);
 	const idx_t child_size = ListVector::GetListSize(x_in);
 	UnifiedVectorFormat child_fmt;
-	child.ToUnifiedFormat(child_size, child_fmt);
+	compat::ToUnified(child, child_size, child_fmt);
 	auto child_vals = UnifiedVectorFormat::GetData<double>(child_fmt);
 
 	// Cluster key column (VARCHAR), present only for the CR* overloads.
 	UnifiedVectorFormat cl_fmt;
 	const string_t *cl_vals = nullptr;
 	if (has_cluster) {
-		inputs[2].ToUnifiedFormat(count, cl_fmt);
+		compat::ToUnified(inputs[2], count, cl_fmt);
 		cl_vals = UnifiedVectorFormat::GetData<string_t>(cl_fmt);
 	}
 

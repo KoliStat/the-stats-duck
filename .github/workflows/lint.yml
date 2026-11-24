@@ -26,3 +26,80 @@ jobs:
         run: git submodule update --init --depth 1 third_party/eigen
       - name: Build + run C++ unit tests
         run: bash scripts/run-cpp-tests.sh
+
+  # The DuckDB versions that the distribution pipeline builds. The script
+  # reads them from MainDistributionPipeline.yml, so this workflow keeps no
+  # second list.
+  duckdb-lines:
+    name: DuckDB versions to check
+    runs-on: ubuntu-latest
+    outputs:
+      versions: ${{ steps.list.outputs.versions }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Read the versions from the distribution pipeline
+        id: list
+        run: |
+          versions="$(bash scripts/duckdb-lines.sh)"
+          echo "$versions"
+          echo "versions=$versions" >> "$GITHUB_OUTPUT"
+      # The script has to be able to fail. A version that it cannot read must
+      # stop it. Dropping that version would end the check for one DuckDB line
+      # without a message.
+      - name: The script fails on a version it cannot read
+        run: |
+          printf '%s\n' '      duckdb_version: v1.5.6' '      duckdb_version: main' > "$RUNNER_TEMP/unreadable.yml"
+          if bash scripts/duckdb-lines.sh "$RUNNER_TEMP/unreadable.yml"; then
+            echo "the script accepted a version that it cannot read"
+            exit 1
+          fi
+
+  duckdb-compile-check:
+    name: Compile check, DuckDB ${{ matrix.duckdb }}
+    needs: duckdb-lines
+    runs-on: ubuntu-latest
+    strategy:
+      # One DuckDB version that fails must not hide the result of the others.
+      fail-fast: false
+      matrix:
+        duckdb: ${{ fromJSON(needs.duckdb-lines.outputs.versions) }}
+    env:
+      DUCKDB_VERSION: ${{ matrix.duckdb }}
+    steps:
+      - uses: actions/checkout@v4
+      # The sources include Eigen and ReadStat headers. The duckdb submodule
+      # is not needed: it is pinned to v1.4.3, and this check wants the headers
+      # of the version under test.
+      - name: Check out Eigen and ReadStat
+        run: git submodule update --init --depth 1 third_party/eigen third_party/readstat
+      # A sparse, blobless clone of the one directory the check reads.
+      - name: Fetch the DuckDB headers
+        run: |
+          git clone --depth 1 --branch "$DUCKDB_VERSION" --filter=blob:none --sparse https://github.com/duckdb/duckdb.git "$RUNNER_TEMP/duckdb"
+          git -C "$RUNNER_TEMP/duckdb" sparse-checkout set src/include
+      # One run checks two things. Every src/*.cpp compiles against this
+      # DuckDB version, and none calls what this version marks as deprecated.
+      # A pull request into v0.* gets no other compile check on the 1.x lines.
+      # MSVC builds do not show DuckDB's deprecation warnings, so a deprecated
+      # call written on Windows goes unnoticed without this.
+      - name: The sources compile and call nothing deprecated
+        run: bash scripts/check-duckdb-deprecations.sh "$RUNNER_TEMP/duckdb"
+      # The check has to be able to fail on this runner. This step adds two
+      # files to this checkout only, and the script must report both. The
+      # first file does not compile. The second calls DataChunk::SetCardinality,
+      # which DuckDB deprecates from 2.0 on. On a 1.x version that is a plain
+      # call, so the second file is left out there.
+      - name: The check reports a file that does not compile, and a deprecated call
+        run: |
+          printf '%s\n' '#include "duckdb.hpp"' 'void stats_duck_compile_probe() { duckdb::NoSuchType value; }' > src/zz_compile_probe.cpp
+          if [[ "$DUCKDB_VERSION" != v1.* ]]; then
+            printf '%s\n' '#include "duckdb.hpp"' 'void stats_duck_guard_probe(duckdb::DataChunk &chunk) { chunk.SetCardinality(0); }' > src/zz_guard_probe.cpp
+          fi
+          out="$(bash scripts/check-duckdb-deprecations.sh "$RUNNER_TEMP/duckdb" || true)"
+          echo "$out"
+          grep -q '^FAIL: 1 source files do not compile' <<<"$out"
+          grep -q '^src/zz_compile_probe.cpp:$' <<<"$out"
+          if [[ "$DUCKDB_VERSION" != v1.* ]]; then
+            grep -q '^FAIL: 1 deprecated DuckDB call sites in src/' <<<"$out"
+            grep -q '^  src/zz_guard_probe.cpp:2$' <<<"$out"
+          fi

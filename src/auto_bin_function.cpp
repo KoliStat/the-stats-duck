@@ -102,7 +102,7 @@ STATS_DUCK_AGGREGATE_INIT(BinEdgesInit) {
 static void BinEdgesUpdate(Vector inputs[], AggregateInputData &, idx_t,
                             Vector &state_vector, idx_t count) {
 	UnifiedVectorFormat idata;
-	inputs[0].ToUnifiedFormat(count, idata);
+	compat::ToUnified(inputs[0], count, idata);
 	compat::AggregateStates<BinEdgesState> states(state_vector, count);
 	auto values = UnifiedVectorFormat::GetData<double>(idata);
 	for (idx_t i = 0; i < count; i++) {
@@ -317,14 +317,14 @@ static void BinLabelExec(DataChunk &args, ExpressionState &, Vector &result) {
 	auto &edges_input = args.data[1];
 
 	UnifiedVectorFormat x_fmt, edges_fmt;
-	x_input.ToUnifiedFormat(row_count, x_fmt);
-	edges_input.ToUnifiedFormat(row_count, edges_fmt);
+	compat::ToUnified(x_input, row_count, x_fmt);
+	compat::ToUnified(edges_input, row_count, edges_fmt);
 	auto x_data = UnifiedVectorFormat::GetData<double>(x_fmt);
 	auto edges_entries = UnifiedVectorFormat::GetData<list_entry_t>(edges_fmt);
 
 	auto &edges_child = compat::ListChild(edges_input);
 	UnifiedVectorFormat child_fmt;
-	edges_child.ToUnifiedFormat(ListVector::GetListSize(edges_input), child_fmt);
+	compat::ToUnified(edges_child, ListVector::GetListSize(edges_input), child_fmt);
 	auto child_data = UnifiedVectorFormat::GetData<double>(child_fmt);
 
 	auto result_data = compat::WriteData<string_t>(result);

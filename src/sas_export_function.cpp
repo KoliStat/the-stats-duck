@@ -424,7 +424,7 @@ static void SasExportSink(ExecutionContext &, FunctionData &bind_data_p, GlobalF
 		}
 		auto &vec = input.data[c];
 		UnifiedVectorFormat fmt;
-		vec.ToUnifiedFormat(row_count, fmt);
+		compat::ToUnified(vec, row_count, fmt);
 		auto data = UnifiedVectorFormat::GetData<string_t>(fmt);
 		for (idx_t r = 0; r < row_count; r++) {
 			auto idx = fmt.sel->get_index(r);
@@ -636,7 +636,7 @@ static void SasExportFinalize(ClientContext &, FunctionData &bind_data_p, Global
 		idx_t n = chunk.size();
 		vector<UnifiedVectorFormat> formats(bind_data.columns.size());
 		for (idx_t c = 0; c < bind_data.columns.size(); c++) {
-			chunk.data[c].ToUnifiedFormat(n, formats[c]);
+			compat::ToUnified(chunk.data[c], n, formats[c]);
 		}
 		for (idx_t r = 0; r < n; r++) {
 			err = readstat_begin_row(writer);

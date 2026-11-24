@@ -145,3 +145,10 @@ that has been written down than to re-derive it.
   DuckDB line, Vega-Lite drops a scale type that does not fit the field's
   type, Vega-Lite bins in data units where upstream bins in transformed units,
   and `symlog` is only close to upstream's pseudo-log curves.
+
+- [`2026-11-duckdb2-vector-sizes.md`](2026-11-duckdb2-vector-sizes.md) —
+  seven table functions set a chunk's row count and left its vectors at size
+  0 (#79). No test showed a wrong result. `SET debug_verification_mode =
+  'VERIFY_VECTORS'` on DuckDB 2.0 failed them with `DataChunk::Verify - size
+  mismatch`. Fix: `compat::SetCardinality`, which calls `SetChildCardinality`
+  on 2.0. A script lists deprecated calls, and a CI job runs it.

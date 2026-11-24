@@ -156,7 +156,7 @@ STATS_DUCK_AGGREGATE_INIT(SummaryStatsInit) {
 static void SummaryStatsUpdate(Vector inputs[], AggregateInputData &, idx_t, Vector &state_vector, idx_t count) {
 	auto &input = inputs[0];
 	UnifiedVectorFormat idata;
-	input.ToUnifiedFormat(count, idata);
+	compat::ToUnified(input, count, idata);
 
 	compat::AggregateStates<SummaryStatsState> states(state_vector, count);
 	auto values = UnifiedVectorFormat::GetData<double>(idata);

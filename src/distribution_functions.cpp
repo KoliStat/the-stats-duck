@@ -508,10 +508,10 @@ template <typename Fn>
 static void RunQuaternaryWithNulls(DataChunk &args, Vector &result, Fn &&fn) {
 	idx_t count = args.size();
 	UnifiedVectorFormat a0, a1, a2, a3;
-	args.data[0].ToUnifiedFormat(count, a0);
-	args.data[1].ToUnifiedFormat(count, a1);
-	args.data[2].ToUnifiedFormat(count, a2);
-	args.data[3].ToUnifiedFormat(count, a3);
+	compat::ToUnified(args.data[0], count, a0);
+	compat::ToUnified(args.data[1], count, a1);
+	compat::ToUnified(args.data[2], count, a2);
+	compat::ToUnified(args.data[3], count, a3);
 	auto v0 = UnifiedVectorFormat::GetData<double>(a0);
 	auto v1 = UnifiedVectorFormat::GetData<double>(a1);
 	auto v2 = UnifiedVectorFormat::GetData<double>(a2);

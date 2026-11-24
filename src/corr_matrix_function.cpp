@@ -282,26 +282,26 @@ static void CorrMatrixExecute(ClientContext &, TableFunctionInput &input, DataCh
 	idx_t emitted = 0;
 	while (state.cursor < state.rows.size() && emitted < STANDARD_VECTOR_SIZE) {
 		auto &row = state.rows[state.cursor++];
-		output.SetValue(0, emitted, Value(row.row_var));
-		output.SetValue(1, emitted, Value(row.col_var));
+		output.data[0].SetValue(emitted, Value(row.row_var));
+		output.data[1].SetValue(emitted, Value(row.col_var));
 		if (std::isnan(row.coef)) {
 			FlatVector::SetNull(output.data[2], emitted, true);
 		} else {
-			output.SetValue(2, emitted, Value::DOUBLE(row.coef));
+			output.data[2].SetValue(emitted, Value::DOUBLE(row.coef));
 		}
 		if (std::isnan(row.p_value)) {
 			FlatVector::SetNull(output.data[3], emitted, true);
 		} else {
-			output.SetValue(3, emitted, Value::DOUBLE(row.p_value));
+			output.data[3].SetValue(emitted, Value::DOUBLE(row.p_value));
 		}
 		if (row.n < 0) {
 			FlatVector::SetNull(output.data[4], emitted, true);
 		} else {
-			output.SetValue(4, emitted, Value::BIGINT(row.n));
+			output.data[4].SetValue(emitted, Value::BIGINT(row.n));
 		}
 		emitted++;
 	}
-	output.SetCardinality(emitted);
+	compat::SetCardinality(output, emitted);
 }
 
 } // namespace

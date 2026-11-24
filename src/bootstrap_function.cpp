@@ -150,7 +150,7 @@ STATS_DUCK_AGGREGATE_INIT(BootstrapInit) {
 static void BootstrapUpdate(Vector inputs[], AggregateInputData &, idx_t,
                             Vector &state_vector, idx_t count) {
 	UnifiedVectorFormat idata;
-	inputs[0].ToUnifiedFormat(count, idata);
+	compat::ToUnified(inputs[0], count, idata);
 	compat::AggregateStates<BootstrapState> states(state_vector, count);
 	auto values = UnifiedVectorFormat::GetData<double>(idata);
 	for (idx_t i = 0; i < count; i++) {

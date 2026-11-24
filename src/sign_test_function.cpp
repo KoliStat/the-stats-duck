@@ -132,7 +132,7 @@ static void SignTest1SampUpdate(Vector inputs[], AggregateInputData &aggr_input_
 	}
 
 	UnifiedVectorFormat xdata;
-	inputs[0].ToUnifiedFormat(count, xdata);
+	compat::ToUnified(inputs[0], count, xdata);
 
 	compat::AggregateStates<SignTestState> states(state_vector, count);
 	auto xv = UnifiedVectorFormat::GetData<double>(xdata);
@@ -161,8 +161,8 @@ static void SignTest1SampUpdate(Vector inputs[], AggregateInputData &aggr_input_
 // Paired Update: classify x - y
 static void SignTestPairedUpdate(Vector inputs[], AggregateInputData &, idx_t, Vector &state_vector, idx_t count) {
 	UnifiedVectorFormat xdata, ydata;
-	inputs[0].ToUnifiedFormat(count, xdata);
-	inputs[1].ToUnifiedFormat(count, ydata);
+	compat::ToUnified(inputs[0], count, xdata);
+	compat::ToUnified(inputs[1], count, ydata);
 
 	compat::AggregateStates<SignTestState> states(state_vector, count);
 	auto xv = UnifiedVectorFormat::GetData<double>(xdata);
